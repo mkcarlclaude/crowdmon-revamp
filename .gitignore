@@ -1,0 +1,30 @@
+# Legacy 2023-2024 repos — reference only, each has its own git history.
+# Excluded so they do not become broken gitlink entries in this repo.
+crowdmon-nextjs/
+crowdmon-video-frame-extractor/
+crowdmon-extract-render/
+
+# Node
+node_modules/
+dist/
+.wrangler/
+*.log
+
+# Go
+worker/bin/
+*.test
+
+# Terraform — state may contain secrets, never commit
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
