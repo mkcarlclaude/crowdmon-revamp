@@ -4,6 +4,8 @@ export type Bindings = {
   // Populated by Terraform in M1.3 — see infra/. Bindings are added here as
   // they are provisioned, so the type stays honest about what actually exists.
   ENVIRONMENT: string;
+  DB: D1Database;
+  FRAMES: R2Bucket;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();

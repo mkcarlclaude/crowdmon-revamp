@@ -16,11 +16,13 @@ worker/bin/
 
 # Terraform — state may contain secrets, never commit
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# .terraform.lock.hcl is deliberately NOT ignored. It pins provider versions and
+# their checksums, so a fresh clone and CI resolve the same provider build this
+# machine did. Ignoring it would let `~> 5.0` drift per checkout.
 # Backend config embeds the account ID
 infra/backend.hcl
 
