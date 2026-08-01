@@ -37,8 +37,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # `run` is not optional here. Without it pnpm resolves `deploy` to its own
+      # builtin `pnpm deploy` command rather than the package script, and fails
+      # with ERR_PNPM_INVALID_DEPLOY_TARGET.
       - name: Deploy
-        run: pnpm --filter @crowdmon/api deploy
+        run: pnpm --filter @crowdmon/api run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -47,8 +50,10 @@ jobs:
         run: |
           url="${{ vars.API_BASE_URL }}"
           if [ -z "$url" ]; then
-            echo "API_BASE_URL variable not set — skipping post-deploy check"
-            exit 0
+            echo "API_BASE_URL is not set on the production environment."
+            echo "It must be an environment *variable*, not a secret — a secret"
+            echo "is unreadable from the vars context and would be masked here."
+            exit 1
           fi
           for i in 1 2 3 4 5; do
             code=$(curl -fsS -o /dev/null -w '%{http_code}' "$url/health") && break
