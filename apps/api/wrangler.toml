@@ -1,0 +1,19 @@
+name = "crowdmon-api"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+
+# D1 and R2 bindings are provisioned by Terraform (M1.3) and pasted here once
+# `terraform apply` has run — the IDs do not exist until the account is built.
+#
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "crowdmon"
+# database_id = "<terraform output d1_database_id>"
+#
+# [[r2_buckets]]
+# binding = "FRAMES"
+# bucket_name = "crowdmon-frames"

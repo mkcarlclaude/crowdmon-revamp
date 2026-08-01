@@ -1,0 +1,16 @@
+# These outputs are the handoff to wrangler: the IDs they emit are pasted into
+# apps/api/wrangler.toml, which cannot know them until the account is built.
+
+output "d1_database_id" {
+  description = "Paste into the [[d1_databases]] binding in apps/api/wrangler.toml."
+  value       = cloudflare_d1_database.main.id
+}
+
+output "d1_database_name" {
+  value = cloudflare_d1_database.main.name
+}
+
+output "r2_bucket_name" {
+  description = "Paste into the [[r2_buckets]] binding in apps/api/wrangler.toml."
+  value       = cloudflare_r2_bucket.frames.name
+}

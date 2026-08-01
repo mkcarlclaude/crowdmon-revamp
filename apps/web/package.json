@@ -1,0 +1,9 @@
+{
+  "name": "@crowdmon/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "echo 'no sources yet — SPA lands in M5.1' && exit 0",
+    "test": "echo 'no sources yet — SPA lands in M5.1' && exit 0"
+  }
+}

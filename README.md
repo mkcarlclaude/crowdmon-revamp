@@ -7,8 +7,9 @@ healthy, observable infrastructure.
 zero-shot model, have humans verify the long tail, distil a real-time detector that runs
 in the browser — is the workload that generates signal worth observing.
 
-> **Status: not started.** This repository currently contains the design record and
-> delivery plan only. No application code exists yet; milestone M1 builds the skeleton.
+> **Status: M1 in progress.** The monorepo skeleton, a hello-world Worker and CI are in
+> place and green locally. Nothing is deployed — the Cloudflare account has not been
+> provisioned, so the Terraform in `infra/` has never been applied.
 
 ## Documents
 
@@ -58,17 +59,28 @@ YouTube ──► Go worker (home Ubuntu)          Cloudflare (free tier)
 | Observability | OpenTelemetry → self-hosted Tempo/Prometheus/Grafana | With no user-facing frontend in v1, Grafana *is* the UI |
 | Training | Manual, batch, on Kaggle | No GPU worth training on at home — auto-retrain is ruled out by physics, not preference |
 
-## Planned layout
-
-Created by [M1.1](https://github.com/mkcarlclaude/crowdmon-revamp/issues/11); nothing
-below exists yet.
+## Layout
 
 ```
-apps/api/     Cloudflare Worker — Hono API, D1 queue, OpenAPI spec
-apps/web/     React SPA on Pages — admin dashboard
-worker/       Go module — yt-dlp download, ffmpeg extraction, pHash dedup
-infra/        Terraform — D1, R2, DNS, tunnel, Access apps and policies
+apps/api/     Cloudflare Worker — Hono API, health endpoint. D1 queue and OpenAPI land in M3
+apps/web/     React SPA on Pages — admin dashboard. Empty until M5.1
+worker/       Go module — config loader. Poll loop and extraction land in M4/M7/M8
+infra/        Terraform — D1 and R2 declared, never applied. See infra/README.md
 ```
+
+## Working on it
+
+Requires Node 22, pnpm 10 and Go 1.24. Nothing needs cloud credentials.
+
+```sh
+pnpm install
+pnpm typecheck && pnpm lint && pnpm test    # TypeScript
+cd worker && go vet ./... && go test ./...  # Go
+```
+
+CI runs exactly these, split into two path-filtered jobs so a Go change does not
+rebuild the SPA. Deploying additionally needs `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` repository secrets, which do not exist yet.
 
 ## Milestones
 

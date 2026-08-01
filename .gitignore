@@ -16,10 +16,13 @@ worker/bin/
 
 # Terraform — state may contain secrets, never commit
 .terraform/
+.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# Backend config embeds the account ID
+infra/backend.hcl
 
 # Env and secrets
 .env

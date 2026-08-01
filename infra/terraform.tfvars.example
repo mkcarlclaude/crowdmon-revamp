@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars and fill in. That file is gitignored.
+
+account_id = "<CLOUDFLARE_ACCOUNT_ID>"
+
+# Defaults are usually fine:
+# zone_name    = "mkcarl.com"
+# project_name = "crowdmon"
+# r2_location  = "APAC"

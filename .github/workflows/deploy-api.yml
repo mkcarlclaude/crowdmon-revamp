@@ -1,0 +1,59 @@
+name: Deploy API
+
+# Deploys the Worker on merge to main. Requires the CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID repository secrets; until those exist this workflow
+# will fail, which is the honest signal that the account is not provisioned yet.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-api.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: wrangler deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy
+        run: pnpm --filter @crowdmon/api deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify health endpoint
+        run: |
+          url="${{ vars.API_BASE_URL }}"
+          if [ -z "$url" ]; then
+            echo "API_BASE_URL variable not set — skipping post-deploy check"
+            exit 0
+          fi
+          for i in 1 2 3 4 5; do
+            code=$(curl -fsS -o /dev/null -w '%{http_code}' "$url/health") && break
+            echo "attempt $i failed, retrying in $((i * 2))s"
+            sleep $((i * 2))
+          done
+          echo "health endpoint returned $code"
+          [ "$code" = "200" ]
