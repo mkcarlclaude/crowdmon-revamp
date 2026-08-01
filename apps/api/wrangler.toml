@@ -6,14 +6,15 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 
-# D1 and R2 bindings are provisioned by Terraform (M1.3) and pasted here once
-# `terraform apply` has run — the IDs do not exist until the account is built.
-#
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "crowdmon"
-# database_id = "<terraform output d1_database_id>"
-#
-# [[r2_buckets]]
-# binding = "FRAMES"
-# bucket_name = "crowdmon-frames"
+# D1 and R2 are provisioned by Terraform (M1.3). The IDs below come from
+# `terraform -chdir=infra output`; wrangler binds to them, it does not create
+# them. If these ever disagree with Terraform, Terraform is the source of truth.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "crowdmon"
+database_id = "2ff04c76-ec7f-4e3b-a0ef-5aa37d228f58"
+
+[[r2_buckets]]
+binding = "FRAMES"
+bucket_name = "crowdmon-frames"
