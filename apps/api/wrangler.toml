@@ -9,11 +9,17 @@ ENVIRONMENT = "production"
 # D1 and R2 are provisioned by Terraform (M1.3). The IDs below come from
 # `terraform -chdir=infra output`; wrangler binds to them, it does not create
 # them. If these ever disagree with Terraform, Terraform is the source of truth.
+#
+# database_id is server-assigned and NOT stable: `terraform destroy` followed by
+# `terraform apply` mints a new UUID, verified in M1.3. The bucket name is the
+# bucket's identity and survives. After any destroy/re-apply, re-paste from
+# `terraform -chdir=infra output d1_database_id` or deploys bind to a database
+# that no longer exists.
 
 [[d1_databases]]
 binding = "DB"
 database_name = "crowdmon"
-database_id = "2ff04c76-ec7f-4e3b-a0ef-5aa37d228f58"
+database_id = "93c06c0b-10d8-4f4f-a3a6-c7a0a59c0e42"
 
 [[r2_buckets]]
 binding = "FRAMES"
