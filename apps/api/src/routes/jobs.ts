@@ -51,6 +51,7 @@ const notHeldByCaller = (c: Context<{ Bindings: Bindings }>) =>
 export const claimJobRoute = createRoute({
   method: "post",
   path: "/api/jobs/claim",
+  operationId: "claimJob",
   tags: ["jobs"],
   summary: "Claim the next pending job",
   description:
@@ -75,6 +76,7 @@ export const claimJobRoute = createRoute({
 export const heartbeatRoute = createRoute({
   method: "post",
   path: "/api/jobs/{id}/heartbeat",
+  operationId: "heartbeatJob",
   tags: ["jobs"],
   summary: "Renew the lease on a held job",
   description:
@@ -97,6 +99,7 @@ export const heartbeatRoute = createRoute({
 export const completeJobRoute = createRoute({
   method: "post",
   path: "/api/jobs/{id}/complete",
+  operationId: "completeJob",
   tags: ["jobs"],
   summary: "Report a held job as done or failed",
   request: {

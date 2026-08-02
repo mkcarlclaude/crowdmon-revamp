@@ -1,11 +1,14 @@
 package: api
 output: types.gen.go
 
-# Types only. A generated client would pull oapi-codegen's runtime packages
-# into go.mod, and the worker has no HTTP calling code to use one until M4.3 —
-# structs alone need nothing outside the standard library.
+# Types *and* a client. M3.3 generated types only, on the grounds that the
+# worker had no HTTP calling code to use one; M4.3 is that code. Generating it
+# rather than hand-rolling keeps the property the contract exists for — a
+# renamed field breaks the caller at compile time — and costs one dependency,
+# oapi-codegen's runtime, which the request binding needs.
 generate:
   models: true
+  client: true
 
 output-options:
   skip-prune: false

@@ -43,7 +43,7 @@
           "environment"
         ]
       },
-      "SubmitVideoResponse": {
+      "VideoSubmission": {
         "type": "object",
         "properties": {
           "video_id": {
@@ -239,6 +239,7 @@
   "paths": {
     "/health": {
       "get": {
+        "operationId": "getHealth",
         "tags": [
           "meta"
         ],
@@ -259,6 +260,7 @@
     },
     "/api/admin/videos": {
       "post": {
+        "operationId": "submitVideo",
         "tags": [
           "admin"
         ],
@@ -280,7 +282,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SubmitVideoResponse"
+                  "$ref": "#/components/schemas/VideoSubmission"
                 }
               }
             }
@@ -340,6 +342,7 @@
     },
     "/api/jobs/claim": {
       "post": {
+        "operationId": "claimJob",
         "tags": [
           "jobs"
         ],
@@ -384,6 +387,7 @@
     },
     "/api/jobs/{id}/heartbeat": {
       "post": {
+        "operationId": "heartbeatJob",
         "tags": [
           "jobs"
         ],
@@ -439,6 +443,7 @@
     },
     "/api/jobs/{id}/complete": {
       "post": {
+        "operationId": "completeJob",
         "tags": [
           "jobs"
         ],
