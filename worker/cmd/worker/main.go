@@ -1,9 +1,9 @@
 // Command worker is the home-side extraction worker.
 //
-// It is still a skeleton: the poll loop lands in M4.2, claim and complete in
-// M4.3, and extraction not until M7. What is here is the process shell —
-// configuration, telemetry, and a context a signal cancels — which everything
-// after this hangs off.
+// It polls the queue, claims a job, holds the lease while it runs, and reports
+// the outcome. What it does not do is any video work: Runner.Work is nil, so a
+// claimed job is reported done immediately. Extraction lands in M7 and slots
+// in there, which is the only line of this file it should need to change.
 package main
 
 import (

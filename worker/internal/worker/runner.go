@@ -15,6 +15,12 @@ import (
 // than this is how a healthy worker gets its own job taken away.
 const DefaultHeartbeatInterval = 30 * time.Second
 
+// reportTimeout bounds the completion call, which runs on a context detached
+// from the caller's so that a job finishing as the process goes down is still
+// reported. Detached and unbounded is how a shutdown hangs; this has to fit
+// inside the container's stop grace period alongside the telemetry flush.
+const reportTimeout = 5 * time.Second
+
 // Queue is the runner's view of the API: exactly the three calls the job
 // lifecycle needs. Declared here rather than in the queue package because
 // this is the side that depends on it, which is also what lets the tests
@@ -85,11 +91,27 @@ func (r Runner) PollOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	// Deliberately on ctx rather than leaseCtx: leaseCtx is cancelled by the
-	// deferred release the moment work returns, and reporting the outcome is
-	// the one call that must still go out. On shutdown ctx is cancelled too
-	// and this fails — the reaper is the backstop for that, by design.
-	if err := r.Queue.Complete(ctx, job.Id, workErr); err != nil {
+	// Detached from ctx, not derived from it. Reporting the outcome is the one
+	// call that must still go out, and by this point ctx may already be
+	// cancelled two ways: leaseCtx is released the moment work returns, and on
+	// shutdown ctx itself is gone. Riding either would fail the report and
+	// leave the row `claimed` until the reaper timed it out — which would make
+	// the loop's whole reason for waiting on an in-flight poll a fiction.
+	//
+	// Bounded, because a detached context with no deadline is how a shutdown
+	// hangs: this runs after SIGTERM, inside whatever grace period the
+	// container was given.
+	reportCtx, cancelReport := context.WithTimeout(context.WithoutCancel(ctx), reportTimeout)
+	defer cancelReport()
+
+	switch err := r.Queue.Complete(reportCtx, job.Id, workErr); {
+	case errors.Is(err, queue.ErrLeaseLost):
+		// The reaper got in between the last heartbeat and this call. Same
+		// event as a heartbeat 404, so the same answer: drop it quietly.
+		// Surfacing it would back the loop off from a queue that is working.
+		logger.WarnContext(ctx, "lease lost before the outcome could be reported")
+		return true, nil
+	case err != nil:
 		return true, err
 	}
 

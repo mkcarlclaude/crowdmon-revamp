@@ -23,11 +23,14 @@ type fakeQueue struct {
 	claimErr  error
 	heartbeat func(n int) error
 
-	claims     int
-	heartbeats int
-	completed  bool
-	completeID int
-	cause      error
+	completeErr error
+
+	claims         int
+	heartbeats     int
+	completed      bool
+	completeID     int
+	cause          error
+	completeCtxErr error
 }
 
 func (q *fakeQueue) Claim(context.Context) (*api.Job, error) {
@@ -51,9 +54,18 @@ func (q *fakeQueue) Heartbeat(_ context.Context, _ int) error {
 	return handler(n)
 }
 
-func (q *fakeQueue) Complete(_ context.Context, jobID int, cause error) error {
+func (q *fakeQueue) Complete(ctx context.Context, jobID int, cause error) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	// Recorded, not asserted on directly: what matters is whether the report
+	// could still have gone out, and a cancelled context is exactly what stops
+	// it from doing so.
+	q.completeCtxErr = ctx.Err()
+
+	if q.completeErr != nil {
+		return q.completeErr
+	}
 
 	q.completed = true
 	q.completeID = jobID
@@ -270,5 +282,62 @@ func TestRunnerKeepsWorkingThroughATransientHeartbeatFailure(t *testing.T) {
 	}
 	if q.cause != nil {
 		t.Errorf("the job was reported failed because of a heartbeat error: %v", q.cause)
+	}
+}
+
+// The loop waits for an in-flight poll on shutdown, and its stated reason is
+// that abandoning the job would leave the row `claimed` until the reaper
+// timed it out. That reason only holds if the outcome report can still be
+// sent — and on the shutdown path the context it would ride is already
+// cancelled. Reporting on the caller's context means the waiting buys nothing
+// it claims to buy.
+func TestRunnerReportsTheOutcomeEvenWhenShuttingDown(t *testing.T) {
+	q := &fakeQueue{job: aJob()}
+
+	runner := worker.Runner{
+		Queue:  q,
+		Logger: quietLogger(),
+		Work: func(ctx context.Context, _ *api.Job) error {
+			// Finishes normally; the cancellation is the process going down
+			// around it, not the job failing.
+			<-ctx.Done()
+			return nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	if _, err := runner.PollOnce(ctx); err != nil {
+		t.Fatalf("PollOnce() returned an unexpected error: %v", err)
+	}
+
+	if !q.completed {
+		t.Fatal("the job was not reported at all on the shutdown path")
+	}
+	if q.completeCtxErr != nil {
+		t.Errorf("Complete() was called on an already-cancelled context (%v), so the report could not have been sent",
+			q.completeCtxErr)
+	}
+}
+
+// The reaper can take a job back in the gap between the last heartbeat and
+// the completion. That is the same event as a heartbeat 404 and deserves the
+// same answer — drop it quietly. Surfacing it as a poll failure instead makes
+// the loop back off from a queue that is working perfectly well.
+func TestRunnerTreatsALostLeaseAtCompletionAsADrop(t *testing.T) {
+	q := &fakeQueue{job: aJob(), completeErr: queue.ErrLeaseLost}
+
+	runner := worker.Runner{Queue: q, Logger: quietLogger()}
+
+	found, err := runner.PollOnce(context.Background())
+	if err != nil {
+		t.Fatalf("PollOnce() surfaced a lost lease as a failure: %v", err)
+	}
+	if !found {
+		t.Error("PollOnce() reported no work despite having claimed a job")
 	}
 }

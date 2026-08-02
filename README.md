@@ -7,13 +7,15 @@ healthy, observable infrastructure.
 zero-shot model, have humans verify the long tail, distil a real-time detector that runs
 in the browser — is the workload that generates signal worth observing.
 
-> **Status: M1 through M4 complete.** D1 and R2 are provisioned by Terraform, the Worker
+> **Status: M1–M3 complete, M4 all but one box.** D1 and R2 are provisioned by Terraform, the Worker
 > is deployed by CI at `api.crowdmon.mkcarl.com`, and its spans are landing in Tempo
 > through a gated OTLP endpoint. A URL can be submitted, a job claimed, heartbeated and
 > completed over a contract both runtimes generate from, with Cloudflare Access in front
 > of the admin endpoints — and the far end of that queue is now a Go worker running as a
 > container on the home box, polling on a budget and closing the lifecycle for real. It
-> does no video work yet; M5 is the admin dashboard, M7 the extraction.
+> does no video work yet; M5 is the admin dashboard, M7 the extraction. The one M4
+> criterion still open is "survives host reboot" — every mechanism it rests on is
+> verified, the reboot itself has not been performed.
 
 ## Documents
 
