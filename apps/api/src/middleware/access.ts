@@ -6,14 +6,21 @@ import type { Bindings } from "../bindings";
  * Verifies the Cloudflare Access assertion on admin requests.
  *
  * Access already sits in front of `api.crowdmon.mkcarl.com/api/admin`, so this
- * looks redundant. It is not. The same Worker is served on
- * `crowdmon-api.mkcarl-dev.workers.dev`, where no Access application exists
- * and no assertion is ever added — reaching this code does not mean a request
- * passed Access. Without the check below, knowing the workers.dev hostname
- * would be enough to reach the admin API.
+ * looks redundant. It is not, and it did not become redundant when M4.6 closed
+ * the workers.dev hostname that used to be the headline reason for it.
  *
- * The two gates also fail independently. The Access policy lives in Terraform;
- * the allowlist is a Worker secret. Widening one does not widen the other.
+ * Reaching this code still does not prove a request passed Access. Access
+ * binds to a *route on a zone*: any hostname the Worker is served on that the
+ * application does not cover reaches this handler with no assertion attached.
+ * `workers_dev = false` is one line in wrangler.toml, a new custom domain is
+ * one Terraform resource, and neither change would fail anything or look like
+ * a security decision at the time it was made.
+ *
+ * The two gates also fail independently, which is the durable half of the
+ * argument. The Access policy lives in Terraform; the email allowlist is a
+ * Worker secret. Widening one does not widen the other, and a policy deleted
+ * in the dashboard — click-ops, by CONTEXT.md §9.9's own admission — takes the
+ * outer gate away without touching this one.
  */
 
 /**

@@ -9,10 +9,6 @@
     {
       "url": "https://api.crowdmon.mkcarl.com",
       "description": "production, behind Access"
-    },
-    {
-      "url": "https://crowdmon-api.mkcarl-dev.workers.dev",
-      "description": "production, direct. No Access application covers this hostname — /api/admin/* is reachable here only with an assertion the Worker verifies itself."
     }
   ],
   "components": {

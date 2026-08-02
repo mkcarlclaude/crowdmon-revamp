@@ -7,12 +7,13 @@ healthy, observable infrastructure.
 zero-shot model, have humans verify the long tail, distil a real-time detector that runs
 in the browser — is the workload that generates signal worth observing.
 
-> **Status: M1, M2 and M3 complete.** D1 and R2 are provisioned by Terraform, the Worker
-> is deployed by CI at `crowdmon-api.mkcarl-dev.workers.dev`, and its spans are landing
-> in Tempo through a gated OTLP endpoint. A URL can be submitted, a job claimed,
-> heartbeated and completed over a contract both runtimes generate from, with Cloudflare
-> Access in front of the admin endpoints. M4 is the Go worker that drives the queue for
-> real.
+> **Status: M1 through M4 complete.** D1 and R2 are provisioned by Terraform, the Worker
+> is deployed by CI at `api.crowdmon.mkcarl.com`, and its spans are landing in Tempo
+> through a gated OTLP endpoint. A URL can be submitted, a job claimed, heartbeated and
+> completed over a contract both runtimes generate from, with Cloudflare Access in front
+> of the admin endpoints — and the far end of that queue is now a Go worker running as a
+> container on the home box, polling on a budget and closing the lifecycle for real. It
+> does no video work yet; M5 is the admin dashboard, M7 the extraction.
 
 ## Documents
 
@@ -106,7 +107,8 @@ span_name="GET /health"}` appears in Prometheus via Tempo's metrics-generator.
 ```
 apps/api/     Cloudflare Worker — Hono API, OpenAPI contract, D1 job queue, OTel
 apps/web/     React SPA on Pages — admin dashboard. Empty until M5.1
-worker/       Go module — config loader, generated API types. Poll loop and extraction land in M4/M7/M8
+worker/       Go module — the home-side worker: config, telemetry, poll loop, queue client. Extraction lands in M7/M8
+deploy/       How the worker gets onto the home box: compose project and a systemd user timer. See deploy/homebox/README.md
 infra/        Terraform — D1, R2, the Worker's custom domain and the Access app. See infra/README.md
 ```
 
@@ -168,6 +170,33 @@ Claiming a job whose video or chunk row is missing retires it as `failed` and an
 204. Fan-out is not transactional, so a chunk job with no `chunks` row is reachable in
 production; re-queueing it would hand the same broken job out on every subsequent poll.
 
+## The worker
+
+`worker/` is a Go binary that polls the queue and runs jobs. As of M4 it runs no jobs:
+it claims one, holds the lease, and reports it done without touching the video, which is
+enough to prove the lifecycle closes end to end. Extraction slots into `Runner.Work` in
+M7.
+
+Polling is 30s idle, doubling to a 120s cap on repeated empty polls, immediate re-poll
+after finding work — CONTEXT.md §Q20. That is ~1,000 requests a day against a
+100,000/day free tier, where a 5s interval would burn 17,280 returning nothing, and up
+to two minutes of pickup latency is invisible against a 10–20 minute job.
+
+While a job is held, a goroutine renews the lease every 30s. A 404 from the heartbeat
+means the reaper took the job back: the work's context is cancelled and nothing is
+reported, because the row is already `pending` again and may be running elsewhere. A
+500 means the API is briefly unwell and is deliberately *not* treated the same way —
+giving up there would abandon a job the worker still holds, and the reaper would then
+wait out the whole lease window before anyone picked it up.
+
+`internal/queue` wraps the client oapi-codegen generates from the same spec the Worker
+serves, so a renamed field breaks the Go build rather than a production request. What it
+adds is the part a generator cannot know: which status code means what.
+
+The binary ships as a container carrying ffmpeg and yt-dlp, built and pushed to GHCR on
+every merge that touches `worker/`. The home box pulls it on a timer and builds nothing.
+See `deploy/homebox/README.md`.
+
 ## Admin access
 
 `/api/admin/*` is gated twice, and the second gate is not decoration.
@@ -179,9 +208,11 @@ application and its policy are in `infra/access.tf`.
 
 Behind it, `src/middleware/access.ts` verifies the `Cf-Access-Jwt-Assertion` header
 itself against the team's JWKS, then checks the identity against its own allowlist.
-Reaching the Worker does not imply passing Access: the same code is served on
-`crowdmon-api.mkcarl-dev.workers.dev`, where no Access application exists and never
-will. Without the Worker's own check, knowing that hostname would be enough.
+Reaching the Worker still does not imply passing Access. Access binds to a route on a
+zone, so any hostname the Worker is served on that the application does not cover
+arrives here with no assertion attached — and re-enabling one is a single line of
+config that would not look like a security decision at the time. The two gates also
+fail independently: the policy is Terraform, the allowlist is a Worker secret.
 
 The `aud` check is the load-bearing one. Every application in an Access organisation is
 signed by the same keys, so a token minted for `otlp.mkcarl.com` verifies perfectly well
@@ -195,23 +226,26 @@ TOML quietly filed them under the R2 binding. The outage was the correct failure
 
 Verified in production on 2026-08-02: on the custom domain an unauthenticated
 `POST /api/admin/videos` is answered by Cloudflare Access with a 302 to
-`mkcarl.cloudflareaccess.com`, never reaching the Worker. On the workers.dev hostname,
-where no Access application exists, the same request gets `401 missing Access assertion`
-and a request carrying a junk token gets `401 invalid Access assertion` — repeated five
-and three times respectively, since a single sample cannot distinguish a working gate
-from a rollout still serving two versions. `/health`, `/openapi.json` and
-`POST /api/jobs/claim` answer normally on both hostnames throughout.
+`mkcarl.cloudflareaccess.com`, never reaching the Worker. On the workers.dev hostname —
+which still existed that morning — the same request got `401 missing Access assertion`,
+and one carrying a junk token got `401 invalid Access assertion`, repeated five and
+three times respectively, since a single sample cannot tell a working gate from a
+rollout still serving two versions. `/health`, `/openapi.json` and
+`POST /api/jobs/claim` answered normally on both hostnames throughout.
 
-**One hostname is still ungated at the edge.** Access covers
-`api.crowdmon.mkcarl.com/api/admin`; `crowdmon-api.mkcarl-dev.workers.dev` has no Access
-application in front of it and the Worker's own verification is the only thing standing
-there. Setting `workers_dev = false` would close it, at the cost of repointing the
-deploy workflow's `API_BASE_URL` health check at the custom domain.
+**That second hostname is now closed.** `workers_dev = false` in `wrangler.toml`, since
+M4.3 pointed the Go worker at the custom domain and nothing else needed it. Access
+cannot cover a `*.workers.dev` name, so while it was up, `/api/admin/*` had the Worker's
+JWT check and nothing else in front of it — one layer where the design calls for two.
+The setting defaults to *on*, so `test/node/wrangler-config.test.ts` asserts it stays
+off; deleting the line would otherwise reopen the hostname silently. The deploy
+workflow's `API_BASE_URL` variable was repointed at the custom domain in the same
+change, because it is what the post-deploy health check reads.
 
 ## Working on it
 
-Requires Node 22, pnpm 10 and Go 1.25. The module itself declares 1.24 and compiles
-under it; 1.25 is what oapi-codegen needs to run. Nothing needs cloud credentials.
+Requires Node 22, pnpm 10 and Go 1.25 — the module declares 1.25 since the OTel SDK
+raised it, and oapi-codegen needs it too. Nothing needs cloud credentials.
 
 ```sh
 pnpm install

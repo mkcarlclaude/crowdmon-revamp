@@ -127,8 +127,10 @@ private admin plane, not a data path.
   on both sides is what produced the `storage_url` / `url` mismatch in the old code.
 - **Admin authentication (M3.5):** Cloudflare Access over
   `api.crowdmon.mkcarl.com/api/admin`, plus the Worker verifying the assertion itself.
-  Both, not either: the Worker is also served on its workers.dev hostname, which no
-  Access application covers, so reaching the code does not imply passing the gate. The
+  Both, not either: Access binds to a route on a zone, so any hostname the Worker is
+  served on that the application does not cover reaches the code with no assertion
+  attached. The workers.dev hostname was exactly that until M4.6 closed it, and
+  re-opening one is a line of config rather than a decision anyone would notice. The
   allowlist deliberately exists twice — Terraform's decides who Cloudflare will issue an
   assertion to, the Worker's secret decides who it will act for. `allowed_idps` is
   enumerated rather than left empty, because empty means "every provider on the account"
