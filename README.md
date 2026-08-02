@@ -7,9 +7,10 @@ healthy, observable infrastructure.
 zero-shot model, have humans verify the long tail, distil a real-time detector that runs
 in the browser — is the workload that generates signal worth observing.
 
-> **Status: M1 in progress.** The monorepo skeleton, a hello-world Worker and CI are in
-> place and green locally. Nothing is deployed — the Cloudflare account has not been
-> provisioned, so the Terraform in `infra/` has never been applied.
+> **Status: M1 and M2 complete.** D1 and R2 are provisioned by Terraform, the Worker is
+> deployed by CI at `crowdmon-api.mkcarl-dev.workers.dev`, and its spans are landing in
+> Tempo through a gated OTLP endpoint. M3 — the D1 schema and the typed job contract —
+> is next.
 
 ## Documents
 
@@ -59,14 +60,58 @@ YouTube ──► Go worker (home Ubuntu)          Cloudflare (free tier)
 | Observability | OpenTelemetry → self-hosted Tempo/Prometheus/Grafana | With no user-facing frontend in v1, Grafana *is* the UI |
 | Training | Manual, batch, on Kaggle | No GPU worth training on at home — auto-retrain is ruled out by physics, not preference |
 
+## Observability
+
+A span leaves the Worker on every request, crosses the public internet to a Cloudflare
+POP, and comes back down a cloudflared tunnel to a collector on the home box that binds
+no public port.
+
+```
+Worker ──► otlp.mkcarl.com ──► Cloudflare Access ──► cloudflared ──► otel-collector:4318
+   │            (public)          (service token)      (outbound)          │
+   └── CF-Access-Client-Id/Secret from wrangler secrets                    ▼
+                                                        Tempo ─► metrics-generator ─► Prometheus ─► Grafana
+```
+
+**OTLP over HTTP, not gRPC.** This is the single most expensive thing to discover late.
+The Workers runtime provides `fetch` and no raw sockets, so `@opentelemetry/exporter-trace-otlp-grpc`
+cannot run there at all — the collector's 4317 receiver is unreachable from the edge no
+matter how it is configured. Everything downstream follows from that: the tunnel fronts
+4318, and `@opentelemetry/sdk-node` is equally unusable, which is why
+`@microlabs/otel-cf-workers` does the bootstrapping.
+
+**The endpoint is not this project's to manage.** The monitoring stack is a separate
+project with its own repository. This one consumes a hostname and owns nothing else —
+see [`CONTEXT.md`](CONTEXT.md) §6 for the reasoning and the runbook that gated it.
+
+**Spans are named after routing, not before.** The instrumentation opens its span before
+Hono has looked at the URL. Left alone, every request would share one span name with the
+raw path as the only discriminator — unbounded cardinality as soon as a route takes a
+path parameter, and useless RED metrics. `src/middleware/trace-route.ts` renames the span
+to `GET /health` once the match is known. Unmatched requests deliberately record no
+`http.route`, because Hono's `/*` non-match sentinel is not a real route template.
+
+**A missing service token looks exactly like working software.** The Worker keeps serving
+traffic and every export is rejected at the edge with a 403. Spans are dropped on failure
+by design — no buffer, no replay — so the only way to notice is that Tempo is empty.
+
+Verified end to end on 2026-08-02: `GET /health` appears in Tempo as a `SPAN_KIND_SERVER`
+span carrying `http.route=/health`, and `traces_spanmetrics_calls_total{service="crowdmon-api",
+span_name="GET /health"}` appears in Prometheus via Tempo's metrics-generator.
+
 ## Layout
 
 ```
-apps/api/     Cloudflare Worker — Hono API, health endpoint. D1 queue and OpenAPI land in M3
+apps/api/     Cloudflare Worker — Hono API, health endpoint, OTel. D1 queue and OpenAPI land in M3
 apps/web/     React SPA on Pages — admin dashboard. Empty until M5.1
 worker/       Go module — config loader. Poll loop and extraction land in M4/M7/M8
-infra/        Terraform — D1 and R2 declared, never applied. See infra/README.md
+infra/        Terraform — D1 and R2, applied. See infra/README.md
 ```
+
+Inside `apps/api/src`, `app.ts` holds the routes and `index.ts` is the instrumented entry
+point. They are separate because `instrument()` imports `cloudflare:workers`, which only
+workerd can resolve — tests import `app.ts` and run on plain Node rather than shimming
+the module loader.
 
 ## Working on it
 
@@ -79,8 +124,21 @@ cd worker && go vet ./... && go test ./...  # Go
 ```
 
 CI runs exactly these, split into two path-filtered jobs so a Go change does not
-rebuild the SPA. Deploying additionally needs `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID` repository secrets, which do not exist yet.
+rebuild the SPA.
+
+Deploying is done by CI on merge to main, using `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` on the `production` environment, plus an `API_BASE_URL`
+environment *variable* for the post-deploy health check. That one has to be a variable
+rather than a secret — the workflow reads it from the `vars` context, which cannot see
+secrets, and the check would silently skip.
+
+The Access service token is not a CI concern. It lives in wrangler secrets, set once
+against the Worker:
+
+```sh
+pnpm --filter @crowdmon/api exec wrangler secret put CF_ACCESS_CLIENT_ID
+pnpm --filter @crowdmon/api exec wrangler secret put CF_ACCESS_CLIENT_SECRET
+```
 
 ## Milestones
 
