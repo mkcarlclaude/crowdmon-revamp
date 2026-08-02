@@ -44,7 +44,7 @@ bucket_name = "crowdmon-frames"
 # regenerated if the Access application is destroyed and recreated, and a stale
 # value fails every admin request closed with a 401.
 ACCESS_TEAM_DOMAIN = "https://mkcarl.cloudflareaccess.com"
-ACCESS_AUD = ""
+ACCESS_AUD = "c2c479badd245242deee8f7b8c459af12850ac6bd0815f54ac3fa01f47f7403f"
 
 # ADMIN_EMAILS is the allowlist checked after the assertion verifies, and is a
 # secret only because it is a list of real addresses and this repo is public:
