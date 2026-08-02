@@ -1,0 +1,20 @@
+[Unit]
+Description=Check for a new crowdmon worker image
+
+[Timer]
+# Every six hours. The publish workflow runs on merge, so this is the delay
+# between merging and the box running it — hours is right for a project whose
+# jobs take tens of minutes, and it keeps the registry pulls to four a day.
+OnCalendar=*-*-* 00,06,12,18:00:00
+
+# Fires after a reboot that spanned a scheduled run, so a box that was off
+# overnight is not a release behind.
+Persistent=true
+
+# Nothing is waiting on this, and a fixed minute across every machine anyone
+# ever writes a timer for is how registries get thundering herds.
+RandomizedDelaySec=15m
+
+# A user unit, so timers.target here is the user manager's.
+[Install]
+WantedBy=timers.target
