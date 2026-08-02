@@ -6,6 +6,15 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 
+# Fronts the home collector's OTLP HTTP receiver. A var rather than a secret:
+# the hostname is public knowledge, and that is acceptable only because Access
+# gates it (CONTEXT.md §9). The credentials that get past Access are secrets and
+# are set out-of-band:
+#
+#   wrangler secret put CF_ACCESS_CLIENT_ID
+#   wrangler secret put CF_ACCESS_CLIENT_SECRET
+OTLP_ENDPOINT = "https://otlp.mkcarl.com/v1/traces"
+
 # D1 and R2 are provisioned by Terraform (M1.3). The IDs below come from
 # `terraform -chdir=infra output`; wrangler binds to them, it does not create
 # them. If these ever disagree with Terraform, Terraform is the source of truth.
