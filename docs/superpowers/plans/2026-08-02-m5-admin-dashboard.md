@@ -1010,32 +1010,29 @@ export const listJobsHandler: RouteHandler<typeof listJobsRoute, { Bindings: Bin
 ) => {
   const { status, limit } = c.req.valid("query");
 
-  // One query with two LEFT JOINs rather than a jobs query followed by a chunks
-  // query: the second query would be a second D1 round trip on every poll from
-  // every open tab, and `chunks` is 1:1 with a chunk job by unique index, so
-  // the join cannot fan the result out.
-  const statement = status
-    ? c.env.DB.prepare(
-        `SELECT j.*, v.url AS video_url,
-                ch.segment_index, ch.start_seconds, ch.end_seconds
-           FROM jobs j
-           JOIN videos v ON v.id = j.video_id
-           LEFT JOIN chunks ch ON ch.job_id = j.id
-          WHERE j.status = ?
-          ORDER BY j.id DESC
-          LIMIT ?`,
-      ).bind(status, limit ?? DEFAULT_LIMIT)
-    : c.env.DB.prepare(
-        `SELECT j.*, v.url AS video_url,
-                ch.segment_index, ch.start_seconds, ch.end_seconds
-           FROM jobs j
-           JOIN videos v ON v.id = j.video_id
-           LEFT JOIN chunks ch ON ch.job_id = j.id
-          ORDER BY j.id DESC
-          LIMIT ?`,
-      ).bind(limit ?? DEFAULT_LIMIT);
+  // One query with a JOIN and a LEFT JOIN rather than a jobs query followed by
+  // a chunks query: the second query would be another D1 round trip on every
+  // poll from every open tab, and `chunks` is 1:1 with a chunk job by unique
+  // index, so the join cannot fan the result out.
+  //
+  // The WHERE clause is assembled rather than the whole statement being written
+  // out twice. `status` is never interpolated — it is bound like every other
+  // parameter; what varies is only whether the clause is present.
+  const filter = status ? "WHERE j.status = ?" : "";
+  const bindings = status ? [status, limit ?? DEFAULT_LIMIT] : [limit ?? DEFAULT_LIMIT];
 
-  const { results } = await statement.all<JobRow>();
+  const { results } = await c.env.DB.prepare(
+    `SELECT j.*, v.url AS video_url,
+            ch.segment_index, ch.start_seconds, ch.end_seconds
+       FROM jobs j
+       JOIN videos v ON v.id = j.video_id
+       LEFT JOIN chunks ch ON ch.job_id = j.id
+       ${filter}
+      ORDER BY j.id DESC
+      LIMIT ?`,
+  )
+    .bind(...bindings)
+    .all<JobRow>();
 
   return c.json(
     {
@@ -1712,7 +1709,10 @@ describe("JobList", () => {
     ]);
 
     render(wrap(<JobList />));
-    const group = await screen.findByRole("group", { name: /dQw4w9WgXcQ/ });
+    // A <section> with an accessible name exposes the `region` role, not
+    // `group`. Querying by role rather than by test id keeps the assertion tied
+    // to what a screen reader would announce.
+    const group = await screen.findByRole("region", { name: /dQw4w9WgXcQ/ });
     expect(within(group).getByText(/segment 1/i)).toBeInTheDocument();
   });
 
@@ -1860,7 +1860,7 @@ function JobRow({ job, now }: { job: AdminJobRow; now: number }) {
 }
 ```
 
-Note for the implementer: `aria-label` on a `<section>` gives it the `group` role, which is what the test queries with `getByRole("group", ...)`.
+Note for the implementer: `aria-label` on a `<section>` gives it the `region` role, which is what the test queries with `findByRole("region", ...)`.
 
 - [ ] **Step 5: Run the test to verify it passes**
 
