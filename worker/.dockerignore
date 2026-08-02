@@ -1,0 +1,5 @@
+# The build only needs the module. Everything else is either regenerated,
+# irrelevant to a Linux binary, or a way to invalidate the cache for free.
+Dockerfile
+.dockerignore
+*.md
