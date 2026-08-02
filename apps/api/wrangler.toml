@@ -3,17 +3,37 @@ main = "src/index.ts"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Everything in this table is a plain var, readable by anyone who can read this
+# repo. Secrets are set out-of-band and never appear here:
+#
+#   wrangler secret put CF_ACCESS_CLIENT_ID
+#   wrangler secret put CF_ACCESS_CLIENT_SECRET
+#   wrangler secret put ADMIN_EMAILS          # comma-separated
+#
+# Keep [vars] above the [[d1_databases]] and [[r2_buckets]] tables, and add new
+# vars *here* rather than at the end of the file. TOML assigns a bare key to
+# the most recent table header, so a var appended below lands inside the R2
+# binding instead. wrangler accepts that silently and the Worker deploys
+# without the var — which, for ACCESS_AUD, meant every admin request answering
+# 503 in production.
 [vars]
 ENVIRONMENT = "production"
 
 # Fronts the home collector's OTLP HTTP receiver. A var rather than a secret:
 # the hostname is public knowledge, and that is acceptable only because Access
-# gates it (CONTEXT.md §9). The credentials that get past Access are secrets and
-# are set out-of-band:
-#
-#   wrangler secret put CF_ACCESS_CLIENT_ID
-#   wrangler secret put CF_ACCESS_CLIENT_SECRET
+# gates it (CONTEXT.md §9).
 OTLP_ENDPOINT = "https://otlp.mkcarl.com/v1/traces"
+
+# Cloudflare Access on /api/admin/* (M3.5). Both are needed to *verify* an
+# assertion and neither is enough to mint one: the team domain appears in every
+# Access login URL, and the aud tag identifies an application rather than
+# authorising anything.
+#
+# ACCESS_AUD comes from `terraform -chdir=infra output access_aud`. It is
+# regenerated if the Access application is destroyed and recreated, and a stale
+# value fails every admin request closed.
+ACCESS_TEAM_DOMAIN = "https://mkcarl.cloudflareaccess.com"
+ACCESS_AUD = "c2c479badd245242deee8f7b8c459af12850ac6bd0815f54ac3fa01f47f7403f"
 
 # D1 and R2 are provisioned by Terraform (M1.3). The IDs below come from
 # `terraform -chdir=infra output`; wrangler binds to them, it does not create
@@ -34,23 +54,3 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "FRAMES"
 bucket_name = "crowdmon-frames"
-
-# Cloudflare Access on /api/admin/* (M3.5). Plain vars, not secrets: the team
-# domain appears in every Access login URL, and the aud tag identifies an
-# application rather than authorising anything. Both are needed to *verify* an
-# assertion, neither is enough to mint one.
-#
-# ACCESS_AUD comes from `terraform -chdir=infra output access_aud`. It is
-# regenerated if the Access application is destroyed and recreated, and a stale
-# value fails every admin request closed with a 401.
-ACCESS_TEAM_DOMAIN = "https://mkcarl.cloudflareaccess.com"
-ACCESS_AUD = "c2c479badd245242deee8f7b8c459af12850ac6bd0815f54ac3fa01f47f7403f"
-
-# ADMIN_EMAILS is the allowlist checked after the assertion verifies, and is a
-# secret only because it is a list of real addresses and this repo is public:
-#
-#   wrangler secret put ADMIN_EMAILS      # comma-separated
-#
-# Terraform holds the same list for the Access policy. Two lists on purpose —
-# one decides who Cloudflare will issue an assertion to, the other who this
-# Worker will act for, and widening one must not widen the other.
