@@ -1,0 +1,45 @@
+# The worker on the home box.
+#
+# Its own compose project rather than a service inside the monitoring stack's
+# file: that stack is shared with unrelated projects, has no git checkout on
+# the box (CONTEXT.md §9.7), and taking it down to restart this worker would
+# be an absurd blast radius. Ownership follows the blast radius here exactly
+# as it did for the tunnel in §6.
+#
+# Deployed to /home/carl/crowdmon. See README.md in this directory.
+
+services:
+  worker:
+    # `latest` is what the update timer pulls. The running image's digest is
+    # the honest answer to "what is deployed", and `docker compose images`
+    # prints it.
+    image: ghcr.io/mkcarlclaude/crowdmon-worker:latest
+    container_name: crowdmon-worker
+
+    # Not `always`: an operator who stops this deliberately should find it
+    # still stopped after a reboot. `unless-stopped` restarts it on boot and
+    # after a crash, and respects an explicit `docker stop`.
+    restart: unless-stopped
+
+    # Credentials and the API base URL. Not committed — see .env.example.
+    env_file: .env
+
+    # No ports, no inbound anything. The worker only makes outbound calls: to
+    # the API over the internet, and to the collector through otlp.mkcarl.com.
+    # It joins no network beyond the default one this project creates, and in
+    # particular not the monitoring stack's — nothing needs to reach it.
+
+    # Stdout is the log, and the box's journal is where it lands. Capped so a
+    # worker in a failure loop cannot fill the disk the video work will need.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    # Room for one video and its frames, with the rest of the box left alone.
+    # Raised in M7 when extraction is real and the working set is known.
+    deploy:
+      resources:
+        limits:
+          memory: 4g

@@ -1,0 +1,32 @@
+# Pulls the current image and restarts the worker if it changed.
+#
+# A systemd oneshot rather than watchtower: watchtower is a second always-on
+# daemon watching every container on a box that runs other people's things,
+# and this is three commands that leave a trace in the journal.
+#
+# A *user* unit, installed under ~/.config/systemd/user. Nothing here needs
+# root — `carl` is in the docker group — and a deployment that cannot be
+# installed without sudo is one that cannot be installed at all from a
+# non-interactive session. Lingering is enabled so the user manager runs
+# without anyone logged in.
+
+[Unit]
+Description=Pull and restart the crowdmon worker
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/crowdmon
+
+# `pull` then `up -d` rather than `up --pull always`: with two commands the
+# journal says whether anything was actually downloaded, which is the
+# difference between "the update ran" and "the update did something".
+ExecStart=/usr/bin/docker compose pull --quiet
+ExecStart=/usr/bin/docker compose up -d
+
+# The old image is untagged by the pull and would otherwise accumulate one
+# ~1GB layer set per release. Dangling only — nothing tagged is touched, so
+# the monitoring stack's images are safe.
+ExecStart=/usr/bin/docker image prune --force
+
+[Install]
+WantedBy=default.target
