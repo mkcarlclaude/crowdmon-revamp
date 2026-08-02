@@ -1,10 +1,17 @@
+import { useJobs } from "../api/queries";
 import { JobList } from "../components/JobList";
+import { SessionExpiredBanner } from "../components/SessionExpiredBanner";
 import { SubmitForm } from "../components/SubmitForm";
 
 export function Admin() {
+  // Reads the same cached query the list renders — TanStack Query dedupes it,
+  // so this is the existing poll's error, not a second request.
+  const { error } = useJobs();
+
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-8 p-8">
       <h1 className="text-2xl font-semibold">Admin</h1>
+      <SessionExpiredBanner error={error} />
       <section>
         <h2 className="mb-2 text-sm uppercase tracking-wide text-[var(--color-text-muted)]">
           Submit a video
