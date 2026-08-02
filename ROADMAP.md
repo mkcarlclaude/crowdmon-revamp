@@ -202,11 +202,13 @@ interactive Access login, so that half stays covered by M3.5's own verification.
 - [x] Timer-based image pull, no inbound access — a systemd **user** timer, four times a
       day; sudo on that box needs a password, and a deployment that cannot be installed
       non-interactively cannot be automated
-- [ ] Survives host reboot — every mechanism verified (Docker enabled at boot, the
-      container running under an unsuppressed `unless-stopped` policy, lingering on, the
-      timer enabled and `Persistent`), but the reboot itself needs sudo and has not been
-      performed. `docker kill` is *not* a test of this: Docker suppresses the restart
-      policy for anything stopped by hand
+- [x] Survives host reboot — **accepted on the mechanisms, not on a reboot.** Docker is
+      enabled at boot, the container runs under an `unless-stopped` policy that has not
+      been suppressed, lingering is on, and the timer is enabled and `Persistent`. The
+      reboot itself needs a sudo password and was deliberately not performed; closing
+      this was the owner's call, recorded here so nobody later reads it as tested.
+      `docker kill` is *not* a substitute test: Docker suppresses the restart policy for
+      anything stopped by hand, which is exactly the path a reboot does not take
 
 ### M4.6 — Close the ungated workers.dev hostname — **done 2026-08-02**
 
