@@ -47,6 +47,29 @@ describe("apiFetch", () => {
     await expect(apiFetch("/api/admin/jobs", Body)).rejects.toBeInstanceOf(SessionExpiredError);
   });
 
+  it("treats a non-JSON server error as a genuine failure, not an expired session", async () => {
+    // apps/api/src/app.ts's onError rethrows anything that isn't a 400
+    // HTTPException unwrapped, so an uncaught exception reaches the browser
+    // as Cloudflare's own HTML error page — non-JSON, but on a non-2xx
+    // status. That is the origin failing, not Access's login page: the login
+    // page only ever arrives on a 2xx (a followed redirect) or the un-followed
+    // 3xx covered above. This must surface as a real, actionable error.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        respond("<!doctype html><title>Internal Server Error</title>", {
+          status: 500,
+          type: "text/html; charset=utf-8",
+        }),
+      ),
+    );
+
+    const error = await apiFetch("/api/admin/jobs", Body).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).not.toBeInstanceOf(SessionExpiredError);
+    expect((error as ApiError).status).toBe(500);
+  });
+
   it("surfaces the API's error message and validation issues", async () => {
     vi.stubGlobal(
       "fetch",
@@ -70,5 +93,20 @@ describe("apiFetch", () => {
     // an undefined three components deep.
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(respond('{"ok":"yes"}', { status: 200 })));
     await expect(apiFetch("/api/admin/jobs", Body)).rejects.toThrow();
+  });
+
+  it("merges caller headers regardless of HeadersInit shape", async () => {
+    // RequestInit["headers"] admits a plain object, an array of pairs, or a
+    // Headers instance. An object spread only understands the first and
+    // silently drops the other two — this pins the fix for all three.
+    const fetchMock = vi.fn().mockResolvedValue(respond('{"ok":true}', { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiFetch("/api/admin/jobs", Body, { headers: [["x-test", "1"]] });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Headers;
+    expect(headers.get("x-test")).toBe("1");
+    expect(headers.get("accept")).toBe("application/json");
   });
 });

@@ -18,6 +18,13 @@ export async function apiFetch<T>(
 ): Promise<T> {
   let response: Response;
 
+  // `Headers` understands all three `HeadersInit` shapes — a plain object, an
+  // array of pairs, or another `Headers` instance — and normalizes them into
+  // one. An object spread only understands the first, so it would silently
+  // drop a caller's headers passed as either of the other two.
+  const headers = new Headers(init?.headers);
+  if (!headers.has("accept")) headers.set("accept", "application/json");
+
   try {
     response = await fetch(path, {
       ...init,
@@ -25,7 +32,7 @@ export async function apiFetch<T>(
       // relied upon: `same-origin` is the default today, and an explicit value
       // survives the day someone moves the API back to another hostname.
       credentials: "same-origin",
-      headers: { accept: "application/json", ...init?.headers },
+      headers,
     });
   } catch (cause) {
     // A followed redirect to a cross-origin login page has no CORS headers, so
@@ -37,12 +44,24 @@ export async function apiFetch<T>(
   // A 3xx that reached us un-followed can only be Access.
   if (response.status >= 300 && response.status < 400) throw new SessionExpiredError();
 
-  // The documented symptom: fetch followed the 302 and this is the login page
-  // wearing a 200. Content-type, not body sniffing — the API answers
-  // application/json on every path including its errors, so anything else on an
-  // API route is not the API answering.
+  // The API answers application/json on every *handled* path, success or
+  // failure alike (apps/api/src/app.ts's defaultHook, and the 400 branch of
+  // onError). But onError deliberately rethrows anything else as a bug rather
+  // than dressing it up as JSON, so an uncaught exception reaches the browser
+  // as Cloudflare's own HTML error page — non-JSON, but not a login page.
+  //
+  // Content-type alone can't tell those two non-JSON cases apart, but status
+  // can: the login page is what a followed 302 lands on, so it only ever
+  // arrives as a 2xx (an un-followed redirect is the 3xx handled above). A
+  // non-JSON body on a non-2xx status is the origin failing, not Access
+  // intercepting — that is a real error worth surfacing, not an expiry.
   const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) throw new SessionExpiredError();
+  if (!contentType.includes("application/json")) {
+    if (response.ok) throw new SessionExpiredError();
+    // No parseable body to build a real error message from. Naming the
+    // status honestly beats inventing a message the response doesn't carry.
+    throw new ApiError(response.status, `request failed with status ${response.status}`);
+  }
 
   const body: unknown = await response.json();
 
