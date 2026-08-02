@@ -5,6 +5,7 @@ import { HealthResponse } from "../schemas";
 export const healthRoute = createRoute({
   method: "get",
   path: "/health",
+  operationId: "getHealth",
   tags: ["meta"],
   summary: "Liveness and deployment identity",
   responses: {

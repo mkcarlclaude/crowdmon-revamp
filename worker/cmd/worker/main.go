@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/telemetry"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/worker"
 )
@@ -72,11 +73,22 @@ func run(ctx context.Context) error {
 		"tracing", cfg.TracingEnabled(),
 	)
 
+	jobs, err := queue.New(cfg.APIBaseURL, cfg.WorkerID)
+	if err != nil {
+		return err
+	}
+
+	// Runner.Work is left nil: M4.3 claims a job, holds the lease, and
+	// reports it done without touching the video. Extraction lands in M7 and
+	// slots in here.
+	runner := worker.Runner{
+		Queue:             jobs,
+		Logger:            logger,
+		HeartbeatInterval: worker.DefaultHeartbeatInterval,
+	}
+
 	loop := worker.Loop{
-		// Replaced in M4.3 by the queue client. Until then the loop is real
-		// and the work is not: it polls nothing on the §Q20 schedule, which
-		// is enough to run the container and watch it idle correctly.
-		Poll:    func(context.Context) (bool, error) { return false, nil },
+		Poll:    runner.PollOnce,
 		Backoff: worker.NewBackoff(worker.IdleInterval, worker.MaxInterval),
 		Logger:  logger,
 	}

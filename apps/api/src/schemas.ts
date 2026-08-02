@@ -66,12 +66,19 @@ export const SubmitVideoRequest = z
   })
   .openapi("SubmitVideoRequest");
 
-export const SubmitVideoResponse = z
+/**
+ * Deliberately not named `SubmitVideoResponse`. oapi-codegen owns the
+ * `<OperationId>Response` namespace on the Go side — it generates one wrapper
+ * type per operation — so a schema named after the `submitVideo` operation's
+ * response collides with generated code and stops the module compiling.
+ * The rule: schema names must not be an operationId with `Response` appended.
+ */
+export const VideoSubmission = z
   .object({
     video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
     job_id: z.int().positive().openapi({ example: 1 }),
   })
-  .openapi("SubmitVideoResponse");
+  .openapi("VideoSubmission");
 
 /** Mirrors the `kind` CHECK constraint in migration 0001. */
 export const JobKind = z.enum(["download", "chunk"]).openapi("JobKind");

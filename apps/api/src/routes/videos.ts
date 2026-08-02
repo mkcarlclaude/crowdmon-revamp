@@ -1,11 +1,12 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import type { Bindings } from "../bindings";
-import { errorResponse, SubmitVideoRequest, SubmitVideoResponse } from "../schemas";
+import { errorResponse, SubmitVideoRequest, VideoSubmission } from "../schemas";
 import { youtubeVideoId } from "../youtube";
 
 export const submitVideoRoute = createRoute({
   method: "post",
   path: "/api/admin/videos",
+  operationId: "submitVideo",
   tags: ["admin"],
   summary: "Submit a YouTube URL for processing",
   description:
@@ -21,7 +22,7 @@ export const submitVideoRoute = createRoute({
   responses: {
     201: {
       description: "Video accepted and a download job enqueued",
-      content: { "application/json": { schema: SubmitVideoResponse } },
+      content: { "application/json": { schema: VideoSubmission } },
     },
     400: errorResponse("Malformed body, or a URL that names no YouTube video"),
     401: errorResponse("Missing or invalid Access assertion"),
