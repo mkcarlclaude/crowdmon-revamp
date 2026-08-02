@@ -1,0 +1,64 @@
+name: Publish worker image
+
+# Builds and pushes the worker container on merge to main. The home box pulls
+# from GHCR on a timer (M4.5), so this workflow is the whole delivery path —
+# nothing is ever built on the box itself.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - '.github/workflows/publish-worker.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # The only extra scope needed. GITHUB_TOKEN can push to a package owned by
+  # this repository, so no PAT and no long-lived registry credential exists.
+  packages: write
+
+jobs:
+  publish:
+    name: Build and push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # buildx, for the layer cache below. The build itself is single-platform
+      # — the home box is the only consumer and it is x86_64, so an arm64 leg
+      # would double the build time to produce something nothing pulls.
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/crowdmon-worker
+          # `latest` is what the box's timer pulls; the sha tag is what makes
+          # a rollback possible without rebuilding, and what a running
+          # container can be traced back to.
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: worker
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Without a cache every push recompiles the module and re-downloads
+          # ffmpeg's dependency tree. `mode=max` caches the build stage too,
+          # which is the expensive half.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
