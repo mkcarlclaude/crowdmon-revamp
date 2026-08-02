@@ -6,7 +6,7 @@ import {
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { app } from "../src/app";
+import { app } from "../../src/app";
 
 // A stand-in for what `instrument()` does in the real runtime: open a span
 // around the request and make it the active one. Testing against the real

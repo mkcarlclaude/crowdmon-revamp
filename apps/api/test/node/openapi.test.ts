@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { specPath } from "../scripts/spec-path";
-import { app } from "../src/app";
-import { openApiConfig } from "../src/openapi";
+import { specPath } from "../../scripts/spec-path";
+import { app } from "../../src/app";
+import { openApiConfig } from "../../src/openapi";
 
 const committed = JSON.parse(readFileSync(specPath, "utf8")) as unknown;
 

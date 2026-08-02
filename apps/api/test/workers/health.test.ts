@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { app } from "../src/app";
+import { app } from "../../src/app";
 
 const env = { ENVIRONMENT: "test" };
 
