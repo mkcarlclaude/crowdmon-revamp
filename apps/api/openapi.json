@@ -18,18 +18,26 @@
         "properties": {
           "status": {
             "type": "string",
-            "enum": ["ok"]
+            "enum": [
+              "ok"
+            ]
           },
           "service": {
             "type": "string",
-            "enum": ["crowdmon-api"]
+            "enum": [
+              "crowdmon-api"
+            ]
           },
           "environment": {
             "type": "string",
             "example": "production"
           }
         },
-        "required": ["status", "service", "environment"]
+        "required": [
+          "status",
+          "service",
+          "environment"
+        ]
       },
       "SubmitVideoResponse": {
         "type": "object",
@@ -40,10 +48,15 @@
           },
           "job_id": {
             "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
             "example": 1
           }
         },
-        "required": ["video_id", "job_id"]
+        "required": [
+          "video_id",
+          "job_id"
+        ]
       },
       "ErrorResponse": {
         "type": "object",
@@ -59,7 +72,9 @@
             }
           }
         },
-        "required": ["error"]
+        "required": [
+          "error"
+        ]
       },
       "ValidationIssue": {
         "type": "object",
@@ -73,7 +88,10 @@
             "example": "Invalid URL"
           }
         },
-        "required": ["path", "message"]
+        "required": [
+          "path",
+          "message"
+        ]
       },
       "SubmitVideoRequest": {
         "type": "object",
@@ -84,7 +102,9 @@
             "example": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
           }
         },
-        "required": ["url"]
+        "required": [
+          "url"
+        ]
       },
       "Job": {
         "type": "object",
@@ -116,11 +136,20 @@
             "$ref": "#/components/schemas/ChunkWork"
           }
         },
-        "required": ["id", "kind", "video_id", "video_url", "attempts"]
+        "required": [
+          "id",
+          "kind",
+          "video_id",
+          "video_url",
+          "attempts"
+        ]
       },
       "JobKind": {
         "type": "string",
-        "enum": ["download", "chunk"]
+        "enum": [
+          "download",
+          "chunk"
+        ]
       },
       "ChunkWork": {
         "type": "object",
@@ -142,7 +171,11 @@
             "example": 60
           }
         },
-        "required": ["segment_index", "start_seconds", "end_seconds"]
+        "required": [
+          "segment_index",
+          "start_seconds",
+          "end_seconds"
+        ]
       },
       "ClaimRequest": {
         "type": "object",
@@ -153,7 +186,9 @@
             "example": "carls-ubuntu-1"
           }
         },
-        "required": ["worker_id"]
+        "required": [
+          "worker_id"
+        ]
       },
       "HeartbeatRequest": {
         "type": "object",
@@ -164,7 +199,9 @@
             "example": "carls-ubuntu-1"
           }
         },
-        "required": ["worker_id"]
+        "required": [
+          "worker_id"
+        ]
       },
       "CompleteRequest": {
         "type": "object",
@@ -176,7 +213,10 @@
           },
           "status": {
             "type": "string",
-            "enum": ["done", "failed"]
+            "enum": [
+              "done",
+              "failed"
+            ]
           },
           "failure_reason": {
             "type": "string",
@@ -184,7 +224,10 @@
             "example": "video unavailable"
           }
         },
-        "required": ["worker_id", "status"]
+        "required": [
+          "worker_id",
+          "status"
+        ]
       }
     },
     "parameters": {}
@@ -192,7 +235,9 @@
   "paths": {
     "/health": {
       "get": {
-        "tags": ["meta"],
+        "tags": [
+          "meta"
+        ],
         "summary": "Liveness and deployment identity",
         "responses": {
           "200": {
@@ -210,7 +255,9 @@
     },
     "/api/admin/videos": {
       "post": {
-        "tags": ["admin"],
+        "tags": [
+          "admin"
+        ],
         "summary": "Submit a YouTube URL for processing",
         "description": "Creates the video row and enqueues its download job. Admin-only: M3.5 puts Cloudflare Access in front of `/api/admin/*`.",
         "requestBody": {
@@ -244,6 +291,16 @@
               }
             }
           },
+          "409": {
+            "description": "This video has already been submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "501": {
             "description": "Not implemented until M3.4",
             "content": {
@@ -259,7 +316,9 @@
     },
     "/api/jobs/claim": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Claim the next pending job",
         "description": "Atomic: the claim is a single `UPDATE ... WHERE status='pending' ... RETURNING`, so two workers polling at once cannot take the same row.",
         "requestBody": {
@@ -311,15 +370,15 @@
     },
     "/api/jobs/{id}/heartbeat": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Renew the lease on a held job",
         "description": "Called every 30s while a job is held. Missing heartbeats are what the reaper watches for; a job whose `heartbeat_at` goes stale returns to `pending`.",
         "parameters": [
           {
             "schema": {
               "type": "integer",
-              "minimum": 0,
-              "exclusiveMinimum": true,
               "example": 1
             },
             "required": true,
@@ -376,14 +435,14 @@
     },
     "/api/jobs/{id}/complete": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Report a held job as done or failed",
         "parameters": [
           {
             "schema": {
               "type": "integer",
-              "minimum": 0,
-              "exclusiveMinimum": true,
               "example": 1
             },
             "required": true,

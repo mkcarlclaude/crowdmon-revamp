@@ -1,4 +1,5 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { HTTPException } from "hono/http-exception";
 import type { Bindings } from "./bindings";
 import { nameSpanAfterRoute } from "./middleware/trace-route";
 import { openApiConfig } from "./openapi";
@@ -45,6 +46,20 @@ export const app = new OpenAPIHono<{ Bindings: Bindings }>({
       400,
     );
   },
+});
+
+// An unparseable body never reaches a schema: Hono's validator throws an
+// HTTPException with a plain-text message before the hook above can run. Left
+// alone, that is the one malformed-input case answering in a shape the spec
+// does not declare, and the shape M3.3's generated Go client cannot unmarshal.
+app.onError((err, c) => {
+  if (err instanceof HTTPException && err.status === 400) {
+    return c.json({ error: "malformed request body" }, 400);
+  }
+
+  // Anything else is a bug, not bad input. Rethrown rather than dressed up as
+  // JSON so it reaches the instrumentation wrapper and records on the span.
+  throw err;
 });
 
 app.use("*", nameSpanAfterRoute);

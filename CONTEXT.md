@@ -1,7 +1,7 @@
 # Crowdmon 2026 — Design Context
 
-**Status:** design phase, nothing built yet
-**Last updated:** 2026-08-01
+**Status:** building — M1, M2 and M3.1–M3.2 merged
+**Last updated:** 2026-08-02
 **Source:** grilling session (Q1–Q24 locked)
 
 This document is the durable record of design decisions for the crowdmon rebuild.
@@ -521,9 +521,9 @@ Recorded so they are not re-litigated.
 
 1. ~~**Contract source of truth (Q24).**~~ **Resolved, M3.2.** Generated, as recommended.
    `apps/api/src/schemas.ts` holds the zod schemas; they validate at the edge and emit
-   `apps/api/openapi.json`, which M3.3 feeds to oapi-codegen. The numbering below is
-   left alone so existing references to "§9 item 7" and "item 9" still point at the
-   same things.
+   `apps/api/openapi.json`, which M3.3 feeds to oapi-codegen. Kept in place rather than
+   deleted so the numbering of the items below does not shift under anything that
+   cites them.
 2. **v1 scope cut and build order.** Not yet discussed.
 3. **Promotion trigger for semantic spans.** "First verify pass on real data" is
    concrete; "when I get to it" is how it dies.

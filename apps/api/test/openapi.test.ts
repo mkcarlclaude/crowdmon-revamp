@@ -1,14 +1,9 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { specPath } from "../scripts/spec-path";
 import { app } from "../src/app";
 import { openApiConfig } from "../src/openapi";
 
-// Built from the string form of `import.meta.url` because
-// @cloudflare/workers-types replaces the global `URL`, and node's typings
-// reject that one even though it is the same object at runtime.
-const specPath = join(dirname(fileURLToPath(import.meta.url)), "..", "openapi.json");
 const committed = JSON.parse(readFileSync(specPath, "utf8")) as unknown;
 
 describe("the committed spec", () => {

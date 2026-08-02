@@ -1,15 +1,6 @@
-import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
+import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import type { Bindings } from "../bindings";
-
-const HealthResponse = z
-  .object({
-    status: z.literal("ok"),
-    service: z.literal("crowdmon-api"),
-    // Echoed back so a response proves *which* deployment answered, not just
-    // that something did. The deploy workflow curls this after every release.
-    environment: z.string().openapi({ example: "production" }),
-  })
-  .openapi("HealthResponse");
+import { HealthResponse } from "../schemas";
 
 export const healthRoute = createRoute({
   method: "get",
@@ -28,8 +19,8 @@ export const healthHandler: RouteHandler<typeof healthRoute, { Bindings: Binding
   c.json({
     status: "ok" as const,
     service: "crowdmon-api" as const,
-    // `c.env` is undefined when the app is exercised without bindings, which
-    // is how the tests call it — an unbound Worker reporting "unknown" is more
-    // useful than one that throws.
+    // Optional-chained because `app.request()` can be called with no bindings
+    // at all. A Worker deployed without ENVIRONMENT reporting "unknown" beats
+    // one that throws on its own health check.
     environment: c.env?.ENVIRONMENT ?? "unknown",
   });

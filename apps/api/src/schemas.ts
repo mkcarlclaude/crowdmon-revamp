@@ -36,6 +36,26 @@ export const ErrorResponse = z
   })
   .openapi("ErrorResponse");
 
+/**
+ * Declares a failure response. Every non-2xx in the API carries
+ * `ErrorResponse`, so the routes say what went wrong and never restate the
+ * shape — one place to change if the error contract ever moves.
+ */
+export const errorResponse = (description: string) => ({
+  description,
+  content: { "application/json": { schema: ErrorResponse } },
+});
+
+export const HealthResponse = z
+  .object({
+    status: z.literal("ok"),
+    service: z.literal("crowdmon-api"),
+    // Echoed back so a response proves *which* deployment answered, not just
+    // that something did. The deploy workflow curls this after every release.
+    environment: z.string().openapi({ example: "production" }),
+  })
+  .openapi("HealthResponse");
+
 export const SubmitVideoRequest = z
   .object({
     // A URL, not a YouTube id: the id is derived server-side in M3.4. Checking
@@ -45,6 +65,13 @@ export const SubmitVideoRequest = z
     url: z.url().openapi({ example: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }),
   })
   .openapi("SubmitVideoRequest");
+
+export const SubmitVideoResponse = z
+  .object({
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    job_id: z.int().positive().openapi({ example: 1 }),
+  })
+  .openapi("SubmitVideoResponse");
 
 /** Mirrors the `kind` CHECK constraint in migration 0001. */
 export const JobKind = z.enum(["download", "chunk"]).openapi("JobKind");
@@ -114,13 +141,19 @@ export const CompleteRequest = z
   .openapi("CompleteRequest");
 
 /**
- * The `{id}` path parameter, coerced because every path segment arrives as a
- * string and `jobs.id` is an INTEGER PRIMARY KEY.
+ * The `{id}` path parameter. Every path segment arrives as a string and
+ * `jobs.id` is an INTEGER PRIMARY KEY, so it has to be converted somewhere.
+ *
+ * Digits-only, then parsed — deliberately not `z.coerce.number()`. Coercion
+ * accepts `0x10`, `1e3`, `+1` and leading whitespace and resolves each to a
+ * *different* integer, so a heartbeat naming a malformed id would silently
+ * renew some other job's lease instead of being rejected.
  */
 export const JobIdParam = z.object({
-  id: z.coerce
-    .number()
-    .int()
-    .positive()
-    .openapi({ param: { name: "id", in: "path" }, example: 1 }),
+  id: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((id) => id > 0)
+    .openapi({ param: { name: "id", in: "path" }, type: "integer", example: 1 }),
 });

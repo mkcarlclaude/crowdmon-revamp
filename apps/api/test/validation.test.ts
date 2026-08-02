@@ -46,6 +46,29 @@ describe("POST /api/admin/videos", () => {
   });
 });
 
+describe("a body that is not JSON at all", () => {
+  it("fails in the same shape as a field-level rejection", async () => {
+    const res = await app.request(
+      "/api/admin/videos",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{not json",
+      },
+      env,
+    );
+
+    // Hono throws an HTTPException with a plain-text message before any
+    // schema runs, so without handling this is the one malformed-input case
+    // that answers in a shape the spec does not declare — and the generated
+    // Go client cannot unmarshal.
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toMatch(/application\/json/);
+    const body = (await res.json()) as ErrorBody;
+    expect(body.error).toBe("malformed request body");
+  });
+});
+
 describe("POST /api/jobs/claim", () => {
   it("rejects a claim with no worker id", async () => {
     const res = await post("/api/jobs/claim", {});
@@ -64,6 +87,18 @@ describe("POST /api/jobs/{id}/heartbeat", () => {
     const body = (await res.json()) as ErrorBody;
     expect(body.issues?.map((i) => i.path)).toEqual(["id"]);
   });
+
+  it.each(["0x10", "1e3", "%201", "1.0", "+1"])(
+    "rejects %s rather than reinterpreting it as some other row",
+    async (id) => {
+      // Numeric coercion accepts all of these and silently resolves them to a
+      // different integer — 0x10 to 16, 1e3 to 1000. A heartbeat that renews
+      // the wrong job's lease is worse than one that fails.
+      const res = await post(`/api/jobs/${id}/heartbeat`, { worker_id: "w1" });
+
+      expect(res.status).toBe(400);
+    },
+  );
 });
 
 describe("POST /api/jobs/{id}/complete", () => {

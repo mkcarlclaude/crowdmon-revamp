@@ -3,7 +3,7 @@ import type { Bindings } from "../bindings";
 import {
   ClaimRequest,
   CompleteRequest,
-  ErrorResponse,
+  errorResponse,
   HeartbeatRequest,
   Job,
   JobIdParam,
@@ -16,11 +16,6 @@ import {
  * here are the contract M3.3 generates the worker's client from, so they are
  * the part that has to be right now.
  */
-
-const jsonError = (description: string) => ({
-  description,
-  content: { "application/json": { schema: ErrorResponse } },
-});
 
 export const claimJobRoute = createRoute({
   method: "post",
@@ -42,8 +37,8 @@ export const claimJobRoute = createRoute({
     // branches on the status line rather than parsing a body to find out that
     // there was nothing in it. Empty polls are the common case by far.
     204: { description: "Nothing to claim" },
-    400: jsonError("Malformed request body"),
-    501: jsonError("Not implemented until M3.4"),
+    400: errorResponse("Malformed request body"),
+    501: errorResponse("Not implemented until M3.4"),
   },
 });
 
@@ -61,12 +56,12 @@ export const heartbeatRoute = createRoute({
   },
   responses: {
     204: { description: "Lease renewed" },
-    400: jsonError("Malformed job id or body"),
+    400: errorResponse("Malformed job id or body"),
     // Also the answer when the job exists but this worker no longer holds it,
     // because the reaper took it back. Deliberately not distinguished from a
     // missing job: the worker's response is identical either way — stop.
-    404: jsonError("No job with this id is held by this worker"),
-    501: jsonError("Not implemented until M3.4"),
+    404: errorResponse("No job with this id is held by this worker"),
+    501: errorResponse("Not implemented until M3.4"),
   },
 });
 
@@ -81,9 +76,9 @@ export const completeJobRoute = createRoute({
   },
   responses: {
     204: { description: "Outcome recorded" },
-    400: jsonError("Malformed job id or body"),
-    404: jsonError("No job with this id is held by this worker"),
-    501: jsonError("Not implemented until M3.4"),
+    400: errorResponse("Malformed job id or body"),
+    404: errorResponse("No job with this id is held by this worker"),
+    501: errorResponse("Not implemented until M3.4"),
   },
 });
 
