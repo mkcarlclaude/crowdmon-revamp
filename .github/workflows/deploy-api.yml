@@ -8,6 +8,10 @@ on:
     branches: [main]
     paths:
       - 'apps/api/**'
+      # The SPA is deployed by the same `wrangler deploy` as the Worker — one
+      # Worker, one artefact. A web-only change must therefore trigger this
+      # workflow, which is the cost accepted in exchange for a single origin.
+      - 'apps/web/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/deploy-api.yml'
   workflow_dispatch:
@@ -36,6 +40,12 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      # Before the migration step, so a build failure costs nothing. wrangler
+      # uploads whatever is in apps/web/dist; if this is skipped the directory
+      # does not exist and the deploy publishes a Worker with no assets.
+      - name: Build web
+        run: pnpm --filter @crowdmon/web run build
 
       # Before the deploy, not after. Code that expects a column must never
       # reach production ahead of the column existing — the reverse ordering
@@ -69,9 +79,17 @@ jobs:
             exit 1
           fi
           for i in 1 2 3 4 5; do
-            code=$(curl -fsS -o /dev/null -w '%{http_code}' "$url/health") && break
+            body=$(curl -fsS "$url/health") && break
             echo "attempt $i failed, retrying in $((i * 2))s"
             sleep $((i * 2))
           done
-          echo "health endpoint returned $code"
-          [ "$code" = "200" ]
+          echo "health endpoint returned: $body"
+          # Status alone stopped being evidence when the Worker started serving
+          # static assets: `not_found_handling = "single-page-application"`
+          # answers unmatched paths with index.html and a 200, so a
+          # misconfigured `run_worker_first` would pass a status-only check
+          # while the API was unreachable.
+          case "$body" in
+            *'"service":"crowdmon-api"'*) echo "API is answering /health" ;;
+            *) echo "::error::/health did not return the API's JSON body"; exit 1 ;;
+          esac
