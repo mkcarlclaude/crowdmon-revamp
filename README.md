@@ -7,12 +7,12 @@ healthy, observable infrastructure.
 zero-shot model, have humans verify the long tail, distil a real-time detector that runs
 in the browser — is the workload that generates signal worth observing.
 
-> **Status: M1, M2 complete; M3 all but the Access gate.** D1 and R2 are provisioned by
-> Terraform, the Worker is deployed by CI at `crowdmon-api.mkcarl-dev.workers.dev`, and
-> its spans are landing in Tempo through a gated OTLP endpoint. A URL can be submitted, a
-> job claimed, heartbeated and completed over a contract both runtimes generate from.
-> M3.5 puts Cloudflare Access in front of the admin endpoints; M4 is the Go worker that
-> drives the queue for real.
+> **Status: M1, M2 and M3 complete.** D1 and R2 are provisioned by Terraform, the Worker
+> is deployed by CI at `crowdmon-api.mkcarl-dev.workers.dev`, and its spans are landing
+> in Tempo through a gated OTLP endpoint. A URL can be submitted, a job claimed,
+> heartbeated and completed over a contract both runtimes generate from, with Cloudflare
+> Access in front of the admin endpoints. M4 is the Go worker that drives the queue for
+> real.
 
 ## Documents
 
@@ -167,6 +167,29 @@ to stop, either way.
 Claiming a job whose video or chunk row is missing retires it as `failed` and answers
 204. Fan-out is not transactional, so a chunk job with no `chunks` row is reachable in
 production; re-queueing it would hand the same broken job out on every subsequent poll.
+
+## Admin access
+
+`/api/admin/*` is gated twice, and the second gate is not decoration.
+
+Cloudflare Access sits in front of `api.crowdmon.mkcarl.com/api/admin` — path-scoped,
+because the Go worker polls `/api/jobs/*` constantly with no Access identity and
+covering the whole hostname would break the queue rather than secure it. The
+application and its policy are in `infra/access.tf`.
+
+Behind it, `src/middleware/access.ts` verifies the `Cf-Access-Jwt-Assertion` header
+itself against the team's JWKS, then checks the identity against its own allowlist.
+Reaching the Worker does not imply passing Access: the same code is served on
+`crowdmon-api.mkcarl-dev.workers.dev`, where no Access application exists and never
+will. Without the Worker's own check, knowing that hostname would be enough.
+
+The `aud` check is the load-bearing one. Every application in an Access organisation is
+signed by the same keys, so a token minted for `otlp.mkcarl.com` verifies perfectly well
+unless the audience is pinned to this application.
+
+A deployment missing `ACCESS_AUD` or `ADMIN_EMAILS` answers 503 on admin routes. Failing
+closed is the only safe direction: a deploy that forgets a variable must not be a deploy
+that publishes the admin API.
 
 ## Working on it
 

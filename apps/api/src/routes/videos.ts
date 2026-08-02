@@ -9,8 +9,9 @@ export const submitVideoRoute = createRoute({
   tags: ["admin"],
   summary: "Submit a YouTube URL for processing",
   description:
-    "Creates the video row and enqueues its download job. Admin-only: M3.5 puts " +
-    "Cloudflare Access in front of `/api/admin/*`.",
+    "Creates the video row and enqueues its download job. Requires a Cloudflare " +
+    "Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's " +
+    "admin allowlist.",
   request: {
     body: {
       content: { "application/json": { schema: SubmitVideoRequest } },
@@ -23,12 +24,18 @@ export const submitVideoRoute = createRoute({
       content: { "application/json": { schema: SubmitVideoResponse } },
     },
     400: errorResponse("Malformed body, or a URL that names no YouTube video"),
+    401: errorResponse("Missing or invalid Access assertion"),
+    403: errorResponse("A verified identity that is not an administrator"),
     // Migration 0001 makes this outcome certain rather than incidental:
     // `videos.id` is the YouTube id and `idx_jobs_one_download_per_video` is
     // unique, so re-submitting a URL collides by design. Without a status for
     // it the one thing the schema deliberately guarantees has no way to be
     // reported.
     409: errorResponse("This video has already been submitted"),
+    // Declared, not hidden: a Worker deployed without its Access configuration
+    // fails closed, and a client that gets this needs to know the endpoint is
+    // misconfigured rather than that its request was wrong.
+    503: errorResponse("Admin access is not configured on this deployment"),
   },
 });
 

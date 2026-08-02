@@ -34,3 +34,23 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "FRAMES"
 bucket_name = "crowdmon-frames"
+
+# Cloudflare Access on /api/admin/* (M3.5). Plain vars, not secrets: the team
+# domain appears in every Access login URL, and the aud tag identifies an
+# application rather than authorising anything. Both are needed to *verify* an
+# assertion, neither is enough to mint one.
+#
+# ACCESS_AUD comes from `terraform -chdir=infra output access_aud`. It is
+# regenerated if the Access application is destroyed and recreated, and a stale
+# value fails every admin request closed with a 401.
+ACCESS_TEAM_DOMAIN = "https://mkcarl.cloudflareaccess.com"
+ACCESS_AUD = ""
+
+# ADMIN_EMAILS is the allowlist checked after the assertion verifies, and is a
+# secret only because it is a list of real addresses and this repo is public:
+#
+#   wrangler secret put ADMIN_EMAILS      # comma-separated
+#
+# Terraform holds the same list for the Access policy. Two lists on purpose —
+# one decides who Cloudflare will issue an assertion to, the other who this
+# Worker will act for, and widening one must not widen the other.

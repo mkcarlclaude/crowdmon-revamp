@@ -1,6 +1,7 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import type { Bindings } from "./bindings";
+import { requireAccess } from "./middleware/access";
 import { nameSpanAfterRoute } from "./middleware/trace-route";
 import { openApiConfig } from "./openapi";
 import { healthHandler, healthRoute } from "./routes/health";
@@ -63,6 +64,11 @@ app.onError((err, c) => {
 });
 
 app.use("*", nameSpanAfterRoute);
+
+// Registered before the routes, and by path prefix rather than per route: a
+// new admin endpoint is then gated by existing, not by remembering to add the
+// middleware to it.
+app.use("/api/admin/*", requireAccess);
 
 // /health goes through the OpenAPI router like everything else. A spec that
 // omits the one endpoint external checks actually call would describe less

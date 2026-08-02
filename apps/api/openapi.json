@@ -259,7 +259,7 @@
           "admin"
         ],
         "summary": "Submit a YouTube URL for processing",
-        "description": "Creates the video row and enqueues its download job. Admin-only: M3.5 puts Cloudflare Access in front of `/api/admin/*`.",
+        "description": "Creates the video row and enqueues its download job. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.",
         "requestBody": {
           "required": true,
           "content": {
@@ -291,8 +291,38 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "409": {
             "description": "This video has already been submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
             "content": {
               "application/json": {
                 "schema": {

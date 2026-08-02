@@ -14,3 +14,16 @@ output "r2_bucket_name" {
   description = "Paste into the [[r2_buckets]] binding in apps/api/wrangler.toml."
   value       = cloudflare_r2_bucket.frames.name
 }
+
+# The aud tag ties an assertion to this application specifically. Every app in
+# one Access organisation is signed by the same keys, so the Worker must check
+# it — a token minted for otlp.mkcarl.com would otherwise verify here.
+output "access_aud" {
+  description = "Paste into ACCESS_AUD in apps/api/wrangler.toml."
+  value       = cloudflare_zero_trust_access_application.admin.aud
+}
+
+output "api_hostname" {
+  description = "The Worker's custom domain. Access covers its /api/admin path."
+  value       = local.api_hostname
+}

@@ -68,11 +68,34 @@ Paste them into the commented binding blocks in `apps/api/wrangler.toml`.
 | `versions.tf` | Provider constraints, R2-backed state backend |
 | `variables.tf` | Account ID, zone, naming, bucket location |
 | `main.tf` | D1 database, R2 frames bucket |
+| `access.tf` | The Worker's custom domain, and the Access application over `/api/admin/*` |
 | `outputs.tf` | IDs consumed by `wrangler.toml` |
 
-Still to come: the Access application over `/api/admin/*` (M3.5), the Access
-application over the admin SPA route (M5.1), and the cron trigger for the job
-reaper (M6.2).
+Still to come: the Access application over the admin SPA route (M5.1), and the
+cron trigger for the job reaper (M6.2).
+
+### Ordering, for `access.tf`
+
+`cloudflare_workers_custom_domain` names a script rather than creating one, so
+the Worker must already be deployed when it is applied. On a from-nothing
+rebuild that means: apply `main.tf`, paste the D1 and R2 IDs into
+`wrangler.toml`, deploy the Worker, then apply again for the custom domain and
+the Access application. Terraform owns account resources and wrangler owns
+code, and this is where that boundary costs something.
+
+After applying, two values have to reach the Worker:
+
+```sh
+terraform output access_aud     # -> ACCESS_AUD in apps/api/wrangler.toml
+pnpm --filter @crowdmon/api exec wrangler secret put ADMIN_EMAILS
+```
+
+The allowlist exists twice on purpose. `admin_emails` here decides who
+Cloudflare will issue an assertion to; `ADMIN_EMAILS` decides who the Worker
+will act for. Widening one does not widen the other, which is the point — and
+it matters because the Worker is also served on its `workers.dev` hostname,
+where no Access application exists and nothing but the Worker's own check
+stands in front of the admin API.
 
 **Not here, deliberately:** the cloudflared tunnel and the OTLP endpoint. Those
 belong to the monitoring stack, which is a separate project with its own
