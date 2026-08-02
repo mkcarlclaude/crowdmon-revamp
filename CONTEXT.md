@@ -2,7 +2,7 @@
 
 **Status:** design phase, nothing built yet
 **Last updated:** 2026-08-01
-**Source:** grilling session (Q1–Q23 locked, Q24 open)
+**Source:** grilling session (Q1–Q24 locked)
 
 This document is the durable record of design decisions for the crowdmon rebuild.
 It exists so a cold session — human or agent — can pick up without re-deriving anything.
@@ -519,10 +519,11 @@ Recorded so they are not re-litigated.
 
 **Design questions still unanswered:**
 
-1. **Contract source of truth (Q24).** Hand-written types both sides, or generated from
-   a `@hono/zod-openapi` spec via oapi-codegen. Recommendation is generated — zod
-   schemas are needed for edge validation anyway, and hand-written types are exactly
-   what produced the `storage_url` / `url` bug in the old code.
+1. ~~**Contract source of truth (Q24).**~~ **Resolved, M3.2.** Generated, as recommended.
+   `apps/api/src/schemas.ts` holds the zod schemas; they validate at the edge and emit
+   `apps/api/openapi.json`, which M3.3 feeds to oapi-codegen. The numbering below is
+   left alone so existing references to "§9 item 7" and "item 9" still point at the
+   same things.
 2. **v1 scope cut and build order.** Not yet discussed.
 3. **Promotion trigger for semantic spans.** "First verify pass on real data" is
    concrete; "when I get to it" is how it dies.

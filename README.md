@@ -102,7 +102,7 @@ span_name="GET /health"}` appears in Prometheus via Tempo's metrics-generator.
 ## Layout
 
 ```
-apps/api/     Cloudflare Worker — Hono API, health endpoint, OTel. D1 queue and OpenAPI land in M3
+apps/api/     Cloudflare Worker — Hono API, OpenAPI contract, OTel. Job handlers land in M3.4
 apps/web/     React SPA on Pages — admin dashboard. Empty until M5.1
 worker/       Go module — config loader. Poll loop and extraction land in M4/M7/M8
 infra/        Terraform — D1 and R2, applied. See infra/README.md
@@ -112,6 +112,28 @@ Inside `apps/api/src`, `app.ts` holds the routes and `index.ts` is the instrumen
 point. They are separate because `instrument()` imports `cloudflare:workers`, which only
 workerd can resolve — tests import `app.ts` and run on plain Node rather than shimming
 the module loader.
+
+## The contract
+
+`apps/api/src/schemas.ts` is the single definition of what goes over the wire. The zod
+schemas there validate every request at the edge, and the same schemas generate
+`apps/api/openapi.json`, from which M3.3 generates the Go worker's types. One
+definition, so the two runtimes cannot disagree — hand-written types on both sides is
+what produced the `storage_url` / `url` mismatch in the old code.
+
+The spec is committed, not built on demand. That way a contract change is a reviewable
+diff in the PR that causes it, and Go generation needs no Node toolchain.
+
+```sh
+pnpm --filter @crowdmon/api run openapi   # after any route or schema change
+```
+
+Forgetting that is not a silent failure: a test compares the committed file against
+what the routes currently declare, and CI fails on the difference. The deployed Worker
+serves the same document at `/openapi.json`.
+
+The job endpoints are defined but their handlers return 501 until M3.4. The 501s are in
+the spec deliberately — it describes what the Worker does, not what it will do.
 
 ## Working on it
 

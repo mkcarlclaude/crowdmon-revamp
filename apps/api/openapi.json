@@ -1,0 +1,442 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "version": "0.1.0",
+    "title": "Crowdmon API",
+    "description": "The contract between the edge Worker and the home Go worker. Generated from the zod schemas that validate requests at runtime, so the spec cannot drift from what the Worker actually accepts."
+  },
+  "servers": [
+    {
+      "url": "https://crowdmon-api.mkcarl-dev.workers.dev",
+      "description": "production"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "service": {
+            "type": "string",
+            "enum": ["crowdmon-api"]
+          },
+          "environment": {
+            "type": "string",
+            "example": "production"
+          }
+        },
+        "required": ["status", "service", "environment"]
+      },
+      "SubmitVideoResponse": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "job_id": {
+            "type": "integer",
+            "example": 1
+          }
+        },
+        "required": ["video_id", "job_id"]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "invalid request"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidationIssue"
+            }
+          }
+        },
+        "required": ["error"]
+      },
+      "ValidationIssue": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "example": "url"
+          },
+          "message": {
+            "type": "string",
+            "example": "Invalid URL"
+          }
+        },
+        "required": ["path", "message"]
+      },
+      "SubmitVideoRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          }
+        },
+        "required": ["url"]
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "video_url": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 1
+          },
+          "chunk": {
+            "$ref": "#/components/schemas/ChunkWork"
+          }
+        },
+        "required": ["id", "kind", "video_id", "video_url", "attempts"]
+      },
+      "JobKind": {
+        "type": "string",
+        "enum": ["download", "chunk"]
+      },
+      "ChunkWork": {
+        "type": "object",
+        "properties": {
+          "segment_index": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
+          },
+          "start_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
+          },
+          "end_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 60
+          }
+        },
+        "required": ["segment_index", "start_seconds", "end_seconds"]
+      },
+      "ClaimRequest": {
+        "type": "object",
+        "properties": {
+          "worker_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "carls-ubuntu-1"
+          }
+        },
+        "required": ["worker_id"]
+      },
+      "HeartbeatRequest": {
+        "type": "object",
+        "properties": {
+          "worker_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "carls-ubuntu-1"
+          }
+        },
+        "required": ["worker_id"]
+      },
+      "CompleteRequest": {
+        "type": "object",
+        "properties": {
+          "worker_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "carls-ubuntu-1"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["done", "failed"]
+          },
+          "failure_reason": {
+            "type": "string",
+            "maxLength": 1000,
+            "example": "video unavailable"
+          }
+        },
+        "required": ["worker_id", "status"]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["meta"],
+        "summary": "Liveness and deployment identity",
+        "responses": {
+          "200": {
+            "description": "The Worker is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/videos": {
+      "post": {
+        "tags": ["admin"],
+        "summary": "Submit a YouTube URL for processing",
+        "description": "Creates the video row and enqueues its download job. Admin-only: M3.5 puts Cloudflare Access in front of `/api/admin/*`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitVideoRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Video accepted and a download job enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitVideoResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not implemented until M3.4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/claim": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Claim the next pending job",
+        "description": "Atomic: the claim is a single `UPDATE ... WHERE status='pending' ... RETURNING`, so two workers polling at once cannot take the same row.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A job was claimed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Nothing to claim"
+          },
+          "400": {
+            "description": "Malformed request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not implemented until M3.4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/heartbeat": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Renew the lease on a held job",
+        "description": "Called every 30s while a job is held. Missing heartbeats are what the reaper watches for; a job whose `heartbeat_at` goes stale returns to `pending`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "exclusiveMinimum": true,
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeartbeatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Lease renewed"
+          },
+          "400": {
+            "description": "Malformed job id or body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No job with this id is held by this worker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not implemented until M3.4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/complete": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Report a held job as done or failed",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "exclusiveMinimum": true,
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Outcome recorded"
+          },
+          "400": {
+            "description": "Malformed job id or body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No job with this id is held by this worker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not implemented until M3.4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
