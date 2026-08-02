@@ -59,8 +59,12 @@ topology, self-managed auth and the Go worker all remain primary.
 
 ### Existing monitoring stack
 
-Docker compose at `/home/carl/monitoring-stack` on the home server. **Not currently
-version-controlled — see open items.**
+Docker compose at `/home/carl/monitoring-stack` on the home server. Its own project,
+with its own repository at `git@github.com:mkcarl/otel-monitoring-stack.git`. **Not
+owned by this project and not managed by this project's Terraform** — see §6.
+
+The running directory is not itself a checkout of that repo, so the box remains the
+source of truth and can still drift from it. See open items.
 
 - otel-collector 0.116.1 — three pipelines (traces→Tempo, logs→Loki, metrics
   exposed :8889 for scrape). Self-telemetry :8888.
@@ -121,9 +125,11 @@ private admin plane, not a data path.
   the two sides disagree. Zod schemas are needed at the edge for runtime validation of
   untrusted input regardless, so OpenAPI costs no extra authoring. Hand-written types
   on both sides is what produced the `storage_url` / `url` mismatch in the old code.
-- **IaC:** Terraform owns account-level resources (D1, R2, DNS, tunnel, Access apps
-  and policies); wrangler owns bundling, secrets and code deploys. Terraform state in
-  R2 via its S3-compatible backend.
+- **IaC:** Terraform owns the account-level resources *this project* creates — D1, R2,
+  DNS, its own Access apps and policies; wrangler owns bundling, secrets and code
+  deploys. Terraform state in R2 via its S3-compatible backend. The cloudflared tunnel
+  and the OTLP endpoint are explicitly **out of scope** — they belong to the monitoring
+  stack, which predates this project. See §6.
 - **Go worker deploy:** CI builds a `linux/amd64` image to GHCR; the home box pulls on
   a timer and runs it as another docker compose service alongside the monitoring
   stack. Pull-based, so no credential in CI can reach the home network.
@@ -299,8 +305,8 @@ RED metrics and service graphs the moment spans flow.
 
 ### Edge ingest (Q9)
 
-A cloudflared hostname fronts the collector's OTLP **HTTP** receiver on 4318, gated by
-a Cloudflare Access **service token** (`CF-Access-Client-Id` / `CF-Access-Client-Secret`,
+`otlp.mkcarl.com` fronts the collector's OTLP **HTTP** receiver on 4318, gated by a
+Cloudflare Access **service token** (`CF-Access-Client-Id` / `CF-Access-Client-Secret`,
 stored via `wrangler secret put`).
 
 gRPC 4317 is not usable from Workers — the runtime has `fetch` only.
@@ -309,6 +315,62 @@ The collector never binds a public port; only cloudflared's outbound tunnel exis
 Access rejects unauthenticated requests at the edge.
 
 W3C `traceparent` propagation browser → edge → Go worker is the point of the exercise.
+
+### Ownership: the endpoint is not this project's to manage
+
+Decided 2026-08-02, reversing what the roadmap originally said.
+
+The monitoring stack is pre-existing infrastructure with its own repository and its own
+lifecycle. This project is a *consumer* of `otlp.mkcarl.com`, not its owner. Nothing
+about the tunnel, its ingress, or the Access application in front of it is declared in
+`infra/`.
+
+Two reasons, and the second is the one that decides it:
+
+- A hostname is a stable public string. Consuming it needs no shared Terraform state, no
+  cross-repo data sources, no coordination — the cheapest possible coupling.
+- **This project's Terraform gets destroyed on purpose.** M1.3 required proving that
+  `terraform destroy` followed by `apply` reproduces the account, and that check is
+  expected to be repeated. If this project's state owned the tunnel, a routine
+  verification would take `grafana.mkcarl.com` offline for every unrelated project
+  sharing that tunnel. Ownership has to follow the blast radius.
+
+The cost, stated plainly so it is not rediscovered as an accident: the gating is
+click-ops. It is not reproducible from this repo, and `terraform destroy` here will
+never remove it. The runbook below is the mitigation — it is the only record.
+
+### Runbook: gating the OTLP endpoint
+
+Done once, by hand, on the pre-existing `ubuntu_grafana` tunnel. That tunnel is
+remotely-managed (`config_src: cloudflare`), so adding a hostname needs no change on the
+box at all — no compose edit, no second tunnel credential, no container restart.
+
+1. Tunnel → published application route: `otlp.mkcarl.com` → `HTTP` →
+   `otel-collector:4318`. The DNS record is created automatically.
+2. Access → service auth → create a service token. Both values are shown once.
+3. Access → applications → self-hosted, domain `otlp.mkcarl.com`.
+4. Policy: action **Service Auth**, include that **named** token.
+5. `wrangler secret put CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`.
+
+**Use the service name, not `localhost`.** cloudflared runs as a container on
+`monitoring-stack_monitoring` alongside the collector; inside that container `localhost`
+is cloudflared itself. The pre-existing Grafana rule (`http://grafana:3000`) is the
+model.
+
+**The policy action must be Service Auth, not Allow.** With Allow, a request carrying a
+valid service token is still redirected to the login page — and to a Worker's `fetch`
+that arrives as a 302-followed-to-HTML-200, not an auth failure. Same class of bug as
+M5.4.
+
+**Include the named token, never "any Access service token".** The account holds tokens
+belonging to unrelated projects; that option would let them push spans into this
+collector.
+
+Verified 2026-08-02: unauthenticated `POST /v1/traces` returns 403 carrying
+`cf-access-domain` and `cf-access-aud` headers; the same request with both token headers
+returns 200 and an OTLP `partialSuccess` body. Both halves matter — Access rejects
+before the origin is reached, so a 403 alone would also be what a completely misrouted
+ingress produced.
 
 ### Decisions made this session
 
@@ -473,13 +535,17 @@ Recorded so they are not re-litigated.
 
 6. Grafana auth hardening — org allowlist not yet configured as defence in depth.
    Details deliberately kept out of this public repo. Flagged three times, still unfixed.
-7. The monitoring stack compose at `/home/carl/monitoring-stack` is not version-
-   controlled. For a project whose thesis is infra rigor, an un-versioned directory on
-   one laptop is the weakest link.
+7. The monitoring stack compose at `/home/carl/monitoring-stack` now has a repository
+   (`git@github.com:mkcarl/otel-monitoring-stack.git`), but the running directory is not
+   a checkout of it — there is no `.git` anywhere under `/home/carl`. The repo is a copy,
+   the box is still the source of truth, and the two can drift silently. Half-fixed.
 8. **yt-dlp breaks often.** YouTube changes its player and yt-dlp ships fixes roughly
    weekly. Pinned in an image, extraction silently stops until rebuild. Needs either
    update-on-start or scheduled rebuilds, plus a health check that distinguishes "no
    jobs queued" from "every job failing at download".
+9. The OTLP gating is click-ops by decision (§6), so it is reproducible only from the
+   runbook. Nothing enforces that the runbook stays true — if the policy is edited in
+   the dashboard, this repo will not notice.
 
 ---
 
