@@ -19,9 +19,11 @@ export function SubmitForm() {
   function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!url.trim()) return;
-    // Guard against a second enqueue directly rather than relying solely on
-    // the button's `disabled` attribute, which only takes effect once React
-    // has re-rendered between two click events.
+    // `submit` is a per-render snapshot, so this reads the same `isPending`
+    // value that already drives `disabled` on the button below — it does not
+    // close the click-vs-click race a re-render window would leave open.
+    // What it does guard is a second entry point: implicit submission via
+    // Enter, which never touches the button and so never sees `disabled`.
     if (submit.isPending) return;
     submit.mutate({ url: url.trim() }, { onSuccess: () => setUrl("") });
   }
