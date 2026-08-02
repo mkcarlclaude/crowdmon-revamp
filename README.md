@@ -104,7 +104,7 @@ span_name="GET /health"}` appears in Prometheus via Tempo's metrics-generator.
 ```
 apps/api/     Cloudflare Worker — Hono API, OpenAPI contract, OTel. Job handlers land in M3.4
 apps/web/     React SPA on Pages — admin dashboard. Empty until M5.1
-worker/       Go module — config loader. Poll loop and extraction land in M4/M7/M8
+worker/       Go module — config loader, generated API types. Poll loop and extraction land in M4/M7/M8
 infra/        Terraform — D1 and R2, applied. See infra/README.md
 ```
 
@@ -117,27 +117,35 @@ the module loader.
 
 `apps/api/src/schemas.ts` is the single definition of what goes over the wire. The zod
 schemas there validate every request at the edge, and the same schemas generate
-`apps/api/openapi.json`, from which M3.3 generates the Go worker's types. One
+`apps/api/openapi.json`, from which oapi-codegen generates `worker/internal/api`. One
 definition, so the two runtimes cannot disagree — hand-written types on both sides is
 what produced the `storage_url` / `url` mismatch in the old code.
 
-The spec is committed, not built on demand. That way a contract change is a reviewable
-diff in the PR that causes it, and Go generation needs no Node toolchain.
+Both generated artefacts are committed, not built on demand. That way a contract change
+is a reviewable diff in the PR that causes it, and each side can be regenerated without
+the other's toolchain.
 
 ```sh
 pnpm --filter @crowdmon/api run openapi   # after any route or schema change
+cd worker && go generate ./...            # then this, from the new spec
 ```
 
-Forgetting that is not a silent failure: a test compares the committed file against
-what the routes currently declare, and CI fails on the difference. The deployed Worker
-serves the same document at `/openapi.json`.
+Forgetting either is not a silent failure. A vitest case compares the committed spec
+against what the routes declare; CI re-runs `go generate` and fails on any diff, and
+the Go path filter includes `openapi.json` so a contract-only change still triggers it.
+The deployed Worker serves the same document at `/openapi.json`.
+
+The generator version is pinned in the `go:generate` directive rather than added to
+`go.mod`. `go run pkg@version` builds in its own module, so a code-generation tool never
+becomes a dependency of the binary that ships to the home box.
 
 The job endpoints are defined but their handlers return 501 until M3.4. The 501s are in
 the spec deliberately — it describes what the Worker does, not what it will do.
 
 ## Working on it
 
-Requires Node 22, pnpm 10 and Go 1.24. Nothing needs cloud credentials.
+Requires Node 22, pnpm 10 and Go 1.25. The module itself declares 1.24 and compiles
+under it; 1.25 is what oapi-codegen needs to run. Nothing needs cloud credentials.
 
 ```sh
 pnpm install

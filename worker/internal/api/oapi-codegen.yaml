@@ -1,0 +1,11 @@
+package: api
+output: types.gen.go
+
+# Types only. A generated client would pull oapi-codegen's runtime packages
+# into go.mod, and the worker has no HTTP calling code to use one until M4.3 —
+# structs alone need nothing outside the standard library.
+generate:
+  models: true
+
+output-options:
+  skip-prune: false
