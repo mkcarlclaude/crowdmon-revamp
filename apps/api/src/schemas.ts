@@ -124,6 +124,9 @@ export const Job = z
   })
   .openapi("Job");
 
+/** The claim response as the worker sees it. */
+export type JobResponse = z.infer<typeof Job>;
+
 /**
  * How a worker reports back. Only the terminal states are accepted — a worker
  * cannot move a job back to `pending`; that is the reaper's job alone, and

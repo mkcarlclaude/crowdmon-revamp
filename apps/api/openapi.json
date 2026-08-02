@@ -282,7 +282,7 @@
             }
           },
           "400": {
-            "description": "Malformed request body",
+            "description": "Malformed body, or a URL that names no YouTube video",
             "content": {
               "application/json": {
                 "schema": {
@@ -293,16 +293,6 @@
           },
           "409": {
             "description": "This video has already been submitted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "501": {
-            "description": "Not implemented until M3.4",
             "content": {
               "application/json": {
                 "schema": {
@@ -347,16 +337,6 @@
           },
           "400": {
             "description": "Malformed request body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "501": {
-            "description": "Not implemented until M3.4",
             "content": {
               "application/json": {
                 "schema": {
@@ -419,16 +399,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "description": "Not implemented until M3.4",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
           }
         }
       }
@@ -476,16 +446,6 @@
           },
           "404": {
             "description": "No job with this id is held by this worker",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "501": {
-            "description": "Not implemented until M3.4",
             "content": {
               "application/json": {
                 "schema": {

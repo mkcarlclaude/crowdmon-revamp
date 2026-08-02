@@ -1,7 +1,6 @@
+import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { app } from "../../src/app";
-
-const env = { ENVIRONMENT: "test" };
 
 describe("GET /health", () => {
   it("returns 200 with service identity", async () => {
@@ -11,7 +10,9 @@ describe("GET /health", () => {
     await expect(res.json()).resolves.toEqual({
       status: "ok",
       service: "crowdmon-api",
-      environment: "test",
+      // From wrangler.toml, the same var production sets: the point of the
+      // field is to prove which deployment answered.
+      environment: "production",
     });
   });
 });

@@ -7,10 +7,12 @@ healthy, observable infrastructure.
 zero-shot model, have humans verify the long tail, distil a real-time detector that runs
 in the browser — is the workload that generates signal worth observing.
 
-> **Status: M1 and M2 complete.** D1 and R2 are provisioned by Terraform, the Worker is
-> deployed by CI at `crowdmon-api.mkcarl-dev.workers.dev`, and its spans are landing in
-> Tempo through a gated OTLP endpoint. M3 — the D1 schema and the typed job contract —
-> is next.
+> **Status: M1, M2 complete; M3 all but the Access gate.** D1 and R2 are provisioned by
+> Terraform, the Worker is deployed by CI at `crowdmon-api.mkcarl-dev.workers.dev`, and
+> its spans are landing in Tempo through a gated OTLP endpoint. A URL can be submitted, a
+> job claimed, heartbeated and completed over a contract both runtimes generate from.
+> M3.5 puts Cloudflare Access in front of the admin endpoints; M4 is the Go worker that
+> drives the queue for real.
 
 ## Documents
 
@@ -102,7 +104,7 @@ span_name="GET /health"}` appears in Prometheus via Tempo's metrics-generator.
 ## Layout
 
 ```
-apps/api/     Cloudflare Worker — Hono API, OpenAPI contract, OTel. Job handlers land in M3.4
+apps/api/     Cloudflare Worker — Hono API, OpenAPI contract, D1 job queue, OTel
 apps/web/     React SPA on Pages — admin dashboard. Empty until M5.1
 worker/       Go module — config loader, generated API types. Poll loop and extraction land in M4/M7/M8
 infra/        Terraform — D1 and R2, applied. See infra/README.md
@@ -110,8 +112,12 @@ infra/        Terraform — D1 and R2, applied. See infra/README.md
 
 Inside `apps/api/src`, `app.ts` holds the routes and `index.ts` is the instrumented entry
 point. They are separate because `instrument()` imports `cloudflare:workers`, which only
-workerd can resolve — tests import `app.ts` and run on plain Node rather than shimming
-the module loader.
+workerd can resolve — tests import `app.ts` rather than shimming the module loader.
+
+Tests are split by what they need. `test/workers` runs inside workerd against a real D1,
+because the queue's guarantees are SQL ones a fake would not reproduce. `test/node` holds
+the two that cannot: the spec drift check reads the committed file with `node:fs`, and
+@opentelemetry/api's ESM build does not resolve under workerd's module loader.
 
 ## The contract
 
@@ -139,8 +145,28 @@ The generator version is pinned in the `go:generate` directive rather than added
 `go.mod`. `go run pkg@version` builds in its own module, so a code-generation tool never
 becomes a dependency of the binary that ships to the home box.
 
-The job endpoints are defined but their handlers return 501 until M3.4. The 501s are in
-the spec deliberately — it describes what the Worker does, not what it will do.
+## The queue
+
+Cloudflare Queues needs the Workers Paid plan, so the queue is a `jobs` table in D1 and
+the endpoints in `apps/api/src/routes/jobs.ts` are the whole of it.
+
+Claiming is one `UPDATE ... WHERE status='pending' ... RETURNING`. SQLite serialises
+writers, so two workers polling at once cannot take the same row; a `SELECT` followed by
+an `UPDATE` would hand the same job out twice under exactly the polling pattern the
+worker is built around. `attempts` increments on the claim rather than on a later
+failure, so a worker that dies without reporting still counts against the ceiling M6.1
+enforces.
+
+Heartbeat and complete carry their ownership check in the `WHERE` clause —
+`id = ? AND status = 'claimed' AND claimed_by = ?` — rather than reading the row first.
+A read-then-write would let the reaper take the job back in between, and the worker
+would go on writing to a lease it no longer holds. Both answer 404 when nothing changed,
+without distinguishing "no such job" from "not yours any more": the worker's response is
+to stop, either way.
+
+Claiming a job whose video or chunk row is missing retires it as `failed` and answers
+204. Fan-out is not transactional, so a chunk job with no `chunks` row is reachable in
+production; re-queueing it would hand the same broken job out on every subsequent poll.
 
 ## Working on it
 
