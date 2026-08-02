@@ -66,6 +66,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@crowdmon/api':
+        specifier: workspace:*
+        version: link:../api
       '@tanstack/react-query':
         specifier: ^5.101.4
         version: 5.101.4(react@19.2.8)

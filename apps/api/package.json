@@ -2,6 +2,12 @@
   "name": "@crowdmon/api",
   "private": true,
   "type": "module",
+  "exports": {
+    "./schemas": {
+      "types": "./src/schemas.ts",
+      "default": "./src/schemas.ts"
+    }
+  },
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
