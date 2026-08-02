@@ -104,3 +104,40 @@ about it. The reasoning — chiefly that `terraform destroy` is run here on
 purpose, and a shared tunnel would make that take Grafana down for unrelated
 projects — is in `CONTEXT.md` §6, along with the runbook for how the endpoint
 was gated.
+
+## Migrating to a single hostname (M5)
+
+`access.tf` currently declares two custom domains: `cloudflare_workers_custom_domain.app`
+at `crowdmon.mkcarl.com` and `cloudflare_workers_custom_domain.legacy_api` at the
+retired `api.crowdmon.mkcarl.com`. Both exist at once on purpose — see the ordering
+constraint below — and `legacy_api` is meant to be deleted in a second change, not
+carried forward indefinitely.
+
+**Changing the Access application's `domain` replaces the resource.** Terraform has
+no in-place update for that attribute, so pointing it at `local.app_hostname` mints a
+brand new `aud` — the old one stops verifying anything the moment the replacement
+applies. `ACCESS_AUD` in `apps/api/wrangler.toml` and a `wrangler deploy` carrying the
+new value must land in the same change as the `terraform apply` that replaces the
+application. Skip that and every request to `/api/admin/*` gets a 503 from
+`apps/api/src/middleware/access.ts` — the error says nothing about hostnames or
+`aud`, so if admin requests start failing closed right after an infra apply, check
+`terraform output access_aud` against `ACCESS_AUD` first.
+
+**The Go worker must be repointed before `legacy_api` is removed.** It polls
+`/api/jobs/*` constantly and holds no Access identity, so nothing but changing its
+configured base URL and restarting it can redirect it. Deleting
+`cloudflare_workers_custom_domain.legacy_api` before that happens stops the job
+queue outright — the worker starts failing every poll with no route to the host at
+all. The order is:
+
+1. Apply with both custom domains present (the committed state) and the Access
+   application pointed at `local.app_hostname`.
+2. Paste the new `access_aud` into `wrangler.toml` and deploy the Worker, so
+   `/api/admin` verifies again.
+3. Repoint the Go worker's API base URL and the repository's `API_BASE_URL`
+   variable at `local.app_hostname`, and confirm it is polling successfully on the
+   new host.
+4. Only then delete `cloudflare_workers_custom_domain.legacy_api` and
+   `local.legacy_api_hostname` from `access.tf`, and apply again. Sample the old
+   hostname several times, not once, before calling it retired — a single response
+   cannot distinguish a removed hostname from a rollout still serving two versions.

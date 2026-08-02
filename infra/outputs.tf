@@ -23,7 +23,7 @@ output "access_aud" {
   value       = cloudflare_zero_trust_access_application.admin.aud
 }
 
-output "api_hostname" {
-  description = "The Worker's custom domain. Access covers its /api/admin path."
-  value       = local.api_hostname
+output "app_hostname" {
+  description = "The Worker's custom domain. It serves the SPA and the API; Access covers its /api/admin path."
+  value       = local.app_hostname
 }
