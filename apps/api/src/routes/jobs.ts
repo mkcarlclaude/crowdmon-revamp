@@ -1,4 +1,5 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
+import type { Context } from "hono";
 import type { Bindings } from "../bindings";
 import {
   ClaimRequest,
@@ -35,6 +36,17 @@ const now = () => Math.floor(Date.now() / 1000);
  * it no longer holds.
  */
 const HELD_BY = "id = ? AND status = 'claimed' AND claimed_by = ?";
+
+/**
+ * The answer when `HELD_BY` matched nothing — the other half of that predicate,
+ * kept beside it so the two cannot drift.
+ *
+ * Zero rows changed covers both "no such job" and "the reaper took it back",
+ * and the two are deliberately not distinguished: the worker's response is the
+ * same either way, which is to stop.
+ */
+const notHeldByCaller = (c: Context<{ Bindings: Bindings }>) =>
+  c.json({ error: "no job with this id is held by this worker" }, 404);
 
 export const claimJobRoute = createRoute({
   method: "post",
@@ -149,9 +161,9 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
   // download. Chunk fan-out is not transactional (CONTEXT.md §Q13) — it can be
   // reaped halfway through — so a chunk job with no `chunks` row is a state
   // the system can genuinely reach, not just a hand-edited database.
-  if (!video) return failUnrunnable(c.env.DB, job.id, "video row missing");
+  if (!video) return failUnrunnable(c, job.id, "video row missing");
   if (job.kind === "chunk" && !chunk) {
-    return failUnrunnable(c.env.DB, job.id, "chunk row missing");
+    return failUnrunnable(c, job.id, "chunk row missing");
   }
 
   return c.json(
@@ -176,13 +188,14 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
  * error, because from the worker's side nothing went wrong — there was simply
  * nothing it could be given.
  */
-async function failUnrunnable(db: D1Database, jobId: number, reason: string) {
-  await db
-    .prepare("UPDATE jobs SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?")
+async function failUnrunnable(c: Context<{ Bindings: Bindings }>, jobId: number, reason: string) {
+  await c.env.DB.prepare(
+    "UPDATE jobs SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?",
+  )
     .bind(reason, now(), jobId)
     .run();
 
-  return new Response(null, { status: 204 });
+  return c.body(null, 204);
 }
 
 export const heartbeatHandler: RouteHandler<typeof heartbeatRoute, { Bindings: Bindings }> = async (
@@ -191,18 +204,14 @@ export const heartbeatHandler: RouteHandler<typeof heartbeatRoute, { Bindings: B
   const { id } = c.req.valid("param");
   const { worker_id } = c.req.valid("json");
 
+  const at = now();
   const { meta } = await c.env.DB.prepare(
     `UPDATE jobs SET heartbeat_at = ?, updated_at = ? WHERE ${HELD_BY}`,
   )
-    .bind(now(), now(), id, worker_id)
+    .bind(at, at, id, worker_id)
     .run();
 
-  // Zero rows changed covers both "no such job" and "the reaper took it back".
-  // Deliberately not distinguished: the worker's response is the same either
-  // way, which is to stop.
-  if (meta.changes === 0) {
-    return c.json({ error: "no job with this id is held by this worker" }, 404);
-  }
+  if (meta.changes === 0) return notHeldByCaller(c);
 
   return c.body(null, 204);
 };
@@ -228,9 +237,7 @@ export const completeJobHandler: RouteHandler<
     .bind(status, status === "failed" ? (failure_reason ?? null) : null, now(), id, worker_id)
     .run();
 
-  if (meta.changes === 0) {
-    return c.json({ error: "no job with this id is held by this worker" }, 404);
-  }
+  if (meta.changes === 0) return notHeldByCaller(c);
 
   return c.body(null, 204);
 };

@@ -2,8 +2,9 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../src/app";
 import type { JobResponse } from "../../src/schemas";
+import { seedDownloadJob } from "./seed";
 
-function post(path: string, body: unknown) {
+async function post(path: string, body: unknown) {
   return app.request(
     path,
     {
@@ -16,12 +17,7 @@ function post(path: string, body: unknown) {
 }
 
 async function claimAJob(workerId: string): Promise<JobResponse> {
-  await env.DB.prepare("INSERT INTO videos (id, url) VALUES (?, ?)")
-    .bind("aaaaaaaaaaa", "https://www.youtube.com/watch?v=aaaaaaaaaaa")
-    .run();
-  await env.DB.prepare(
-    "INSERT INTO jobs (kind, video_id) VALUES ('download', 'aaaaaaaaaaa')",
-  ).run();
+  await seedDownloadJob("aaaaaaaaaaa");
 
   const res = await post("/api/jobs/claim", { worker_id: workerId });
   return (await res.json()) as JobResponse;

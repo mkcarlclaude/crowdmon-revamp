@@ -1,6 +1,6 @@
 # Crowdmon 2026 — Design Context
 
-**Status:** building — M1, M2 and M3.1–M3.2 merged
+**Status:** building — M1, M2 and M3 merged
 **Last updated:** 2026-08-02
 **Source:** grilling session (Q1–Q24 locked)
 
@@ -125,6 +125,14 @@ private admin plane, not a data path.
   the two sides disagree. Zod schemas are needed at the edge for runtime validation of
   untrusted input regardless, so OpenAPI costs no extra authoring. Hand-written types
   on both sides is what produced the `storage_url` / `url` mismatch in the old code.
+- **Admin authentication (M3.5):** Cloudflare Access over
+  `api.crowdmon.mkcarl.com/api/admin`, plus the Worker verifying the assertion itself.
+  Both, not either: the Worker is also served on its workers.dev hostname, which no
+  Access application covers, so reaching the code does not imply passing the gate. The
+  allowlist deliberately exists twice — Terraform's decides who Cloudflare will issue an
+  assertion to, the Worker's secret decides who it will act for. `allowed_idps` is
+  enumerated rather than left empty, because empty means "every provider on the account"
+  and an IdP added later would silently become a way in.
 - **IaC:** Terraform owns the account-level resources *this project* creates — D1, R2,
   DNS, its own Access apps and policies; wrangler owns bundling, secrets and code
   deploys. Terraform state in R2 via its S3-compatible backend. The cloudflared tunnel
@@ -189,6 +197,21 @@ Required consequences:
   overwrite rather than insert — because reaped chunks re-run.
 
 Reclaim rate is a real health metric worth a Grafana panel.
+
+**D1 read replication stays disabled** (`infra/main.tf`), and that follows from the
+paragraph above rather than from cost. Replicas are eventually consistent, and the claim
+is only atomic against a single primary — a worker whose read landed on a replica could
+see a job as pending seconds after another worker had taken it. Terraform states it
+explicitly instead of inheriting the default, because the provider otherwise plans the
+attribute to null on every run and the API rejects that, which turns any unrelated apply
+into a failed one.
+
+**Fan-out must be transactional, which is a constraint M3.4 imposes on M7.2.** The claim
+endpoint retires a chunk job whose `chunks` row is missing as terminally `failed`, on the
+grounds that the row's absence is corruption. That is only true if the job and its chunk
+row are inserted in one `batch()`. Insert them separately and a claim landing in the gap
+retires a job that was about to be fine, after which `idx_chunks_identity` stops the
+re-run from recreating it and the segment is lost for good.
 
 ### Polling budget (Q20) — adaptive backoff
 
@@ -519,11 +542,11 @@ Recorded so they are not re-litigated.
 
 **Design questions still unanswered:**
 
-1. ~~**Contract source of truth (Q24).**~~ **Resolved, M3.2.** Generated, as recommended.
-   `apps/api/src/schemas.ts` holds the zod schemas; they validate at the edge and emit
-   `apps/api/openapi.json`, which M3.3 feeds to oapi-codegen. Kept in place rather than
-   deleted so the numbering of the items below does not shift under anything that
-   cites them.
+1. ~~**Contract source of truth (Q24).**~~ **Resolved, M3.2–M3.3.** Generated, as
+   recommended. `apps/api/src/schemas.ts` holds the zod schemas; they validate at the
+   edge and emit `apps/api/openapi.json`, from which oapi-codegen generates
+   `worker/internal/api`. Kept in place rather than deleted so the numbering of the
+   items below does not shift under anything that cites them.
 2. **v1 scope cut and build order.** Not yet discussed.
 3. **Promotion trigger for semantic spans.** "First verify pass on real data" is
    concrete; "when I get to it" is how it dies.

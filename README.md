@@ -107,7 +107,7 @@ span_name="GET /health"}` appears in Prometheus via Tempo's metrics-generator.
 apps/api/     Cloudflare Worker — Hono API, OpenAPI contract, D1 job queue, OTel
 apps/web/     React SPA on Pages — admin dashboard. Empty until M5.1
 worker/       Go module — config loader, generated API types. Poll loop and extraction land in M4/M7/M8
-infra/        Terraform — D1 and R2, applied. See infra/README.md
+infra/        Terraform — D1, R2, the Worker's custom domain and the Access app. See infra/README.md
 ```
 
 Inside `apps/api/src`, `app.ts` holds the routes and `index.ts` is the instrumented entry
@@ -189,7 +189,24 @@ unless the audience is pinned to this application.
 
 A deployment missing `ACCESS_AUD` or `ADMIN_EMAILS` answers 503 on admin routes. Failing
 closed is the only safe direction: a deploy that forgets a variable must not be a deploy
-that publishes the admin API.
+that publishes the admin API. That is not hypothetical — it is what M3.5 shipped on its
+first deploy, when both vars were appended below a table header in `wrangler.toml` and
+TOML quietly filed them under the R2 binding. The outage was the correct failure.
+
+Verified in production on 2026-08-02: on the custom domain an unauthenticated
+`POST /api/admin/videos` is answered by Cloudflare Access with a 302 to
+`mkcarl.cloudflareaccess.com`, never reaching the Worker. On the workers.dev hostname,
+where no Access application exists, the same request gets `401 missing Access assertion`
+and a request carrying a junk token gets `401 invalid Access assertion` — repeated five
+and three times respectively, since a single sample cannot distinguish a working gate
+from a rollout still serving two versions. `/health`, `/openapi.json` and
+`POST /api/jobs/claim` answer normally on both hostnames throughout.
+
+**One hostname is still ungated at the edge.** Access covers
+`api.crowdmon.mkcarl.com/api/admin`; `crowdmon-api.mkcarl-dev.workers.dev` has no Access
+application in front of it and the Worker's own verification is the only thing standing
+there. Setting `workers_dev = false` would close it, at the cost of repointing the
+deploy workflow's `API_BASE_URL` health check at the custom domain.
 
 ## Working on it
 
