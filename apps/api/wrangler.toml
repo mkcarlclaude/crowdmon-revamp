@@ -18,6 +18,12 @@ compatibility_flags = ["nodejs_compat"]
 # leaves a deploy verifying a hostname that no longer answers.
 workers_dev = false
 
+# Version preview URLs are also on *.workers.dev, and are governed by their own
+# setting rather than by workers_dev. Left at its default, adding static assets
+# would have republished /api/admin/* on an ungated hostname — the M4.6 hole,
+# reopened by a setting M4.6 never touched.
+preview_urls = false
+
 # Everything in this table is a plain var, readable by anyone who can read this
 # repo. Secrets are set out-of-band and never appear here:
 #
@@ -69,3 +75,21 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "FRAMES"
 bucket_name = "crowdmon-frames"
+
+# The SPA (M5.1). Served by this Worker rather than by Pages: one origin means
+# the Access cookie, the Access application and the API cannot disagree, and it
+# keeps M5.4's documented expiry symptom (a 302 followed to an HTML 200) intact
+# instead of turning it into a CORS failure.
+#
+# `directory` is built by `pnpm --filter @crowdmon/web run build` and is
+# gitignored — a deploy that skips that build publishes a Worker with no assets
+# and no error.
+[assets]
+directory = "../web/dist"
+not_found_handling = "single-page-application"
+
+# Without this list, `single-page-application` answers every non-asset path with
+# index.html and the Worker never runs. /health and /openapi.json are Hono
+# routes outside /api/, so leaving them out makes the deploy workflow's health
+# check curl the SPA shell and report success over a dead API.
+run_worker_first = [ "/api/*", "/health", "/openapi.json" ]

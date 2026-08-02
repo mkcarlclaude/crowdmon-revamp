@@ -68,4 +68,33 @@ describe("wrangler.toml", () => {
 
     expect(stray, "SCREAMING_CASE assignment after the last table header").toEqual([]);
   });
+
+  /**
+   * Worker version preview URLs live on *.workers.dev, which is not a zone and
+   * therefore cannot be covered by an Access application. Serving assets makes
+   * per-PR previews attractive, and turning them on would republish
+   * /api/admin/* on an ungated hostname — reopening exactly what M4.6 closed,
+   * through a setting M4.6's own test does not mention.
+   */
+  it("keeps preview URLs off", () => {
+    expect(config).toMatch(/^preview_urls\s*=\s*false\s*$/m);
+  });
+
+  /**
+   * `not_found_handling = "single-page-application"` answers every unmatched
+   * path with index.html. /health and /openapi.json are Hono routes and are not
+   * under /api/, so omitting them here makes the deploy workflow's health check
+   * curl the SPA shell and pass on a broken API.
+   */
+  it.each(["/api/*", "/health", "/openapi.json"])(
+    "routes %s to the Worker before static assets",
+    (pattern) => {
+      const assets = config.slice(config.indexOf("[assets]"));
+      expect(assets).toMatch(new RegExp(`run_worker_first[^\\]]*"${pattern.replace("*", "\\*")}"`));
+    },
+  );
+
+  it("points [assets] at the web package's build output", () => {
+    expect(config).toMatch(/^directory\s*=\s*"\.\.\/web\/dist"\s*$/m);
+  });
 });
