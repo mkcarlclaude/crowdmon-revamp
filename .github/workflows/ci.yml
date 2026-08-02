@@ -40,6 +40,11 @@ jobs:
             go:
               - 'worker/**'
               - '.github/workflows/ci.yml'
+              # The Go types are generated from the spec, so a contract change
+              # with no Go file touched still has to re-run generation. Without
+              # this line the drift check would be skipped by exactly the
+              # change it exists to catch.
+              - 'apps/api/openapi.json'
 
   typescript:
     name: TypeScript
@@ -85,6 +90,14 @@ jobs:
           # go.sum does not exist until the worker takes its first dependency
           # in M4; go.mod is always present and is a valid cache key.
           cache-dependency-path: worker/go.mod
+
+      # Before vet and build, so a stale contract fails on the honest reason
+      # rather than as a compile error in whatever code used the old field.
+      - name: Check generated types match the spec
+        run: |
+          go generate ./...
+          git diff --exit-code -- internal/api/types.gen.go \
+            || { echo "::error::internal/api/types.gen.go is stale. Run 'cd worker && go generate ./...' and commit."; exit 1; }
 
       - name: Vet
         run: go vet ./...
