@@ -82,17 +82,33 @@ Sequenced second deliberately. Debugging gated OTLP export from a Workers runtim
 far easier against a health endpoint than against a fan-out pipeline, and everything
 after this lands instrumented rather than retrofitted.
 
-### M2.1 — Tunnel and OTLP hostname in Terraform
-- [ ] cloudflared tunnel declared in Terraform
-- [ ] Ingress rule mapping the OTLP hostname to `http://localhost:4318`
-- [ ] DNS record via Terraform
-- [ ] Collector still binds no public port
+### M2.1 — OTLP hostname on the existing tunnel — **done 2026-08-02, not in Terraform**
 
-### M2.2 — Access application and service token
-- [ ] Access application covering the OTLP hostname, declared in Terraform
-- [ ] Service token issued; policy allows it
-- [ ] Second policy allowing your own email for browser debugging
-- [ ] Unauthenticated request returns 403
+Originally written as "declare a cloudflared tunnel in Terraform". That was wrong. The
+monitoring stack is a separate project that predates this one, and this project's
+Terraform is destroyed on purpose as part of M1.3's reproducibility check — owning a
+shared tunnel would make that check take Grafana down for unrelated projects. Ownership
+follows the blast radius. Reasoning and runbook: `CONTEXT.md` §6.
+
+- [x] `otlp.mkcarl.com` added as a route on the pre-existing `ubuntu_grafana` tunnel
+- [x] Ingress points at `otel-collector:4318` — the Docker service name. **Not
+      `localhost`**: cloudflared is a container on the same compose network, so
+      `localhost` is cloudflared itself
+- [x] DNS record created by the tunnel route, not by Terraform
+- [x] Collector still binds no public port
+
+### M2.2 — Access application and service token — **done 2026-08-02, not in Terraform**
+
+- [x] Access application covering `otlp.mkcarl.com`
+- [x] Service token issued; policy action is **Service Auth**, not Allow — with Allow a
+      valid token is still bounced to the login page, which reaches a Worker's `fetch`
+      as a 302-followed-to-HTML-200 rather than an auth error
+- [x] Policy includes the **named** token, not "any Access service token" — the account
+      holds tokens belonging to unrelated projects
+- [x] Unauthenticated request returns 403; the same request with both token headers
+      returns 200 with an OTLP `partialSuccess` body. Both halves were checked: Access
+      rejects before reaching the origin, so a 403 on its own is also what a completely
+      misrouted ingress would produce
 
 ### M2.3 — Instrument the Worker
 - [ ] OTLP **HTTP** exporter — gRPC will not run in the Workers runtime

@@ -4,10 +4,11 @@ Terraform owns account-level Cloudflare resources. wrangler owns bundling,
 secrets and code deploys. Anything long-lived belongs here, so that
 `terraform destroy` followed by `terraform apply` reproduces the account.
 
-> **Not yet applied.** These files have never been run — no `terraform init`,
-> no `plan`, no `apply`. They were written without account credentials and
-> without a `terraform` binary available, so the provider schema is unverified.
-> Expect the first `terraform plan` to need corrections.
+> **Applied.** D1 and R2 are live, and destroy/re-apply was exercised in M1.3.
+> Note what that proved: `database_id` is server-assigned and a re-apply mints a
+> new one, so `apps/api/wrangler.toml` must be re-pasted from
+> `terraform output d1_database_id` afterwards. The bucket name is the bucket's
+> identity and survives.
 
 ## Bootstrap
 
@@ -69,6 +70,14 @@ Paste them into the commented binding blocks in `apps/api/wrangler.toml`.
 | `main.tf` | D1 database, R2 frames bucket |
 | `outputs.tf` | IDs consumed by `wrangler.toml` |
 
-Still to come: the cloudflared tunnel and OTLP hostname (M2.1), Access
-applications and service tokens (M2.2, M3.5, M5.1), and the cron trigger for
-the job reaper (M6.2).
+Still to come: the Access application over `/api/admin/*` (M3.5), the Access
+application over the admin SPA route (M5.1), and the cron trigger for the job
+reaper (M6.2).
+
+**Not here, deliberately:** the cloudflared tunnel and the OTLP endpoint. Those
+belong to the monitoring stack, which is a separate project with its own
+repository. This project consumes `otlp.mkcarl.com` as a URL and owns nothing
+about it. The reasoning — chiefly that `terraform destroy` is run here on
+purpose, and a shared tunnel would make that take Grafana down for unrelated
+projects — is in `CONTEXT.md` §6, along with the runbook for how the endpoint
+was gated.
