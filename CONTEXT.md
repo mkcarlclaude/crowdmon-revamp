@@ -572,6 +572,13 @@ Recorded so they are not re-litigated.
 9. The OTLP gating is click-ops by decision (§6), so it is reproducible only from the
    runbook. Nothing enforces that the runbook stays true — if the policy is edited in
    the dashboard, this repo will not notice.
+10. **The Go worker's telemetry is wired but inert.** M4.1 set up the exporter and a log
+    handler that stamps records with their span's ids, and M4 deliberately emits no
+    custom spans — so in production nothing is exported and no log line carries a
+    trace_id. The queue client also sends no `traceparent`, which leaves the Worker's
+    spans for `/api/jobs/*` with no parent. Both are fixed by the same change and it is
+    deliberately not M4's: creating a span to propagate *is* the custom span M4.1's
+    criteria exclude. It belongs with the first real work, in M7.
 
 ---
 

@@ -165,6 +165,13 @@ follows the blast radius. Reasoning and runbook: `CONTEXT.md` §6.
 *Depends on: M3.*
 *Done when:* submitting a URL results in the home worker claiming and completing it.
 
+**Met on 2026-08-02**, by the deployed container rather than a local build: a job in
+production D1 went `pending` -> `claimed` -> `done`, claimed at 11:33:36 and reported
+91ms later, with `claimed_by` cleared on the way out. The lease was checked separately
+against a deliberately slow job: `heartbeat_at` advanced while `claimed_at` held still.
+The job was seeded directly into D1 — submission through `/api/admin/videos` needs an
+interactive Access login, so that half stays covered by M3.5's own verification.
+
 ### M4.1 — Go worker foundation
 - [x] Config from environment
 - [x] OTel SDK initialised, OTLP exporter, service name set
@@ -200,6 +207,22 @@ follows the blast radius. Reasoning and runbook: `CONTEXT.md` §6.
       timer enabled and `Persistent`), but the reboot itself needs sudo and has not been
       performed. `docker kill` is *not* a test of this: Docker suppresses the restart
       policy for anything stopped by hand
+
+### M4.6 — Close the ungated workers.dev hostname — **done 2026-08-02**
+
+Not in the original plan. M3.5 left it as a named constraint: Cloudflare Access binds
+to a route on a zone, `*.workers.dev` is not one, and so `/api/admin/*` was reachable
+there behind the Worker's own JWT check alone. Closing it needed something else to point
+at the custom domain first, which is what M4.3 delivered.
+
+- [x] `workers_dev = false`, and the workers.dev entry dropped from the spec's `servers`
+- [x] `API_BASE_URL` repointed at the custom domain — it is what the deploy's health
+      check reads, so the two had to move together
+- [x] A test asserting the setting stays off; it defaults to *on*, so deleting one line
+      would reopen the hostname and nothing else would notice
+- [x] Verified: five samples of `/health` and `/api/admin/videos` on workers.dev all 404,
+      while the custom domain answers 200 / 302 — a single sample cannot tell a closed
+      hostname from a rollout still serving two versions
 
 ---
 

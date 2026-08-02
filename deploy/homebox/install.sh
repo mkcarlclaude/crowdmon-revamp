@@ -22,9 +22,10 @@ install -m 0644 "${here}/docker-compose.yml" "${target}/docker-compose.yml"
 
 # The env file holds an Access service token, so it is created once and never
 # overwritten by a redeploy.
+fresh_env=false
 if [[ ! -f "${target}/.env" ]]; then
     install -m 0600 "${here}/.env.example" "${target}/.env"
-    echo "    created ${target}/.env from the example — fill it in before starting"
+    fresh_env=true
 fi
 
 echo "==> installing user units into ${units}"
@@ -39,6 +40,17 @@ loginctl enable-linger "$(id -un)"
 
 systemctl --user daemon-reload
 systemctl --user enable --now crowdmon-update.timer
+
+# Starting now would crash-loop: the example ships an OTLP endpoint with no
+# Access credentials, and config.Load rejects that combination on purpose. A
+# container restarting forever under `unless-stopped` is a worse first
+# impression than an installer that stops and says why.
+if [[ "${fresh_env}" == true ]]; then
+    echo
+    echo "created ${target}/.env from the example. Fill it in, then run this again"
+    echo "to start the worker — the units and the timer are already installed."
+    exit 0
+fi
 
 echo "==> starting the worker"
 cd "${target}"

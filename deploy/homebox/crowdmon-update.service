@@ -24,9 +24,15 @@ ExecStart=/usr/bin/docker compose pull --quiet
 ExecStart=/usr/bin/docker compose up -d
 
 # The old image is untagged by the pull and would otherwise accumulate one
-# ~1GB layer set per release. Dangling only — nothing tagged is touched, so
-# the monitoring stack's images are safe.
-ExecStart=/usr/bin/docker image prune --force
+# ~1GB layer set per release.
+#
+# Filtered by label, not just "dangling". A bare `docker image prune` is
+# box-wide: it would delete every other project's dangling images too, on a
+# box this deployment goes out of its way not to disturb. The label is set in
+# worker/Dockerfile, so the filter matches this project's images and nothing
+# else — including nothing of the monitoring stack's.
+ExecStart=/usr/bin/docker image prune --force \
+    --filter label=org.opencontainers.image.source=https://github.com/mkcarlclaude/crowdmon-revamp
 
 [Install]
 WantedBy=default.target
