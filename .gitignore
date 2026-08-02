@@ -36,3 +36,5 @@ infra/backend.hcl
 
 # SDD scratch: ledger, task briefs and review packages. Git history is the record.
 .superpowers/
+
+apps/web/dist
