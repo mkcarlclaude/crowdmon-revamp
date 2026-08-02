@@ -19,6 +19,10 @@ export function SubmitForm() {
   function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!url.trim()) return;
+    // Guard against a second enqueue directly rather than relying solely on
+    // the button's `disabled` attribute, which only takes effect once React
+    // has re-rendered between two click events.
+    if (submit.isPending) return;
     submit.mutate({ url: url.trim() }, { onSuccess: () => setUrl("") });
   }
 
@@ -67,7 +71,7 @@ function SubmitError({ error }: { error: Error }) {
   return (
     <div role="alert" className="text-sm text-[var(--color-failed)]">
       <p>{error.message}</p>
-      {issues && (
+      {issues && issues.length > 0 && (
         <ul className="mt-1 list-disc pl-5">
           {issues.map((issue) => (
             <li key={`${issue.path}:${issue.message}`}>
