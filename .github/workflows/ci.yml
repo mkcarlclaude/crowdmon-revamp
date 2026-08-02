@@ -86,14 +86,12 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          # 1.25 for the toolchain, not the module: go.mod still declares 1.24
-          # and the worker compiles under it, but oapi-codegen v2.8.0 requires
-          # >= 1.25 and setup-go pins GOTOOLCHAIN=local, so `go run` cannot
-          # fetch a newer one itself.
+          # Matches the go directive in go.mod, which the OTel SDK raised to
+          # 1.25 in M4.1. It also has to be >= 1.25 for oapi-codegen v2.8.0:
+          # setup-go pins GOTOOLCHAIN=local, so `go run` cannot fetch a newer
+          # toolchain for itself.
           go-version: '1.25'
-          # go.sum does not exist until the worker takes its first dependency
-          # in M4; go.mod is always present and is a valid cache key.
-          cache-dependency-path: worker/go.mod
+          cache-dependency-path: worker/go.sum
 
       # Before vet and build, so a stale contract fails on the honest reason
       # rather than as a compile error in whatever code used the old field.
