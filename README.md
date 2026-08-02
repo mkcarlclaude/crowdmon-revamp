@@ -144,7 +144,8 @@ the spec deliberately — it describes what the Worker does, not what it will do
 
 ## Working on it
 
-Requires Node 22, pnpm 10 and Go 1.24. Nothing needs cloud credentials.
+Requires Node 22, pnpm 10 and Go 1.25. The module itself declares 1.24 and compiles
+under it; 1.25 is what oapi-codegen needs to run. Nothing needs cloud credentials.
 
 ```sh
 pnpm install

@@ -86,7 +86,11 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          # 1.25 for the toolchain, not the module: go.mod still declares 1.24
+          # and the worker compiles under it, but oapi-codegen v2.8.0 requires
+          # >= 1.25 and setup-go pins GOTOOLCHAIN=local, so `go run` cannot
+          # fetch a newer one itself.
+          go-version: '1.25'
           # go.sum does not exist until the worker takes its first dependency
           # in M4; go.mod is always present and is a valid cache key.
           cache-dependency-path: worker/go.mod
