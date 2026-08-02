@@ -29,6 +29,7 @@ OTLP_ENDPOINT = "https://otlp.mkcarl.com/v1/traces"
 binding = "DB"
 database_name = "crowdmon"
 database_id = "93c06c0b-10d8-4f4f-a3a6-c7a0a59c0e42"
+migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "FRAMES"
