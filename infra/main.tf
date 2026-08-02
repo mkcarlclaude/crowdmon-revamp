@@ -9,6 +9,19 @@
 resource "cloudflare_d1_database" "main" {
   account_id = var.account_id
   name       = var.project_name
+
+  # Stated explicitly, though "disabled" is already the value in the account.
+  # Omitted, the provider plans it to null on every run and the API rejects
+  # that with `Invalid property: read_replication => Expected object, received
+  # null` — so an unrelated apply fails on a database nobody meant to touch.
+  #
+  # Disabled rather than auto: replicas are eventually consistent, and the job
+  # claim's whole correctness argument is that SQLite serialises writers
+  # against one primary (CONTEXT.md §Q14). A worker reading a replica could see
+  # a job as pending after another worker had already taken it.
+  read_replication = {
+    mode = "disabled"
+  }
 }
 
 # Extracted frames. Source videos are never uploaded here: they are downloaded

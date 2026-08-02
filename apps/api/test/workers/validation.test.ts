@@ -1,15 +1,21 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../src/app";
+import { adminHeaders, configureAccess, installAdminIdentity } from "./admin-identity";
+
+// The admin route is gated (M3.5). Validation runs behind the gate, so these
+// requests carry an assertion; access.test.ts covers the gate itself.
+beforeAll(installAdminIdentity);
+beforeEach(configureAccess);
 
 // The real bindings, not a literal: most cases here are rejected before any
 // handler runs, but the one that is not reaches D1.
-function post(path: string, body: unknown) {
+async function post(path: string, body: unknown) {
   return app.request(
     path,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(await adminHeaders()) },
       body: JSON.stringify(body),
     },
     env,
@@ -53,7 +59,7 @@ describe("a body that is not JSON at all", () => {
       "/api/admin/videos",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(await adminHeaders()) },
         body: "{not json",
       },
       env,

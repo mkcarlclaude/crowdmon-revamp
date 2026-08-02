@@ -6,3 +6,11 @@ account_id = "<CLOUDFLARE_ACCOUNT_ID>"
 # zone_name    = "mkcarl.com"
 # project_name = "crowdmon"
 # r2_location  = "APAC"
+
+# Required. Who may reach /api/admin/*. The Worker checks its own copy of this
+# list (the ADMIN_EMAILS secret) after Access has done its part.
+admin_emails = ["you@example.com"]
+
+# Required. Identity providers allowed on the admin application. Empty would
+# mean "all of them", including any added to the account later.
+access_idp_ids = ["<onetimepin-idp-id>", "<github-idp-id>"]

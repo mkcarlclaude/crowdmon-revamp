@@ -1,13 +1,19 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../src/app";
+import { adminHeaders, configureAccess, installAdminIdentity } from "./admin-identity";
 
-function submit(url: string) {
+// /api/admin/* is gated (M3.5); these tests are about what the handler does
+// once past the gate, so they carry a valid assertion throughout.
+beforeAll(installAdminIdentity);
+beforeEach(configureAccess);
+
+async function submit(url: string) {
   return app.request(
     "/api/admin/videos",
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(await adminHeaders()) },
       body: JSON.stringify({ url }),
     },
     env,
