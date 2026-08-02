@@ -18,16 +18,16 @@ import (
 
 // Defines values for CompleteRequestStatus.
 const (
-	Done   CompleteRequestStatus = "done"
-	Failed CompleteRequestStatus = "failed"
+	CompleteRequestStatusDone   CompleteRequestStatus = "done"
+	CompleteRequestStatusFailed CompleteRequestStatus = "failed"
 )
 
 // Valid indicates whether the value is a known member of the CompleteRequestStatus enum.
 func (e CompleteRequestStatus) Valid() bool {
 	switch e {
-	case Done:
+	case CompleteRequestStatusDone:
 		return true
-	case Failed:
+	case CompleteRequestStatusFailed:
 		return true
 	default:
 		return false
@@ -80,6 +80,78 @@ func (e JobKind) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// Defines values for JobStatus.
+const (
+	JobStatusClaimed JobStatus = "claimed"
+	JobStatusDone    JobStatus = "done"
+	JobStatusFailed  JobStatus = "failed"
+	JobStatusPending JobStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the JobStatus enum.
+func (e JobStatus) Valid() bool {
+	switch e {
+	case JobStatusClaimed:
+		return true
+	case JobStatusDone:
+		return true
+	case JobStatusFailed:
+		return true
+	case JobStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// AdminChunkWork defines model for AdminChunkWork.
+type AdminChunkWork struct {
+	// EndSeconds Example: 60
+	EndSeconds int `json:"end_seconds"`
+
+	// SegmentIndex Example: 0
+	SegmentIndex int `json:"segment_index"`
+
+	// StartSeconds Example: 0
+	StartSeconds int `json:"start_seconds"`
+}
+
+// AdminJob defines model for AdminJob.
+type AdminJob struct {
+	// Attempts Example: 1
+	Attempts int             `json:"attempts"`
+	Chunk    *AdminChunkWork `json:"chunk,omitempty"`
+
+	// ClaimedAt Example: 1754100000
+	ClaimedAt *int `json:"claimed_at"`
+
+	// ClaimedBy Example: carls-ubuntu-1
+	ClaimedBy *string `json:"claimed_by"`
+
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// FailureReason Example: video unavailable
+	FailureReason *string `json:"failure_reason"`
+
+	// HeartbeatAt Example: 1754100030
+	HeartbeatAt *int `json:"heartbeat_at"`
+
+	// Id Example: 1
+	Id     int       `json:"id"`
+	Kind   JobKind   `json:"kind"`
+	Status JobStatus `json:"status"`
+
+	// UpdatedAt Example: 1754100030
+	UpdatedAt int `json:"updated_at"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+
+	// VideoUrl Example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+	VideoUrl string `json:"video_url"`
 }
 
 // ChunkWork defines model for ChunkWork.
@@ -160,6 +232,17 @@ type Job struct {
 // JobKind defines model for JobKind.
 type JobKind string
 
+// JobList defines model for JobList.
+type JobList struct {
+	Jobs []AdminJob `json:"jobs"`
+
+	// Now Example: 1754100030
+	Now int `json:"now"`
+}
+
+// JobStatus defines model for JobStatus.
+type JobStatus string
+
 // SubmitVideoRequest defines model for SubmitVideoRequest.
 type SubmitVideoRequest struct {
 	// Url Example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
@@ -182,6 +265,12 @@ type VideoSubmission struct {
 
 	// VideoId Example: dQw4w9WgXcQ
 	VideoId string `json:"video_id"`
+}
+
+// ListJobsParams defines parameters for ListJobs.
+type ListJobsParams struct {
+	Status *JobStatus `form:"status,omitempty" json:"status,omitempty"`
+	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // SubmitVideoJSONRequestBody defines body for SubmitVideo for application/json ContentType.
@@ -270,6 +359,13 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// ListJobs List jobs with their lease and failure state
+	//
+	// The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
+	//
+	// Corresponds with GET /api/admin/jobs (the `ListJobs` operationId).
+	ListJobs(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// SubmitVideoWithBody Submit a YouTube URL for processing
 	//
 	// Creates the video row and enqueues its download job. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -342,6 +438,23 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// ListJobs List jobs with their lease and failure state
+//
+// The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
+//
+// Corresponds with GET /api/admin/jobs (the `ListJobs` operationId).
+func (c *Client) ListJobs(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListJobsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // SubmitVideoWithBody Submit a YouTube URL for processing
@@ -505,6 +618,72 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewListJobsRequest constructs an http.Request for the ListJobs method
+func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/jobs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewSubmitVideoRequest calls the generic SubmitVideo builder with application/json body
@@ -752,6 +931,15 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ListJobsWithResponse List jobs with their lease and failure state
+	//
+	// The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/jobs (the `ListJobs` operationId).
+	ListJobsWithResponse(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*ListJobsResponse, error)
+
 	// SubmitVideoWithBodyWithResponse Submit a YouTube URL for processing
 	//
 	// Creates the video row and enqueues its download job. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -826,6 +1014,75 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
+}
+
+type ListJobsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *JobList
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListJobsResponse) GetJSON200() *JobList {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListJobsResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListJobsResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListJobsResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListJobsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListJobsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListJobsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListJobsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListJobsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type SubmitVideoResponse struct {
@@ -1089,6 +1346,21 @@ func (r GetHealthResponse) ContentType() string {
 	return ""
 }
 
+// ListJobsWithResponse List jobs with their lease and failure state
+//
+// The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/jobs (the `ListJobs` operationId).
+func (c *ClientWithResponses) ListJobsWithResponse(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*ListJobsResponse, error) {
+	rsp, err := c.ListJobs(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListJobsResponse(rsp)
+}
+
 // SubmitVideoWithBodyWithResponse Submit a YouTube URL for processing
 //
 // Creates the video row and enqueues its download job. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -1216,6 +1488,60 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetHealthResponse(rsp)
+}
+
+// ParseListJobsResponse parses an HTTP response from a ListJobsWithResponse call
+func ParseListJobsResponse(rsp *http.Response) (*ListJobsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListJobsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JobList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseSubmitVideoResponse parses an HTTP response from a SubmitVideoWithResponse call

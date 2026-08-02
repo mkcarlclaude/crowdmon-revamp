@@ -112,17 +112,17 @@ func (c *Client) Heartbeat(ctx context.Context, jobID int) error {
 // one field different, and a worker that could report success without being
 // able to report failure would be worse than useless.
 func (c *Client) Complete(ctx context.Context, jobID int, cause error) error {
-	// api.Done and api.Failed rather than the strings they equal. The whole
-	// argument for a generated client is that a change to the contract fails
-	// the Go build, and a bare "done" here would survive the enum being
-	// renamed and fail in production instead.
+	// api.CompleteRequestStatusDone and api.CompleteRequestStatusFailed rather
+	// than the strings they equal. The whole argument for a generated client is
+	// that a change to the contract fails the Go build, and a bare "done" here
+	// would survive the enum being renamed and fail in production instead.
 	body := api.CompleteJobJSONRequestBody{
 		WorkerId: c.workerID,
-		Status:   api.Done,
+		Status:   api.CompleteRequestStatusDone,
 	}
 	if cause != nil {
 		reason := truncate(cause.Error(), maxFailureReason)
-		body.Status = api.Failed
+		body.Status = api.CompleteRequestStatusFailed
 		body.FailureReason = &reason
 	}
 

@@ -167,3 +167,71 @@ export const JobIdParam = z.object({
     .refine((id) => id > 0)
     .openapi({ param: { name: "id", in: "path" }, type: "integer", example: 1 }),
 });
+
+/** Mirrors the `status` CHECK constraint in migration 0001. */
+export const JobStatus = z.enum(["pending", "claimed", "done", "failed"]).openapi("JobStatus");
+
+/**
+ * A job as the operator sees it — the lease and failure columns the worker's
+ * own `Job` deliberately omits, because a worker has no use for them.
+ *
+ * Every nullable column is `.nullable()` rather than `.optional()`. An absent
+ * key and a null both arrive as `undefined` in JavaScript, which would make
+ * "never claimed" and "the API did not say" indistinguishable in the UI.
+ */
+export const AdminJob = z
+  .object({
+    id: z.int().positive().openapi({ example: 1 }),
+    kind: JobKind,
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    video_url: z.url().openapi({ example: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }),
+    status: JobStatus,
+    attempts: z.int().nonnegative().openapi({ example: 1 }),
+    claimed_by: z.string().nullable().openapi({ example: "carls-ubuntu-1" }),
+    claimed_at: z.int().nullable().openapi({ example: 1_754_100_000 }),
+    heartbeat_at: z.int().nullable().openapi({ example: 1_754_100_030 }),
+    failure_reason: z.string().nullable().openapi({ example: "video unavailable" }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+    updated_at: z.int().openapi({ example: 1_754_100_030 }),
+    chunk: z
+      .object({
+        segment_index: z.int().nonnegative().openapi({ example: 0 }),
+        start_seconds: z.int().nonnegative().openapi({ example: 0 }),
+        end_seconds: z.int().positive().openapi({ example: 60 }),
+      })
+      .optional()
+      .openapi("AdminChunkWork"),
+  })
+  .openapi("AdminJob");
+
+export type AdminJobRow = z.infer<typeof AdminJob>;
+
+/**
+ * Named `JobList`, not `ListJobsResponse`: oapi-codegen owns the
+ * `<OperationId>Response` namespace, and the operation is `listJobs`.
+ *
+ * `now` is the server's clock. M5.3 shows heartbeat *age*, and computing that
+ * from the browser's clock would render a skewed laptop as a dead fleet.
+ */
+export const JobList = z
+  .object({
+    now: z.int().openapi({ example: 1_754_100_030 }),
+    jobs: z.array(AdminJob),
+  })
+  .openapi("JobList");
+
+/**
+ * Query parameters for the job list. `limit` is bounded rather than free: this
+ * endpoint reads D1 on an interval from an open browser tab, so an unbounded
+ * limit is a self-inflicted load generator.
+ */
+export const JobListQuery = z.object({
+  status: JobStatus.optional().openapi({ param: { name: "status", in: "query" } }),
+  limit: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((n) => n >= 1 && n <= 200)
+    .optional()
+    .openapi({ param: { name: "limit", in: "query" }, type: "integer", example: 50 }),
+});
