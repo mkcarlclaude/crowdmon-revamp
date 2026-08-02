@@ -62,6 +62,16 @@ describe("span naming", () => {
     expect(span.attributes["http.route"]).toBeUndefined();
   });
 
+  it("collapses a path parameter into its template", async () => {
+    const span = await requestInsideSpan("/api/jobs/1/heartbeat", "POST");
+
+    // The case the middleware exists for, and the one that only appears now
+    // that a route takes a parameter: /api/jobs/1 and /api/jobs/2 must be one
+    // series in Tempo, not two.
+    expect(span.name).toBe("POST /api/jobs/:id/heartbeat");
+    expect(span.attributes["http.route"]).toBe("/api/jobs/:id/heartbeat");
+  });
+
   it("distinguishes methods on the same path", async () => {
     const span = await requestInsideSpan("/health", "POST");
 
