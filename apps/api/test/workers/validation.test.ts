@@ -1,8 +1,9 @@
+import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { app } from "../src/app";
+import { app } from "../../src/app";
 
-const env = { ENVIRONMENT: "test" };
-
+// The real bindings, not a literal: most cases here are rejected before any
+// handler runs, but the one that is not reaches D1.
 function post(path: string, body: unknown) {
   return app.request(
     path,
@@ -39,10 +40,10 @@ describe("POST /api/admin/videos", () => {
       url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     });
 
-    // 501 until M3.4 implements the handler. The point of the assertion is
-    // that validation did not reject it — a 400 here would mean the schema
+    // What the handler then does is submit.test.ts's business; the point here
+    // is only that validation did not reject it. A 400 would mean the schema
     // rejects input it must accept.
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(201);
   });
 });
 
