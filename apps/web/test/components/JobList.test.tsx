@@ -56,22 +56,51 @@ describe("JobList", () => {
     vi.useRealTimers();
   });
 
-  it("nests chunk jobs under the download job for the same video", async () => {
+  it("groups chunk jobs under their own video's download job, keyed by video_id not order", async () => {
+    // Two videos, interleaved in the response array rather than arriving as
+    // neat per-video runs, and each video's chunk carries a *lower* id than
+    // its own download job — the exact shape a reap's re-run fan-out produces
+    // (M7.3). A single-video fixture can't distinguish "grouped by video_id"
+    // from "grouped by array order" or "dumped in one bucket" — this one can:
+    // any of those wrong groupings would leak a chunk into the other video's
+    // section.
     stubJobs([
       job({
         id: 5,
+        video_id: "dQw4w9WgXcQ",
+        video_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         kind: "chunk",
         chunk: { segment_index: 1, start_seconds: 60, end_seconds: 120 },
       }),
-      job({ id: 1, kind: "download" }),
+      job({
+        id: 3,
+        video_id: "oHg5SJYRHA0",
+        video_url: "https://www.youtube.com/watch?v=oHg5SJYRHA0",
+        kind: "chunk",
+        chunk: { segment_index: 2, start_seconds: 120, end_seconds: 180 },
+      }),
+      job({ id: 10, video_id: "dQw4w9WgXcQ", kind: "download" }),
+      job({
+        id: 8,
+        video_id: "oHg5SJYRHA0",
+        video_url: "https://www.youtube.com/watch?v=oHg5SJYRHA0",
+        kind: "download",
+      }),
     ]);
 
     render(wrap(<JobList />));
     // A <section> with an accessible name exposes the `region` role, not
     // `group`. Querying by role rather than by test id keeps the assertion tied
     // to what a screen reader would announce.
-    const group = await screen.findByRole("region", { name: /dQw4w9WgXcQ/ });
-    expect(within(group).getByText(/segment 1/i)).toBeInTheDocument();
+    const groupA = await screen.findByRole("region", { name: /dQw4w9WgXcQ/ });
+    const groupB = await screen.findByRole("region", { name: /oHg5SJYRHA0/ });
+
+    expect(within(groupA).getByText(/segment 1/i)).toBeInTheDocument();
+    expect(within(groupB).getByText(/segment 2/i)).toBeInTheDocument();
+
+    // The leak check: neither video's section may contain the other's chunk.
+    expect(within(groupA).queryByText(/segment 2/i)).not.toBeInTheDocument();
+    expect(within(groupB).queryByText(/segment 1/i)).not.toBeInTheDocument();
   });
 
   it("shows the failure reason on a failed job", async () => {
