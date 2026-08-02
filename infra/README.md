@@ -68,7 +68,7 @@ Paste them into the commented binding blocks in `apps/api/wrangler.toml`.
 | `versions.tf` | Provider constraints, R2-backed state backend |
 | `variables.tf` | Account ID, zone, naming, bucket location |
 | `main.tf` | D1 database, R2 frames bucket |
-| `access.tf` | The Worker's custom domain, and the Access application over `/api/admin/*` |
+| `access.tf` | The Worker's custom domains (current and, during the M5 migration, legacy), and the Access application over `/api/admin/*` |
 | `outputs.tf` | IDs consumed by `wrangler.toml` |
 
 Still to come: the Access application over the admin SPA route (M5.1), and the
@@ -113,6 +113,39 @@ retired `api.crowdmon.mkcarl.com`. Both exist at once on purpose — see the ord
 constraint below — and `legacy_api` is meant to be deleted in a second change, not
 carried forward indefinitely.
 
+**Merge before you apply.** The Worker has to actually be deployed serving both the
+SPA and the API before `crowdmon.mkcarl.com` is a hostname worth pointing anyone at.
+Applying `access.tf` before that code is merged and deployed just gives Access
+something to gate that isn't ready yet; deploying the Worker before the apply gives
+`crowdmon.mkcarl.com` no custom domain to be reached on at all, while `api.` keeps
+answering as if nothing changed — either order out of sequence leaves the SPA
+unreachable at the new hostname for no reason. Merge the code, deploy it, *then*
+run the apply below.
+
+**Read the plan before applying — this is not a plain `terraform apply`.** The old
+`cloudflare_workers_custom_domain.api` resource no longer exists anywhere in this
+configuration; it was renamed to `.app` and a new `.legacy_api` was added next to
+it. Terraform has no idea the two are related — it addresses resources by the name
+in the config, not by the hostname they hold — so a naive plan reads as: destroy
+`.api`, create `.app`, create `.legacy_api`. `.legacy_api`'s hostname is
+byte-identical to `.api`'s old one, but that similarity is invisible to Terraform's
+plan; nothing stops the destroy from running before the matching create, and in
+that window `api.crowdmon.mkcarl.com` has no custom domain at all. That is exactly
+the failure this whole migration is structured to avoid — the Go worker, which
+polls that hostname with no Access identity and can't be told to wait, would start
+failing every poll. If the plan proposes destroying `cloudflare_workers_custom_domain.api`
+rather than adopting it into `.legacy_api`, stop and move it in state first:
+
+```sh
+terraform -chdir=infra state mv \
+  cloudflare_workers_custom_domain.api cloudflare_workers_custom_domain.legacy_api
+```
+
+That tells Terraform the existing object *is* `.legacy_api` now, or was `.api` and
+should be re-planned as `.legacy_api`, rather than something to tear down and
+recreate. Only after that (or after confirming the plan already reads as a clean
+adopt, not a destroy) is it safe to apply.
+
 **Changing the Access application's `domain` replaces the resource.** Terraform has
 no in-place update for that attribute, so pointing it at `local.app_hostname` mints a
 brand new `aud` — the old one stops verifying anything the moment the replacement
@@ -123,6 +156,18 @@ application. Skip that and every request to `/api/admin/*` gets a 503 from
 `aud`, so if admin requests start failing closed right after an infra apply, check
 `terraform output access_aud` against `ACCESS_AUD` first.
 
+**Between the apply and the Go worker's repoint, `api.crowdmon.mkcarl.com` is
+unprotected by Access — and that's fine.** Once `access.tf` applies, the Access
+application only covers `crowdmon.mkcarl.com/api/admin`; `api.crowdmon.mkcarl.com`
+is still served by the same Worker (that's the whole point of keeping `legacy_api`
+alive) but no Access application names it any more. This is safe because
+`apps/api/src/middleware/access.ts` fails closed on its own: with no Access
+application in front of it, requests to `api.crowdmon.mkcarl.com/api/admin/*` arrive
+with no `Cf-Access-Jwt-Assertion` header, and the middleware returns 401 for exactly
+that reason (see the "missing Access assertion" branch). The admin API is briefly
+reachable at two hostnames but never *unauthenticated* at either — the outer gate is
+temporarily gone from one of them, the inner one still is not.
+
 **The Go worker must be repointed before `legacy_api` is removed.** It polls
 `/api/jobs/*` constantly and holds no Access identity, so nothing but changing its
 configured base URL and restarting it can redirect it. Deleting
@@ -130,14 +175,15 @@ configured base URL and restarting it can redirect it. Deleting
 queue outright — the worker starts failing every poll with no route to the host at
 all. The order is:
 
-1. Apply with both custom domains present (the committed state) and the Access
-   application pointed at `local.app_hostname`.
-2. Paste the new `access_aud` into `wrangler.toml` and deploy the Worker, so
-   `/api/admin` verifies again.
-3. Repoint the Go worker's API base URL and the repository's `API_BASE_URL`
+1. Merge and deploy the Worker code that serves both the SPA and the API.
+2. Apply with both custom domains present (the committed state) and the Access
+   application pointed at `local.app_hostname` — reading the plan first, per above.
+3. Paste the new `access_aud` into `wrangler.toml` and deploy the Worker again, so
+   `/api/admin` verifies against the new `aud`.
+4. Repoint the Go worker's API base URL and the repository's `API_BASE_URL`
    variable at `local.app_hostname`, and confirm it is polling successfully on the
    new host.
-4. Only then delete `cloudflare_workers_custom_domain.legacy_api` and
+5. Only then delete `cloudflare_workers_custom_domain.legacy_api` and
    `local.legacy_api_hostname` from `access.tf`, and apply again. Sample the old
    hostname several times, not once, before calling it retired — a single response
    cannot distinguish a removed hostname from a rollout still serving two versions.

@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "https://api.crowdmon.mkcarl.com",
+      "url": "https://crowdmon.mkcarl.com",
       "description": "production, behind Access"
     }
   ],
