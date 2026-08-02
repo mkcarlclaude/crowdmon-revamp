@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../src/app";
 import type { JobResponse } from "../../src/schemas";
+import { seedDownloadJob, seedVideo } from "./seed";
 
 function claim(workerId = "w1") {
   return app.request(
@@ -13,19 +14,6 @@ function claim(workerId = "w1") {
     },
     env,
   );
-}
-
-async function seedVideo(id: string) {
-  await env.DB.prepare("INSERT INTO videos (id, url) VALUES (?, ?)")
-    .bind(id, `https://www.youtube.com/watch?v=${id}`)
-    .run();
-}
-
-async function seedDownloadJob(videoId: string) {
-  await seedVideo(videoId);
-  await env.DB.prepare("INSERT INTO jobs (kind, video_id) VALUES ('download', ?)")
-    .bind(videoId)
-    .run();
 }
 
 describe("POST /api/jobs/claim", () => {
