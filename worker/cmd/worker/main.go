@@ -16,6 +16,7 @@ import (
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/telemetry"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/worker"
 )
 
 // How long shutdown gets to flush buffered spans once the process is on its
@@ -71,10 +72,18 @@ func run(ctx context.Context) error {
 		"tracing", cfg.TracingEnabled(),
 	)
 
-	// The poll loop lands in M4.2 and takes this same ctx. Until then the
-	// process proves the shell works and exits on a signal rather than
-	// immediately, which is what makes it a container worth deploying.
-	<-ctx.Done()
+	loop := worker.Loop{
+		// Replaced in M4.3 by the queue client. Until then the loop is real
+		// and the work is not: it polls nothing on the §Q20 schedule, which
+		// is enough to run the container and watch it idle correctly.
+		Poll:    func(context.Context) (bool, error) { return false, nil },
+		Backoff: worker.NewBackoff(worker.IdleInterval, worker.MaxInterval),
+		Logger:  logger,
+	}
+
+	if err := loop.Run(ctx); err != nil {
+		return err
+	}
 
 	logger.InfoContext(ctx, "worker stopping")
 	return nil
