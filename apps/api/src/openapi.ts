@@ -16,19 +16,11 @@ export const openApiConfig = {
       "zod schemas that validate requests at runtime, so the spec cannot drift from " +
       "what the Worker actually accepts.",
   },
-  // The custom domain first, because it is the one Cloudflare Access covers.
-  // A generated client that defaults to the workers.dev hostname would send
-  // admin requests past the gate and collect a 401 from the Worker's own
-  // check, which is correct but is not the intended path.
-  servers: [
-    { url: "https://api.crowdmon.mkcarl.com", description: "production, behind Access" },
-    {
-      url: "https://crowdmon-api.mkcarl-dev.workers.dev",
-      description:
-        "production, direct. No Access application covers this hostname — /api/admin/* is " +
-        "reachable here only with an assertion the Worker verifies itself.",
-    },
-  ],
+  // One server, because there is now one hostname. The workers.dev entry was
+  // dropped in M4.6 along with the hostname itself (`workers_dev = false`):
+  // Access cannot cover a *.workers.dev name, so admin requests arriving there
+  // were gated by the Worker's own JWT check alone.
+  servers: [{ url: "https://api.crowdmon.mkcarl.com", description: "production, behind Access" }],
   // Not `as const`: the generator's config type wants mutable arrays, and a
   // readonly `servers` fails to assign.
 };

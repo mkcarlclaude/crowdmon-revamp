@@ -166,33 +166,40 @@ follows the blast radius. Reasoning and runbook: `CONTEXT.md` §6.
 *Done when:* submitting a URL results in the home worker claiming and completing it.
 
 ### M4.1 — Go worker foundation
-- [ ] Config from environment
-- [ ] OTel SDK initialised, OTLP exporter, service name set
-- [ ] Structured logging with trace correlation
-- [ ] `context.Context` threaded through all pipeline function signatures from the
+- [x] Config from environment
+- [x] OTel SDK initialised, OTLP exporter, service name set
+- [x] Structured logging with trace correlation
+- [x] `context.Context` threaded through all pipeline function signatures from the
       first commit, even though no custom spans are emitted yet — retrofitting this
       later touches every function in the call chain
 
 ### M4.2 — Poll loop with adaptive backoff
-- [ ] 30s idle interval, doubling to a 120s cap on repeated empty polls
-- [ ] Immediate re-poll after finding work
-- [ ] Graceful shutdown
+- [x] 30s idle interval, doubling to a 120s cap on repeated empty polls
+- [x] Immediate re-poll after finding work
+- [x] Graceful shutdown
 
 ### M4.3 — Claim, heartbeat, complete
-- [ ] Claim via the generated client
-- [ ] Heartbeat every 30s while a job is held
-- [ ] Complete on success
-- [ ] No extraction yet — mark done immediately
+- [x] Claim via the generated client
+- [x] Heartbeat every 30s while a job is held
+- [x] Complete on success
+- [x] No extraction yet — mark done immediately
 
 ### M4.4 — Containerise and publish
-- [ ] Dockerfile with ffmpeg and yt-dlp
-- [ ] CI builds and pushes `linux/amd64` to GHCR
-- [ ] Image is public
+- [x] Dockerfile with ffmpeg and yt-dlp
+- [x] CI builds and pushes `linux/amd64` to GHCR
+- [x] Image is public
 
-### M4.5 — Deploy to the home box
-- [ ] Compose service alongside the monitoring stack
-- [ ] Timer-based image pull, no inbound access
-- [ ] Survives host reboot
+### M4.5 — Deploy to the home box — **deployed 2026-08-02**
+- [x] Compose service alongside the monitoring stack — its own project in `~/crowdmon`,
+      not a service inside the shared stack's file
+- [x] Timer-based image pull, no inbound access — a systemd **user** timer, four times a
+      day; sudo on that box needs a password, and a deployment that cannot be installed
+      non-interactively cannot be automated
+- [ ] Survives host reboot — every mechanism verified (Docker enabled at boot, the
+      container running under an unsuppressed `unless-stopped` policy, lingering on, the
+      timer enabled and `Persistent`), but the reboot itself needs sudo and has not been
+      performed. `docker kill` is *not* a test of this: Docker suppresses the restart
+      policy for anything stopped by hand
 
 ---
 

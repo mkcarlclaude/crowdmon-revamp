@@ -3,6 +3,21 @@ main = "src/index.ts"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
+# The Worker is reachable at api.crowdmon.mkcarl.com and nowhere else.
+#
+# workers.dev is on by default, and the *.workers.dev hostname is not covered
+# by the Access application — Access binds to a route on a zone, and
+# workers.dev is not one. Everything under /api/admin was therefore protected
+# there by the Worker's own JWT verification alone: correct, verified, and one
+# layer where the design calls for two. Nothing needs the hostname now that the
+# Go worker points at the custom domain (M4.3), so it is closed.
+#
+# Consequence, and the reason this is not free: the deploy workflow's health
+# check reads the API_BASE_URL repository *variable*, which must name the
+# custom domain. Flipping this back to true without repointing that variable
+# leaves a deploy verifying a hostname that no longer answers.
+workers_dev = false
+
 # Everything in this table is a plain var, readable by anyone who can read this
 # repo. Secrets are set out-of-band and never appear here:
 #
