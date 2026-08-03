@@ -237,20 +237,55 @@ at the custom domain first, which is what M4.3 delivered.
 Minimal by design. No threshold controls, no model promotion, no annotation views —
 none of those have data yet.
 
-### M5.1 — SPA shell on Pages
-- [ ] Vite + React, deployed to Pages by CI
-- [ ] Access application covering the admin route, in Terraform
-- [ ] Nothing user-facing beyond admin
+### M5.1 — SPA shell on the API Worker — **amended from "on Pages"**
+
+The original bullet said Pages. Pages would have put the SPA on a second
+hostname, making every admin call cross-origin: CORS with credentials, a
+cookie policy nobody had written down, and — worse — M5.4's documented expiry
+symptom replaced by a CORS failure, so the milestone's hardest bullet would
+have been verifying the wrong thing. Cloudflare also now steers new projects to
+Workers static assets. Serving the SPA from the Worker that already answers
+`/api/*` costs one `[assets]` table.
+
+- [x] Vite + React, built by CI and uploaded by the same `wrangler deploy`
+- [x] `run_worker_first` covers `/api/*`, `/health` and `/openapi.json` —
+      `not_found_handling = "single-page-application"` answers every other path
+      with `index.html`, which would have made the deploy's health check curl
+      the SPA shell and pass over a dead API. The health check itself now
+      asserts the JSON body rather than the status code alone, for the same
+      reason
+- [x] `preview_urls = false`, with a test. Version preview URLs are on
+      `*.workers.dev`, which Access cannot cover; leaving them on would have
+      republished `/api/admin/*` ungated — the M4.6 hole through a setting M4.6
+      never touched
+- [x] One hostname, `crowdmon.mkcarl.com`, `api.` retired, and the Access
+      application moved with it — **the Terraform is committed but the apply
+      has not been run.** This bullet is implemented, not verified: until the
+      apply happens, production is still on two hostnames and the old `aud`.
+      See `infra/README.md` "Migrating to a single hostname (M5)" for the
+      sequencing and the owner's steps
+- [x] No Access application on the UI route. `CONTEXT.md` §Q19 gates the API,
+      not the bundle — the original bullet's "Access application covering the
+      admin route" contradicted it, and that bullet is dropped rather than kept
 
 ### M5.2 — Submit form
-- [ ] YouTube URL input with validation
-- [ ] Posts to `/api/admin/videos`
-- [ ] Surfaces errors rather than swallowing them
+- [x] YouTube URL input with validation
+- [x] Posts to `/api/admin/videos`
+- [x] Surfaces errors rather than swallowing them
 
-### M5.3 — Job and chunk status list
-- [ ] Jobs with status, attempts, heartbeat age, timestamps
-- [ ] Chunks grouped under their parent job
-- [ ] Auto-refresh on an interval
+### M5.3 — Job and chunk status list — **required an endpoint that did not exist**
+
+M5 was written as a frontend-only milestone. It was not one: nothing in M1–M4
+returns the job list this screen needs, so `GET /api/admin/jobs` was built as
+part of this milestone rather than assumed to already exist. It returns the
+**server's clock** alongside the jobs (`now`, Unix epoch seconds) so heartbeat
+age is computed against a clock that cannot be skewed by the browser — a laptop
+with a wrong clock would otherwise render a healthy worker fleet as dead, or
+the reverse.
+
+- [x] Jobs with status, attempts, heartbeat age, timestamps
+- [x] Chunks grouped under their parent job
+- [x] Auto-refresh on an interval
 
 ### M5.4 — Handle Access session expiry
 - [ ] Detect the 302-to-login that `fetch` silently follows and returns as HTML/200

@@ -3,20 +3,31 @@ main = "src/index.ts"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
-# The Worker is reachable at api.crowdmon.mkcarl.com and nowhere else.
+# The Worker is meant to be reachable at crowdmon.mkcarl.com and nowhere else
+# (M5.1). That is the end state this repo's Terraform describes, not yet what
+# is live: the apply that moves the custom domain and the Access application
+# off api.crowdmon.mkcarl.com has not been run — see infra/README.md
+# "Migrating to a single hostname (M5)" — so production is still reachable at
+# api.crowdmon.mkcarl.com as well until that apply happens.
 #
-# workers.dev is on by default, and the *.workers.dev hostname is not covered
-# by the Access application — Access binds to a route on a zone, and
+# workers_dev is on by default, and the *.workers.dev hostname is not covered
+# by any Access application — Access binds to a route on a zone, and
 # workers.dev is not one. Everything under /api/admin was therefore protected
 # there by the Worker's own JWT verification alone: correct, verified, and one
 # layer where the design calls for two. Nothing needs the hostname now that the
-# Go worker points at the custom domain (M4.3), so it is closed.
+# Go worker points at a custom domain (M4.3), so it is closed.
 #
 # Consequence, and the reason this is not free: the deploy workflow's health
 # check reads the API_BASE_URL repository *variable*, which must name the
 # custom domain. Flipping this back to true without repointing that variable
 # leaves a deploy verifying a hostname that no longer answers.
 workers_dev = false
+
+# Version preview URLs are also on *.workers.dev, and are governed by their own
+# setting rather than by workers_dev. Left at its default, adding static assets
+# would have republished /api/admin/* on an ungated hostname — the M4.6 hole,
+# reopened by a setting M4.6 never touched.
+preview_urls = false
 
 # Everything in this table is a plain var, readable by anyone who can read this
 # repo. Secrets are set out-of-band and never appear here:
@@ -69,3 +80,26 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "FRAMES"
 bucket_name = "crowdmon-frames"
+
+# The SPA (M5.1). Served by this Worker rather than by Pages: one origin means
+# the Access cookie, the Access application and the API cannot disagree, and it
+# keeps M5.4's documented expiry symptom (a 302 followed to an HTML 200) intact
+# instead of turning it into a CORS failure.
+#
+# `directory` is built by `pnpm --filter @crowdmon/web run build` and is
+# gitignored. A *missing* directory is not the hazard — wrangler 4.118.0 hard-
+# errors on that. A stale or empty one is: wrangler reads whatever is there,
+# logs "Read 0 files from the assets directory" for an empty one, and exits 0
+# either way, publishing yesterday's bundle (or none) with nothing to say so.
+# `apps/api/package.json`'s `deploy` script runs the build first for exactly
+# this reason — do not call `wrangler deploy` directly on a machine whose
+# `dist` might be stale.
+[assets]
+directory = "../web/dist"
+not_found_handling = "single-page-application"
+
+# Without this list, `single-page-application` answers every non-asset path with
+# index.html and the Worker never runs. /health and /openapi.json are Hono
+# routes outside /api/, so leaving them out makes the deploy workflow's health
+# check curl the SPA shell and report success over a dead API.
+run_worker_first = [ "/api/*", "/health", "/openapi.json" ]

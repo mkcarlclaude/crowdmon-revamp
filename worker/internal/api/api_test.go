@@ -83,7 +83,7 @@ func TestRequestsMarshalToTheWireNames(t *testing.T) {
 	// nothing noticing until a request 400s in production.
 	got, err := json.Marshal(api.CompleteRequest{
 		WorkerId: "carls-ubuntu-1",
-		Status:   api.Failed,
+		Status:   api.CompleteRequestStatusFailed,
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

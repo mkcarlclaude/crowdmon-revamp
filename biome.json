@@ -8,6 +8,11 @@
   "files": {
     "includes": ["**", "!**/worker-configuration.d.ts", "!apps/api/openapi.json"]
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "formatter": {
     "indentStyle": "space",
     "indentWidth": 2,

@@ -13,13 +13,21 @@
 # `service` names the wrangler-deployed script rather than creating it:
 # Terraform owns account resources, wrangler owns code (CONTEXT.md §3). If the
 # script does not exist yet, this fails — deploy first, then apply.
-resource "cloudflare_workers_custom_domain" "api" {
+resource "cloudflare_workers_custom_domain" "app" {
   account_id = var.account_id
   zone_name  = var.zone_name
-  hostname   = local.api_hostname
+  hostname   = local.app_hostname
   service    = "${var.project_name}-api"
-  # `environment` is deprecated in provider 5.x and omitted: wrangler.toml
-  # declares no named environments, so there is only the default one.
+}
+
+# Temporary, for the M5 hostname migration only. Delete this resource and
+# `local.legacy_api_hostname` once the Go worker's CROWDMON_API_BASE_URL and the
+# repository's API_BASE_URL variable both name `local.app_hostname`.
+resource "cloudflare_workers_custom_domain" "legacy_api" {
+  account_id = var.account_id
+  zone_name  = var.zone_name
+  hostname   = local.legacy_api_hostname
+  service    = "${var.project_name}-api"
 }
 
 # Path-scoped, not host-scoped. The Go worker polls /api/jobs/* constantly and
@@ -29,7 +37,7 @@ resource "cloudflare_zero_trust_access_application" "admin" {
   account_id       = var.account_id
   name             = "${var.project_name} admin API"
   type             = "self_hosted"
-  domain           = "${local.api_hostname}/api/admin"
+  domain           = "${local.app_hostname}/api/admin"
   session_duration = "24h"
 
   # GitHub and one-time PIN are the identity providers configured on this
@@ -54,5 +62,18 @@ resource "cloudflare_zero_trust_access_application" "admin" {
 }
 
 locals {
-  api_hostname = "api.${var.project_name}.${var.zone_name}"
+  # One hostname for everything: the SPA, /api/*, /health and /openapi.json.
+  #
+  # It was `api.crowdmon.mkcarl.com` until M5. Splitting the SPA onto a second
+  # hostname would have made every admin call cross-origin — CORS with
+  # credentials, a load-bearing cookie policy nobody wrote down, and M5.4's
+  # documented expiry symptom replaced by a CORS failure. Two hostnames on one
+  # Worker is worse still: an Access application binds to host *and* path, so a
+  # second hostname republishes /api/admin with the outer gate missing.
+  app_hostname = "${var.project_name}.${var.zone_name}"
+
+  # Retired by M5. Kept for one apply so the Go worker can be repointed before
+  # the hostname disappears underneath it, then deleted along with the
+  # `legacy_api` resource below.
+  legacy_api_hostname = "api.${var.project_name}.${var.zone_name}"
 }

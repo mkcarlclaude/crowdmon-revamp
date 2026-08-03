@@ -47,7 +47,7 @@ type Client struct {
 
 // New builds a client for the API at baseURL, identifying as workerID.
 //
-// baseURL is expected to be an origin — `https://api.crowdmon.mkcarl.com` —
+// baseURL is expected to be an origin — `https://crowdmon.mkcarl.com` —
 // with or without a trailing slash; the generated client resolves operation
 // paths relatively, so both work, and a test pins that. A baseURL carrying a
 // *path prefix* is the case to avoid: relative resolution drops the last
@@ -112,17 +112,17 @@ func (c *Client) Heartbeat(ctx context.Context, jobID int) error {
 // one field different, and a worker that could report success without being
 // able to report failure would be worse than useless.
 func (c *Client) Complete(ctx context.Context, jobID int, cause error) error {
-	// api.Done and api.Failed rather than the strings they equal. The whole
-	// argument for a generated client is that a change to the contract fails
-	// the Go build, and a bare "done" here would survive the enum being
-	// renamed and fail in production instead.
+	// api.CompleteRequestStatusDone and api.CompleteRequestStatusFailed rather
+	// than the strings they equal. The whole argument for a generated client is
+	// that a change to the contract fails the Go build, and a bare "done" here
+	// would survive the enum being renamed and fail in production instead.
 	body := api.CompleteJobJSONRequestBody{
 		WorkerId: c.workerID,
-		Status:   api.Done,
+		Status:   api.CompleteRequestStatusDone,
 	}
 	if cause != nil {
 		reason := truncate(cause.Error(), maxFailureReason)
-		body.Status = api.Failed
+		body.Status = api.CompleteRequestStatusFailed
 		body.FailureReason = &reason
 	}
 

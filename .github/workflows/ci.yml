@@ -67,6 +67,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The Worker's [assets] directory is this build's output. A break here is
+      # a broken deploy, not a broken preview, so it fails CI rather than
+      # waiting to fail on main.
+      - name: Build web
+        run: pnpm --filter @crowdmon/web run build
+
       - name: Lint
         run: pnpm lint
 

@@ -1,6 +1,11 @@
 # Crowdmon 2026 — Design Context
 
-**Status:** building — M1, M2 and M3 merged
+**Status:** building — M1–M4 merged. M5's code is complete on `m5-admin-dashboard`,
+but its hostname migration has not been applied (`api.crowdmon.mkcarl.com` is
+still live; `crowdmon.mkcarl.com` is declared in Terraform, not applied — see
+`infra/README.md` "Migrating to a single hostname (M5)") and M5.4's expired-
+session handling has not been verified against a genuinely expired session in
+production.
 **Last updated:** 2026-08-02
 **Source:** grilling session (Q1–Q24 locked)
 
@@ -109,8 +114,21 @@ private admin plane, not a data path.
 - **Metadata:** Cloudflare D1. SQLite window functions cover every dashboard query at
   this scale. The "analytics won't scale" concern was raised and retracted — it only
   bites at millions-of-rows OLAP.
-- **Web runtime:** Workers + Hono API + React SPA on Pages. Clean API boundary beats
-  SSR sugar when infra is the story; Hono middleware gives span-per-route trivially.
+- **Web runtime:** Workers + Hono API + React SPA served by the same Worker —
+  **amended in M5 from "on Pages".** Clean API boundary beats SSR sugar when
+  infra is the story; Hono middleware gives span-per-route trivially. The SPA
+  was moved onto the API Worker's `[assets]` rather than deployed to Pages
+  for four reasons: one origin instead of two, so the Access session cookie
+  needs no cross-origin policy; no CORS-with-credentials to configure and get
+  wrong; §7's documented expiry symptom (a 302 `fetch` silently follows to an
+  HTML 200) stays that symptom instead of becoming a CORS `TypeError` on a
+  second origin, which would have meant M5.4 verifying the wrong failure
+  mode; and Cloudflare now steers new projects toward Workers static assets,
+  with Pages effectively in maintenance. This is a single Vite app only
+  because §Q11 keeps the public surface thin — landing, about and the demo
+  are v2. If the public surface ever grows into real content, the answer is a
+  second app in the monorepo sharing components with the admin panel, not a
+  framework migration of the admin panel itself.
 - **Auth:** Google OAuth implemented on Workers (`arctic` + `oslo/jose`), HttpOnly
   session cookie, sessions in D1.
 
@@ -125,16 +143,35 @@ private admin plane, not a data path.
   the two sides disagree. Zod schemas are needed at the edge for runtime validation of
   untrusted input regardless, so OpenAPI costs no extra authoring. Hand-written types
   on both sides is what produced the `storage_url` / `url` mismatch in the old code.
-- **Admin authentication (M3.5):** Cloudflare Access over
-  `api.crowdmon.mkcarl.com/api/admin`, plus the Worker verifying the assertion itself.
-  Both, not either: Access binds to a route on a zone, so any hostname the Worker is
-  served on that the application does not cover reaches the code with no assertion
-  attached. The workers.dev hostname was exactly that until M4.6 closed it, and
-  re-opening one is a line of config rather than a decision anyone would notice. The
-  allowlist deliberately exists twice — Terraform's decides who Cloudflare will issue an
-  assertion to, the Worker's secret decides who it will act for. `allowed_idps` is
-  enumerated rather than left empty, because empty means "every provider on the account"
-  and an IdP added later would silently become a way in.
+- **SPA type sharing (M5), no codegen:** the Go worker gets generated types
+  from the OpenAPI spec because it crosses a language boundary — Q24's
+  argument. The SPA does not: it imports the zod schemas from
+  `@crowdmon/api/schemas` directly, because TypeScript-to-TypeScript inside one
+  pnpm workspace has no boundary for codegen to cross. Importing the schema
+  rather than a generated type means a contract change fails `pnpm typecheck`
+  immediately in the SPA, not just in CI's drift check, and `schema.parse()` at
+  the client boundary doubles as the tripwire that catches an Access login
+  page arriving where JSON was expected — the same 302-to-HTML-200 shape §7
+  documents, caught by validation failing rather than by a type system that
+  would have believed the HTML was the expected object.
+- **Admin authentication (M3.5, hostname updated in M5):** Cloudflare Access over
+  `crowdmon.mkcarl.com/api/admin`, plus the Worker verifying the assertion itself. Both,
+  not either: Access binds to a route on a zone, so any hostname the Worker is served on
+  that the application does not cover reaches the code with no assertion attached. The
+  workers.dev hostname was exactly that until M4.6 closed it, and re-opening one is a
+  line of config rather than a decision anyone would notice. The allowlist deliberately
+  exists twice — Terraform's decides who Cloudflare will issue an assertion to, the
+  Worker's secret decides who it will act for. `allowed_idps` is enumerated rather than
+  left empty, because empty means "every provider on the account" and an IdP added later
+  would silently become a way in.
+
+  **That hostname is the end state the `m5-admin-dashboard` branch delivers, not yet
+  what is live.** The Terraform that moves the Access application off
+  `api.crowdmon.mkcarl.com` onto `crowdmon.mkcarl.com` is committed but the apply has not
+  been run — that is the owner's step — and moving it regenerates the application's
+  `aud`, so `ACCESS_AUD` in `wrangler.toml` and a redeploy have to land in the same
+  change as the apply. See `infra/README.md` "Migrating to a single hostname (M5)" for
+  the sequencing.
 - **IaC:** Terraform owns the account-level resources *this project* creates — D1, R2,
   DNS, its own Access apps and policies; wrangler owns bundling, secrets and code
   deploys. Terraform state in R2 via its S3-compatible backend. The cloudflared tunnel

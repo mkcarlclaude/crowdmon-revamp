@@ -2,9 +2,15 @@
   "name": "@crowdmon/api",
   "private": true,
   "type": "module",
+  "exports": {
+    "./schemas": {
+      "types": "./src/schemas.ts",
+      "default": "./src/schemas.ts"
+    }
+  },
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "pnpm --filter @crowdmon/web run build && wrangler deploy",
     "db:migrate": "wrangler d1 migrations apply crowdmon --remote",
     "db:migrate:local": "wrangler d1 migrations apply crowdmon --local",
     "db:list": "wrangler d1 migrations list crowdmon --remote",

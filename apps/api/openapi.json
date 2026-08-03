@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "https://api.crowdmon.mkcarl.com",
+      "url": "https://crowdmon.mkcarl.com",
       "description": "production, behind Access"
     }
   ],
@@ -106,6 +106,143 @@
           "url"
         ]
       },
+      "JobList": {
+        "type": "object",
+        "properties": {
+          "now": {
+            "type": "integer",
+            "example": 1754100030
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminJob"
+            }
+          }
+        },
+        "required": [
+          "now",
+          "jobs"
+        ]
+      },
+      "AdminJob": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "video_url": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 1
+          },
+          "claimed_by": {
+            "type": "string",
+            "nullable": true,
+            "example": "carls-ubuntu-1"
+          },
+          "claimed_at": {
+            "type": "integer",
+            "nullable": true,
+            "example": 1754100000
+          },
+          "heartbeat_at": {
+            "type": "integer",
+            "nullable": true,
+            "example": 1754100030
+          },
+          "failure_reason": {
+            "type": "string",
+            "nullable": true,
+            "example": "video unavailable"
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          },
+          "updated_at": {
+            "type": "integer",
+            "example": 1754100030
+          },
+          "chunk": {
+            "$ref": "#/components/schemas/AdminChunkWork"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "video_id",
+          "video_url",
+          "status",
+          "attempts",
+          "claimed_by",
+          "claimed_at",
+          "heartbeat_at",
+          "failure_reason",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "JobKind": {
+        "type": "string",
+        "enum": [
+          "download",
+          "chunk"
+        ]
+      },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "claimed",
+          "done",
+          "failed"
+        ]
+      },
+      "AdminChunkWork": {
+        "type": "object",
+        "properties": {
+          "segment_index": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
+          },
+          "start_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
+          },
+          "end_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 60
+          }
+        },
+        "required": [
+          "segment_index",
+          "start_seconds",
+          "end_seconds"
+        ]
+      },
       "Job": {
         "type": "object",
         "properties": {
@@ -142,13 +279,6 @@
           "video_id",
           "video_url",
           "attempts"
-        ]
-      },
-      "JobKind": {
-        "type": "string",
-        "enum": [
-          "download",
-          "chunk"
         ]
       },
       "ChunkWork": {
@@ -315,6 +445,87 @@
           },
           "409": {
             "description": "This video has already been submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/jobs": {
+      "get": {
+        "operationId": "listJobs",
+        "tags": [
+          "admin"
+        ],
+        "summary": "List jobs with their lease and failure state",
+        "description": "The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/JobStatus"
+            },
+            "required": false,
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jobs, newest first, with the server's clock",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed status or an out-of-range limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
             "content": {
               "application/json": {
                 "schema": {

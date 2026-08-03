@@ -20,7 +20,7 @@ export const openApiConfig = {
   // dropped in M4.6 along with the hostname itself (`workers_dev = false`):
   // Access cannot cover a *.workers.dev name, so admin requests arriving there
   // were gated by the Worker's own JWT check alone.
-  servers: [{ url: "https://api.crowdmon.mkcarl.com", description: "production, behind Access" }],
+  servers: [{ url: "https://crowdmon.mkcarl.com", description: "production, behind Access" }],
   // Not `as const`: the generator's config type wants mutable arrays, and a
   // readonly `servers` fails to assign.
 };

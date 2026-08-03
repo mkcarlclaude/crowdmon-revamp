@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+/**
+ * The token layer, and deliberately nothing more.
+ *
+ * M5's admin surface is a single-operator, data-dense tool; visual identity
+ * work belongs with the v2 public landing page, against content that exists.
+ * What is fixed here is the part that is expensive to change later: the scale
+ * and the palette. A v2 design lands on top of these tokens rather than
+ * repainting every component.
+ */
+@theme {
+  --color-surface: oklch(21% 0.012 264);
+  --color-surface-raised: oklch(26% 0.014 264);
+  --color-border: oklch(35% 0.015 264);
+  --color-text: oklch(95% 0.005 264);
+  --color-text-muted: oklch(72% 0.012 264);
+
+  /* Job status. One hue per terminal meaning, so a status column is readable
+     without reading it. */
+  --color-pending: oklch(72% 0.11 240);
+  --color-claimed: oklch(78% 0.14 85);
+  --color-done: oklch(72% 0.14 150);
+  --color-failed: oklch(66% 0.18 25);
+
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-text);
+}

@@ -5,9 +5,14 @@ import type { Bindings } from "../bindings";
 /**
  * Verifies the Cloudflare Access assertion on admin requests.
  *
- * Access already sits in front of `api.crowdmon.mkcarl.com/api/admin`, so this
- * looks redundant. It is not, and it did not become redundant when M4.6 closed
- * the workers.dev hostname that used to be the headline reason for it.
+ * Access is meant to sit in front of `crowdmon.mkcarl.com/api/admin` (M5.1) —
+ * that hostname is the end state this repo's Terraform describes, not yet
+ * what is live, since the apply that moves the Access application off
+ * `api.crowdmon.mkcarl.com` has not been run (infra/README.md "Migrating to a
+ * single hostname (M5)"). Either way this check looks redundant with Access
+ * sitting in front of it. It is not, and it did not become redundant when
+ * M4.6 closed the workers.dev hostname that used to be the headline reason
+ * for it.
  *
  * Reaching this code still does not prove a request passed Access. Access
  * binds to a *route on a zone*: any hostname the Worker is served on that the
