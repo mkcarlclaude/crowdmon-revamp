@@ -1,11 +1,12 @@
 # Crowdmon 2026 — Design Context
 
-**Status:** building — M1–M4 merged. M5's code is complete on `m5-admin-dashboard`,
-but its hostname migration has not been applied (`api.crowdmon.mkcarl.com` is
-still live; `crowdmon.mkcarl.com` is declared in Terraform, not applied — see
-`infra/README.md` "Migrating to a single hostname (M5)") and M5.4's expired-
-session handling has not been verified against a genuinely expired session in
-production.
+**Status:** building — M1–M5 merged. `crowdmon.mkcarl.com` serves the SPA and the
+API as of 2026-08-03; `api.crowdmon.mkcarl.com` still answers as `legacy_api`
+because the Go worker has not been repointed off it yet, so the migration is
+applied but not finished (`infra/README.md` "Migrating to a single hostname (M5)",
+steps 4 and 5). M5.4's expired-session handling remains **unverified** — it needs a
+genuinely revoked Access session in a browser, and which of its two symptoms
+production produces is deliberately unrecorded until someone has seen it.
 **Last updated:** 2026-08-02
 **Source:** grilling session (Q1–Q24 locked)
 

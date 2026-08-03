@@ -258,12 +258,24 @@ Workers static assets. Serving the SPA from the Worker that already answers
       `*.workers.dev`, which Access cannot cover; leaving them on would have
       republished `/api/admin/*` ungated — the M4.6 hole through a setting M4.6
       never touched
-- [x] One hostname, `crowdmon.mkcarl.com`, `api.` retired, and the Access
-      application moved with it — **the Terraform is committed but the apply
-      has not been run.** This bullet is implemented, not verified: until the
-      apply happens, production is still on two hostnames and the old `aud`.
-      See `infra/README.md` "Migrating to a single hostname (M5)" for the
-      sequencing and the owner's steps
+- [x] One hostname, `crowdmon.mkcarl.com`, and the Access application moved
+      with it — **applied 2026-08-03, verified.** `crowdmon.mkcarl.com` serves
+      the SPA and the API, `/api/admin/*` there answers 302 to Access, and
+      `api.crowdmon.mkcarl.com/api/admin/*` answers 401 from the Worker's own
+      check — the transition state `infra/README.md` predicted, and the reason
+      the design insists on two independent gates rather than one.
+
+      Two things the apply taught, both recorded in `infra/README.md`:
+      Terraform did propose **destroying** `cloudflare_workers_custom_domain.api`
+      rather than adopting it, so the `state mv` was necessary and not
+      theoretical. But the Access application updated **in place** — its `id`
+      survived and the `aud` did not regenerate, so the repaste-and-redeploy
+      the runbook called mandatory was a no-op. That runbook asserted the
+      replacement was unavoidable; on Cloudflare provider 5.x it is not.
+
+      **Not finished:** `api.` is *not* yet retired. `legacy_api` still holds it
+      so the Go worker keeps polling, and removing it needs the worker repointed
+      first — `infra/README.md` steps 4 and 5
 - [x] No Access application on the UI route. `CONTEXT.md` §Q19 gates the API,
       not the bundle — the original bullet's "Access application covering the
       admin route" contradicted it, and that bullet is dropped rather than kept
