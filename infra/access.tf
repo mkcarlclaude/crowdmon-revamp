@@ -20,15 +20,12 @@ resource "cloudflare_workers_custom_domain" "app" {
   service    = "${var.project_name}-api"
 }
 
-# Temporary, for the M5 hostname migration only. Delete this resource and
-# `local.legacy_api_hostname` once the Go worker's CROWDMON_API_BASE_URL and the
-# repository's API_BASE_URL variable both name `local.app_hostname`.
-resource "cloudflare_workers_custom_domain" "legacy_api" {
-  account_id = var.account_id
-  zone_name  = var.zone_name
-  hostname   = local.legacy_api_hostname
-  service    = "${var.project_name}-api"
-}
+# `cloudflare_workers_custom_domain.legacy_api` lived here from 2026-08-03 until
+# the same day, holding `api.crowdmon.mkcarl.com` alive across the M5 hostname
+# consolidation. It existed for one reason: the Go worker polls /api/jobs/*
+# with no Access identity and cannot be told to wait, so the old hostname had to
+# outlive the new one's creation and be removed only once the worker had been
+# repointed. Both of those happened; it is gone.
 
 # Path-scoped, not host-scoped. The Go worker polls /api/jobs/* constantly and
 # has no Access identity; covering the whole hostname would break the queue
@@ -71,9 +68,4 @@ locals {
   # Worker is worse still: an Access application binds to host *and* path, so a
   # second hostname republishes /api/admin with the outer gate missing.
   app_hostname = "${var.project_name}.${var.zone_name}"
-
-  # Retired by M5. Kept for one apply so the Go worker can be repointed before
-  # the hostname disappears underneath it, then deleted along with the
-  # `legacy_api` resource below.
-  legacy_api_hostname = "api.${var.project_name}.${var.zone_name}"
 }

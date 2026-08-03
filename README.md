@@ -7,17 +7,18 @@ healthy, observable infrastructure.
 zero-shot model, have humans verify the long tail, distil a real-time detector that runs
 in the browser — is the workload that generates signal worth observing.
 
-> **Status: M1 through M4 complete.** D1 and R2 are provisioned by Terraform, the Worker
-> is deployed by CI at `api.crowdmon.mkcarl.com`, and its spans are landing in Tempo
+> **Status: M1 through M5 complete.** D1 and R2 are provisioned by Terraform, the Worker
+> is deployed by CI at `crowdmon.mkcarl.com`, and its spans are landing in Tempo
 > through a gated OTLP endpoint. A URL can be submitted, a job claimed, heartbeated and
 > completed over a contract both runtimes generate from, with Cloudflare Access in front
 > of the admin endpoints — and the far end of that queue is now a Go worker running as a
 > container on the home box, polling on a budget and closing the lifecycle for real. It
-> does no video work yet; M7 is the extraction. M5's admin dashboard is built — one
+> does no video work yet; M7 is the extraction. M5's admin dashboard is live — one
 > Worker serving the SPA and the API at `crowdmon.mkcarl.com`, Access gating
-> `/api/admin` — but that hostname needs a Terraform apply this repo has not yet run,
-> and M5.4's session-expiry handling has not been verified against a real expired
-> session; see `ROADMAP.md` M5 and `CONTEXT.md` §Q6. M4.5's "survives host reboot" was
+> `/api/admin`, and a URL submitted from the browser visibly moving through the queue.
+> `api.crowdmon.mkcarl.com` was retired on 2026-08-03; `ROADMAP.md` M5.4 records that
+> the expiry symptom this project predicted was not the one production produces, and
+> that the first recovery could not reach a login at all. M4.5's "survives host reboot" was
 > accepted on its mechanisms rather than on an actual reboot, which is recorded in
 > `ROADMAP.md` rather than glossed over.
 
@@ -219,15 +220,13 @@ because the Go worker polls `/api/jobs/*` constantly with no Access identity and
 covering the whole hostname would break the queue rather than secure it. The
 application and its policy are in `infra/access.tf`.
 
-**That hostname is the end state this repo's Terraform describes, not yet what is
-live.** `crowdmon.mkcarl.com` replaces the old `api.crowdmon.mkcarl.com` as a single
-hostname serving both the SPA and the API (M5.1) — a deliberate change, since a
-second hostname would have split the SPA and the admin API across origins. The apply
-that moves the custom domain and the Access application from `api.crowdmon.mkcarl.com`
-onto `crowdmon.mkcarl.com` has not been run — that is the owner's step, and it
-regenerates the application's `aud`, so `ACCESS_AUD` in `wrangler.toml` and a redeploy
-have to land in the same change as the apply. See `infra/README.md` "Migrating to a
-single hostname (M5)" and `CONTEXT.md` §Q6 and §3.
+`crowdmon.mkcarl.com` is a single hostname serving both the SPA and the API (M5.1).
+It replaced `api.crowdmon.mkcarl.com` on 2026-08-03, which was retired once the Go
+worker had been repointed off it. A second hostname would have split the SPA and the
+admin API across origins, and — because an Access application binds to host *and*
+path — would have republished `/api/admin` with the outer gate missing. See
+`infra/README.md` "Migrating to a single hostname (M5)" for the sequencing and for the
+two things that runbook predicted wrongly, and `CONTEXT.md` §Q6 and §3.
 
 Behind it, `src/middleware/access.ts` verifies the `Cf-Access-Jwt-Assertion` header
 itself against the team's JWKS, then checks the identity against its own allowlist.
