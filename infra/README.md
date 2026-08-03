@@ -117,6 +117,12 @@ was gated.
 
 ## Migrating to a single hostname (M5)
 
+> **Steps 1-3 are done — applied 2026-08-03.** `crowdmon.mkcarl.com` serves the SPA
+> and the API, and the Access application covers `crowdmon.mkcarl.com/api/admin`.
+> `api.crowdmon.mkcarl.com` still answers, as `legacy_api`, because the Go worker has
+> not been repointed yet. **Steps 4 and 5 below are still outstanding.** What the apply
+> actually did, versus what this runbook predicted, is recorded under each heading.
+
 `access.tf` currently declares two custom domains: `cloudflare_workers_custom_domain.app`
 at `crowdmon.mkcarl.com` and `cloudflare_workers_custom_domain.legacy_api` at the
 retired `api.crowdmon.mkcarl.com`. Both exist at once on purpose — see the ordering
@@ -156,12 +162,30 @@ should be re-planned as `.legacy_api`, rather than something to tear down and
 recreate. Only after that (or after confirming the plan already reads as a clean
 adopt, not a destroy) is it safe to apply.
 
-**Changing the Access application's `domain` replaces the resource.** Terraform has
-no in-place update for that attribute, so pointing it at `local.app_hostname` mints a
-brand new `aud` — the old one stops verifying anything the moment the replacement
-applies. `ACCESS_AUD` in `apps/api/wrangler.toml` and a `wrangler deploy` carrying the
-new value must land in the same change as the `terraform apply` that replaces the
-application. Skip that and every request to `/api/admin/*` gets a 503 from
+> **What happened on 2026-08-03: the destroy was proposed, exactly as described.**
+> The first plan read `Plan: 2 to add, 1 to change, 1 to destroy`, with
+> `cloudflare_workers_custom_domain.api` destroyed and `.legacy_api` created carrying
+> the identical hostname. The `state mv` above was run, and the re-plan came back
+> `1 to add, 1 to change, 0 to destroy`. This paragraph is not hypothetical — read the
+> plan.
+
+**Changing the Access application's `domain` may or may not replace the resource —
+check the plan, do not assume either way.**
+
+> **What happened on 2026-08-03: it did not replace.** The plan read
+> `~ resource "cloudflare_zero_trust_access_application" "admin" will be updated
+> in-place`, the resource `id` was preserved (`899903f5-…`), and after the apply
+> `terraform output access_aud` was byte-identical to the `ACCESS_AUD` already in
+> `apps/api/wrangler.toml`. No repaste and no redeploy were needed, and admin
+> requests never failed closed. This runbook previously asserted the replacement was
+> unavoidable; on Cloudflare provider 5.x it was not.
+
+Do not read that as "the `aud` is stable." Read it as: the consequence of being wrong
+is severe and silent, so verify rather than predict. If a plan ever shows the
+application being **replaced** rather than updated in place, the old `aud` stops
+verifying the moment it applies — and then `ACCESS_AUD` in `apps/api/wrangler.toml`
+and a `wrangler deploy` carrying the new value must land in the same change as the
+apply. Skip that and every request to `/api/admin/*` gets a 503 from
 `apps/api/src/middleware/access.ts` — the error says nothing about hostnames or
 `aud`, so if admin requests start failing closed right after an infra apply, check
 `terraform output access_aud` against `ACCESS_AUD` first.
@@ -188,14 +212,30 @@ all. The order is:
 1. Merge and deploy the Worker code that serves both the SPA and the API.
 2. Apply with both custom domains present (the committed state) and the Access
    application pointed at `local.app_hostname` — reading the plan first, per above.
-3. Paste the new `access_aud` into `wrangler.toml` and deploy the Worker again, so
-   `/api/admin` verifies against the new `aud`.
+3. Check `terraform output access_aud` against `ACCESS_AUD` in `wrangler.toml`. If
+   they differ, paste the new value in and **rebuild the SPA and deploy** — the
+   `deploy` script does the build itself, so `pnpm --filter @crowdmon/api run deploy`
+   is the whole step. On 2026-08-03 they matched and this step was a no-op.
 4. Repoint the Go worker's API base URL and the repository's `API_BASE_URL`
    variable at `local.app_hostname`, and confirm it is polling successfully on the
    new host. Also update `deploy/homebox/.env.example`'s `CROWDMON_API_BASE_URL` —
    it is checked in against `api.crowdmon.mkcarl.com`, which is correct today and
    wrong the moment this step runs, and a future rebuild of the home box copies
    from it.
+
+   > **Partly done 2026-08-03:** `API_BASE_URL` is repointed. The Go worker on the
+   > home box and `deploy/homebox/.env.example` are **not** — that is the remaining
+   > work before step 5 is safe.
+   >
+   > `API_BASE_URL` is defined at **two** scopes and the narrower one wins: the
+   > workflow declares `environment: production`, so the production-environment
+   > variable shadows the repository-level one. M4.6 updated only the repository
+   > variable, which had no effect, and the mistake stayed invisible until the first
+   > deploy after the workers.dev hostname was fully torn down — that deploy's health
+   > check 404'd five times while the Worker itself deployed fine. Set it with
+   > `gh variable set API_BASE_URL --env production`, and check with
+   > `gh variable list --env production`. The stale repository-level variable still
+   > exists and should be deleted so there is one source.
 5. Only then delete `cloudflare_workers_custom_domain.legacy_api` and
    `local.legacy_api_hostname` from `access.tf`, and apply again. Sample the old
    hostname several times, not once, before calling it retired — a single response
