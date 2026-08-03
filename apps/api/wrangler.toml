@@ -3,14 +3,19 @@ main = "src/index.ts"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
-# The Worker is reachable at api.crowdmon.mkcarl.com and nowhere else.
+# The Worker is meant to be reachable at crowdmon.mkcarl.com and nowhere else
+# (M5.1). That is the end state this repo's Terraform describes, not yet what
+# is live: the apply that moves the custom domain and the Access application
+# off api.crowdmon.mkcarl.com has not been run — see infra/README.md
+# "Migrating to a single hostname (M5)" — so production is still reachable at
+# api.crowdmon.mkcarl.com as well until that apply happens.
 #
-# workers.dev is on by default, and the *.workers.dev hostname is not covered
-# by the Access application — Access binds to a route on a zone, and
+# workers_dev is on by default, and the *.workers.dev hostname is not covered
+# by any Access application — Access binds to a route on a zone, and
 # workers.dev is not one. Everything under /api/admin was therefore protected
 # there by the Worker's own JWT verification alone: correct, verified, and one
 # layer where the design calls for two. Nothing needs the hostname now that the
-# Go worker points at the custom domain (M4.3), so it is closed.
+# Go worker points at a custom domain (M4.3), so it is closed.
 #
 # Consequence, and the reason this is not free: the deploy workflow's health
 # check reads the API_BASE_URL repository *variable*, which must name the

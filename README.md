@@ -13,9 +13,13 @@ in the browser — is the workload that generates signal worth observing.
 > completed over a contract both runtimes generate from, with Cloudflare Access in front
 > of the admin endpoints — and the far end of that queue is now a Go worker running as a
 > container on the home box, polling on a budget and closing the lifecycle for real. It
-> does no video work yet; M5 is the admin dashboard, M7 the extraction. M4.5's "survives host
-> reboot" was accepted on its mechanisms rather than on an actual reboot, which is
-> recorded in `ROADMAP.md` rather than glossed over.
+> does no video work yet; M7 is the extraction. M5's admin dashboard is built — one
+> Worker serving the SPA and the API at `crowdmon.mkcarl.com`, Access gating
+> `/api/admin` — but that hostname needs a Terraform apply this repo has not yet run,
+> and M5.4's session-expiry handling has not been verified against a real expired
+> session; see `ROADMAP.md` M5 and `CONTEXT.md` §Q6. M4.5's "survives host reboot" was
+> accepted on its mechanisms rather than on an actual reboot, which is recorded in
+> `ROADMAP.md` rather than glossed over.
 
 ## Documents
 
@@ -44,20 +48,27 @@ house being up — jobs queue harmlessly while home is offline.
 
 ```
 YouTube ──► Go worker (home Ubuntu)          Cloudflare (free tier)
-              │  yt-dlp ─► ffmpeg ─► pHash    ┌──────────────────────┐
-              │                               │ Workers + Hono API   │
-              ├── long-poll claim ────────────┤ D1  (queue+metadata) │
-              ├── heartbeat ──────────────────┤ R2  (frames)         │
-              └── upload + complete ──────────┤ Pages (React admin)  │
-                                              └──────────────────────┘
+              │  yt-dlp ─► ffmpeg ─► pHash    ┌──────────────────────────────┐
+              │                               │ Worker: crowdmon.mkcarl.com  │
+              ├── long-poll claim ────────────┤   Hono API + React SPA       │
+              ├── heartbeat ──────────────────┤ D1  (queue+metadata)         │
+              └── upload + complete ──────────┤ R2  (frames)                 │
+                                              └──────────────────────────────┘
               └── OTLP/HTTP ─► collector ─► Tempo / Prometheus / Grafana
                                (via cloudflared tunnel, gated by Access)
 ```
 
+One Worker serves both the SPA and the API from a single hostname. The admin
+dashboard (M5) was originally planned as a separate Pages deployment; it was
+moved onto the API Worker's static assets instead, because a second hostname
+would have made every admin call cross-origin — see `CONTEXT.md` §Q6 for the
+full reasoning. Cloudflare Access gates `/api/admin`, not the `/admin` route
+itself, per `CONTEXT.md` §Q19.
+
 | Concern | Choice | Why |
 |---|---|---|
 | Frame extraction | Home Ubuntu box | A household IP dodges YouTube's datacenter block |
-| Web runtime | Workers + Hono, React SPA on Pages | Free tier, edge, survives home downtime |
+| Web runtime | Workers + Hono, React SPA served by the same Worker | Free tier, edge, survives home downtime; one origin means no CORS between the SPA and the admin API |
 | Metadata + queue | D1 | Free tier rules out Cloudflare Queues; the queue is a table with heartbeat leases |
 | Object storage | R2 | Free tier, no egress fees |
 | API contract | `@hono/zod-openapi` → OpenAPI → oapi-codegen | Two runtimes must agree; hand-written types on both sides is what broke the 2023 code |
@@ -108,7 +119,7 @@ span_name="GET /health"}` appears in Prometheus via Tempo's metrics-generator.
 
 ```
 apps/api/     Cloudflare Worker — Hono API, OpenAPI contract, D1 job queue, OTel
-apps/web/     React SPA on Pages — admin dashboard. Empty until M5.1
+apps/web/     React SPA — admin dashboard, built by Vite and served by the API Worker's [assets] (M5.1)
 worker/       Go module — the home-side worker: config, telemetry, poll loop, queue client. Extraction lands in M7/M8
 deploy/       How the worker gets onto the home box: compose project and a systemd user timer. See deploy/homebox/README.md
 infra/        Terraform — D1, R2, the Worker's custom domain and the Access app. See infra/README.md
@@ -203,10 +214,20 @@ See `deploy/homebox/README.md`.
 
 `/api/admin/*` is gated twice, and the second gate is not decoration.
 
-Cloudflare Access sits in front of `api.crowdmon.mkcarl.com/api/admin` — path-scoped,
+Cloudflare Access sits in front of `crowdmon.mkcarl.com/api/admin` — path-scoped,
 because the Go worker polls `/api/jobs/*` constantly with no Access identity and
 covering the whole hostname would break the queue rather than secure it. The
 application and its policy are in `infra/access.tf`.
+
+**That hostname is the end state this repo's Terraform describes, not yet what is
+live.** `crowdmon.mkcarl.com` replaces the old `api.crowdmon.mkcarl.com` as a single
+hostname serving both the SPA and the API (M5.1) — a deliberate change, since a
+second hostname would have split the SPA and the admin API across origins. The apply
+that moves the custom domain and the Access application from `api.crowdmon.mkcarl.com`
+onto `crowdmon.mkcarl.com` has not been run — that is the owner's step, and it
+regenerates the application's `aud`, so `ACCESS_AUD` in `wrangler.toml` and a redeploy
+have to land in the same change as the apply. See `infra/README.md` "Migrating to a
+single hostname (M5)" and `CONTEXT.md` §Q6 and §3.
 
 Behind it, `src/middleware/access.ts` verifies the `Cf-Access-Jwt-Assertion` header
 itself against the team's JWKS, then checks the identity against its own allowlist.
@@ -257,6 +278,17 @@ cd worker && go vet ./... && go test ./...  # Go
 
 CI runs exactly these, split into two path-filtered jobs so a Go change does not
 rebuild the SPA.
+
+Running the SPA against a real API locally is two processes: `wrangler dev` in
+`apps/api` for the Worker (port 8787), and `vite` in `apps/web` for the SPA with hot
+reload. `apps/web/vite.config.ts` proxies `/api`, `/health` and `/openapi.json` to
+`localhost:8787`, so the dev-time contract is the deployed one — including Access's
+fail-closed paths — rather than a mocked API.
+
+```sh
+pnpm --filter @crowdmon/api run dev    # wrangler dev, :8787
+pnpm --filter @crowdmon/web run dev    # vite, proxies /api to :8787
+```
 
 Deploying is done by CI on merge to main, using `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` on the `production` environment, plus an `API_BASE_URL`
