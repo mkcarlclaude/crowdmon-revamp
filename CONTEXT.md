@@ -166,13 +166,12 @@ private admin plane, not a data path.
   left empty, because empty means "every provider on the account" and an IdP added later
   would silently become a way in.
 
-  **That hostname is the end state the `m5-admin-dashboard` branch delivers, not yet
-  what is live.** The Terraform that moves the Access application off
-  `api.crowdmon.mkcarl.com` onto `crowdmon.mkcarl.com` is committed but the apply has not
-  been run — that is the owner's step — and moving it regenerates the application's
-  `aud`, so `ACCESS_AUD` in `wrangler.toml` and a redeploy have to land in the same
-  change as the apply. See `infra/README.md` "Migrating to a single hostname (M5)" for
-  the sequencing.
+  Applied 2026-08-03. `api.crowdmon.mkcarl.com` was retired the same day, once the Go
+  worker had been repointed off it and verified claiming through the new hostname.
+  Moving the application's `domain` turned out to update it **in place** rather than
+  replacing it, so the `aud` survived and the `ACCESS_AUD` repaste this section used to
+  call mandatory was a no-op — see `infra/README.md` "Migrating to a single hostname
+  (M5)", which records that and the one prediction it got right.
 - **IaC:** Terraform owns the account-level resources *this project* creates — D1, R2,
   DNS, its own Access apps and policies; wrangler owns bundling, secrets and code
   deploys. Terraform state in R2 via its S3-compatible backend. The cloudflared tunnel

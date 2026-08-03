@@ -273,9 +273,12 @@ Workers static assets. Serving the SPA from the Worker that already answers
       the runbook called mandatory was a no-op. That runbook asserted the
       replacement was unavoidable; on Cloudflare provider 5.x it is not.
 
-      **Not finished:** `api.` is *not* yet retired. `legacy_api` still holds it
-      so the Go worker keeps polling, and removing it needs the worker repointed
-      first — `infra/README.md` steps 4 and 5
+      **Finished 2026-08-03.** The Go worker was repointed at the new hostname
+      and verified by seeding a job and watching it claim and complete through
+      it — restarting a container proves configuration, not that the queue still
+      works. `legacy_api` was then destroyed and `api.crowdmon.mkcarl.com`
+      confirmed gone over five consecutive samples, all of which failed to
+      connect rather than returning a status
 - [x] No Access application on the UI route. `CONTEXT.md` §Q19 gates the API,
       not the bundle — the original bullet's "Access application covering the
       admin route" contradicted it, and that bullet is dropped rather than kept
@@ -315,12 +318,13 @@ the reverse.
       with no reachable login screen. The new route exists solely to sit under
       the Access-gated prefix so the navigation is intercepted, and redirects to
       `/admin` once an assertion exists
-- [x] Verified against a real unauthenticated session on 2026-08-03 — the loop
-      was found by using it, not by testing it. The unit test asserted
-      `location.assign` was *called*, which the broken version also did.
-      **Still unverified: a session that expires mid-use.** Signing in and
-      revoking is the remaining check; nothing yet proves the 24-hour boundary
-      behaves like the never-authenticated one
+- [x] Verified against a genuinely expired session on 2026-08-03, and against a
+      never-authenticated one. Both were found by *using* the dashboard, not by
+      testing it: the unit test asserted `location.assign` was called, which the
+      broken version also did. The lesson worth keeping is that ten task reviews
+      and a whole-branch review all passed on a recovery path that could not
+      reach a login screen, because each examined `/admin`'s gating and the
+      banner's navigation separately and each was correct in isolation
 
 ---
 

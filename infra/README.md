@@ -117,13 +117,17 @@ was gated.
 
 ## Migrating to a single hostname (M5)
 
-> **Steps 1-3 are done — applied 2026-08-03.** `crowdmon.mkcarl.com` serves the SPA
-> and the API, and the Access application covers `crowdmon.mkcarl.com/api/admin`.
-> `api.crowdmon.mkcarl.com` still answers, as `legacy_api`, because the Go worker has
-> not been repointed yet. **Steps 4 and 5 below are still outstanding.** What the apply
-> actually did, versus what this runbook predicted, is recorded under each heading.
+> **Done — completed 2026-08-03.** `crowdmon.mkcarl.com` serves the SPA and the API,
+> the Access application covers `crowdmon.mkcarl.com/api/admin`, the Go worker polls
+> the new hostname, and `api.crowdmon.mkcarl.com` has been destroyed and verified gone
+> over five consecutive samples. `legacy_api` no longer exists in `access.tf`.
+>
+> This section is kept as the record of a migration that is finished, not as
+> instructions. It is worth reading before any future hostname move, because two of
+> its predictions were wrong in opposite directions — noted under each heading below.
 
-`access.tf` currently declares two custom domains: `cloudflare_workers_custom_domain.app`
+`access.tf` declared, for the duration of the migration, two custom domains:
+`cloudflare_workers_custom_domain.app`
 at `crowdmon.mkcarl.com` and `cloudflare_workers_custom_domain.legacy_api` at the
 retired `api.crowdmon.mkcarl.com`. Both exist at once on purpose — see the ordering
 constraint below — and `legacy_api` is meant to be deleted in a second change, not
@@ -223,9 +227,12 @@ all. The order is:
    wrong the moment this step runs, and a future rebuild of the home box copies
    from it.
 
-   > **Partly done 2026-08-03:** `API_BASE_URL` is repointed. The Go worker on the
-   > home box and `deploy/homebox/.env.example` are **not** — that is the remaining
-   > work before step 5 is safe.
+   > **Done 2026-08-03.** `API_BASE_URL`, the Go worker's `CROWDMON_API_BASE_URL` in
+   > `~/crowdmon/.env` on the box, and `deploy/homebox/.env.example` all name
+   > `crowdmon.mkcarl.com`. The worker was verified by seeding a job and watching it
+   > claim and complete through the new hostname — reaching the box and restarting it
+   > proves configuration, not that the queue still works. The previous `.env` was
+   > kept on the box as `.env.bak-pre-m5-repoint`.
    >
    > `API_BASE_URL` is defined at **two** scopes and the narrower one wins: the
    > workflow declares `environment: production`, so the production-environment
@@ -240,3 +247,11 @@ all. The order is:
    `local.legacy_api_hostname` from `access.tf`, and apply again. Sample the old
    hostname several times, not once, before calling it retired — a single response
    cannot distinguish a removed hostname from a rollout still serving two versions.
+
+   > **Done 2026-08-03.** The plan read `0 to add, 0 to change, 1 to destroy`, and the
+   > destroyed object's id was the same one the step-2 `state mv` had adopted — worth
+   > checking, because a mismatch there would have meant the migration had been
+   > carrying a stray resource all along. Five samples of
+   > `https://api.crowdmon.mkcarl.com/health` afterwards all failed to connect
+   > outright rather than returning any status, and the worker logged no errors
+   > across the removal.
