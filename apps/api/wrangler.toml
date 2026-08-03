@@ -59,6 +59,24 @@ OTLP_ENDPOINT = "https://otlp.mkcarl.com/v1/traces"
 ACCESS_TEAM_DOMAIN = "https://mkcarl.cloudflareaccess.com"
 ACCESS_AUD = "c2c479badd245242deee8f7b8c459af12850ac6bd0815f54ac3fa01f47f7403f"
 
+# The reaper's thresholds (M6.2). Vars rather than constants because they are
+# the two numbers an operator would want to change without a code review, and
+# `src/reaper.ts` throws on a malformed one rather than defaulting.
+#
+# Four missed 30s heartbeats. Not tuned against the cron period: the cron
+# decides how often staleness is noticed (0-5 minutes either way), this decides
+# what staleness means. Tighter would start reaping workers that merely hit a
+# transient API error — `runner.go` deliberately keeps beating through those
+# rather than dropping a job it still holds.
+LEASE_STALE_SECONDS = 120
+
+# Three claims, then the job is retired as terminally failed. `attempts` is
+# incremented on the claim rather than on a failure, so a worker that dies
+# without reporting still spends one — which is the point. Without a ceiling a
+# poison job (deleted video, geo-blocked, malformed) is claimed, crashes the
+# worker, is reaped, and is claimed again forever.
+MAX_ATTEMPTS = 3
+
 # D1 and R2 are provisioned by Terraform (M1.3). The IDs below come from
 # `terraform -chdir=infra output`; wrangler binds to them, it does not create
 # them. If these ever disagree with Terraform, Terraform is the source of truth.

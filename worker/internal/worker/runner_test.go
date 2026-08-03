@@ -3,6 +3,7 @@ package worker_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -339,5 +340,100 @@ func TestRunnerTreatsALostLeaseAtCompletionAsADrop(t *testing.T) {
 	}
 	if !found {
 		t.Error("PollOnce() reported no work despite having claimed a job")
+	}
+}
+
+// A shutdown that interrupts work must not spend the job's last attempt.
+//
+// Real work returns ctx.Err() when the process goes down around it, and
+// reporting that through Complete() writes status='failed', which is
+// *terminal* — a graceful restart would permanently kill whatever was in
+// flight. Leaving the row `claimed` instead costs one lease window and then
+// the reaper (M6.2) hands it back to the next worker.
+func TestRunnerLeavesWorkInterruptedByShutdownToTheReaper(t *testing.T) {
+	q := &fakeQueue{job: aJob()}
+
+	runner := worker.Runner{
+		Queue:  q,
+		Logger: quietLogger(),
+		Work: func(ctx context.Context, _ *api.Job) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	found, err := runner.PollOnce(ctx)
+	if err != nil {
+		t.Fatalf("PollOnce() returned an unexpected error: %v", err)
+	}
+	if !found {
+		t.Error("PollOnce() reported no work after claiming a job")
+	}
+	if q.completed {
+		t.Errorf("the job was reported with cause %v; a shutdown must not retire it", q.cause)
+	}
+}
+
+// The same error shape, but nothing is shutting down: the work itself gave up.
+// That is a real failure and has to be reported, or the distinction above
+// becomes a way to swallow every cancellation the pipeline produces.
+func TestRunnerReportsACancellationThatIsNotAShutdown(t *testing.T) {
+	q := &fakeQueue{job: aJob()}
+
+	runner := worker.Runner{
+		Queue:  q,
+		Logger: quietLogger(),
+		Work: func(context.Context, *api.Job) error {
+			return fmt.Errorf("ffprobe timed out: %w", context.DeadlineExceeded)
+		},
+	}
+
+	if _, err := runner.PollOnce(context.Background()); err != nil {
+		t.Fatalf("PollOnce() returned an unexpected error: %v", err)
+	}
+
+	if !q.completed {
+		t.Fatal("a job that failed on its own was never reported")
+	}
+	if q.cause == nil {
+		t.Error("the job was reported as a success")
+	}
+}
+
+func TestSimulatedWorkRunsForTheConfiguredDuration(t *testing.T) {
+	work := worker.SimulatedWork(30 * time.Millisecond)
+
+	start := time.Now()
+	if err := work(context.Background(), aJob()); err != nil {
+		t.Fatalf("SimulatedWork() returned an unexpected error: %v", err)
+	}
+
+	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
+		t.Errorf("returned after %v, want at least 30ms", elapsed)
+	}
+}
+
+// The whole point of M6.4 is killing this mid-flight, so it has to stop when
+// the context does rather than hold the process open for its full duration.
+func TestSimulatedWorkStopsWhenTheContextIsCancelled(t *testing.T) {
+	work := worker.SimulatedWork(time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	err := work(ctx, aJob())
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("took %v to notice cancellation", elapsed)
 	}
 }

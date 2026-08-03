@@ -20,3 +20,34 @@ export async function seedDownloadJob(videoId: string) {
     .bind(videoId)
     .run();
 }
+
+/**
+ * A job already held by a worker, with its lease aged on purpose.
+ *
+ * The reaper's whole input is a row someone stopped renewing, and there is no
+ * API call that produces one — a worker that crashes simply stops. Written as
+ * SQL rather than claim-then-rewind so a test can state the lease age and the
+ * attempt count it means to exercise, instead of deriving them.
+ *
+ * `heartbeatAgo` is seconds before now; `null` writes no heartbeat at all,
+ * which the claim endpoint cannot produce but the reaper still has to handle.
+ */
+export async function seedClaimedJob(
+  videoId: string,
+  { heartbeatAgo, attempts }: { heartbeatAgo: number | null; attempts: number },
+): Promise<number> {
+  await seedVideo(videoId);
+
+  const claimedAt = Math.floor(Date.now() / 1000) - (heartbeatAgo ?? 0);
+
+  const row = await env.DB.prepare(
+    `INSERT INTO jobs (kind, video_id, status, attempts, claimed_by, claimed_at, heartbeat_at)
+          VALUES ('download', ?, 'claimed', ?, 'test-worker', ?, ?)
+       RETURNING id`,
+  )
+    .bind(videoId, attempts, claimedAt, heartbeatAgo === null ? null : claimedAt)
+    .first<{ id: number }>();
+
+  if (!row) throw new Error("seedClaimedJob inserted nothing");
+  return row.id;
+}

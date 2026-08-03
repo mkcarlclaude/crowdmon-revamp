@@ -184,6 +184,53 @@ Claiming a job whose video or chunk row is missing retires it as `failed` and an
 204. Fan-out is not transactional, so a chunk job with no `chunks` row is reachable in
 production; re-queueing it would hand the same broken job out on every subsequent poll.
 
+## Recovery from a crash
+
+A worker that dies says nothing. There is no signal to catch and no connection to drop —
+the row simply stops being renewed — which is why recovery runs on a schedule rather than
+in response to anything.
+
+Every five minutes a Cron Trigger runs `apps/api/src/reaper.ts`. Any job still `claimed`
+whose `heartbeat_at` is older than `LEASE_STALE_SECONDS` (120s, four missed heartbeats)
+is taken back: below `MAX_ATTEMPTS` (3) it returns to `pending` with its holder cleared,
+and at or above it becomes terminally `failed` with a reason saying so. Without that
+ceiling a poison job — deleted video, geo-blocked, malformed — is claimed, kills the
+worker, is reaped, and comes back forever.
+
+Worst-case pickup after a crash is `LEASE_STALE_SECONDS` plus up to one cron period, so
+about seven minutes. That is deliberate: the cron period is a request-budget decision
+(CONTEXT.md §Q20 budgets 288 reaper runs a day), and the staleness threshold is set
+against the worker's 30s heartbeat rather than against the cron. Tightening the threshold
+would not speed up detection much and would start reaping workers that merely hit a
+transient API error, which `runner.go` deliberately keeps beating through.
+
+Three details are easy to get wrong and are pinned by tests:
+
+- **`attempts` counts claims, not reaps.** The reaper never increments it. If it did,
+  one crash would spend two attempts and the ceiling would mean half what it says.
+- **A graceful shutdown is not a failure.** Work interrupted by SIGTERM returns
+  `context.Canceled`, and reporting that through `complete` would write `status='failed'`
+  — which is terminal, so an ordinary restart would permanently kill whatever was in
+  flight. The worker leaves the row `claimed` and lets the reaper hand it back instead.
+- **The schedule is Terraform's, the handler is wrangler's.** `infra/reaper.tf` owns the
+  cron because it outlives a deploy. That is only safe while `[triggers]` is absent from
+  `wrangler.toml`: wrangler skips the schedules API entirely when the table is missing,
+  but an *empty* `crons = []` is truthy in its check and would silently delete the
+  schedule. `test/node/wrangler-config.test.ts` asserts the table stays absent.
+
+Re-queued and retired jobs each emit a span — `job.reclaimed` and `job.retired`, one per
+job, parented to the tick that produced them. Two names rather than one with an attribute
+because Tempo's metrics-generator keys on span name, so this is what makes reclaim rate a
+Grafana panel at all. The tick's own span carries the totals, so a healthy tick with no
+children still says it ran.
+
+**Verifying it by hand.** Set `CROWDMON_SIMULATED_WORK=5m` on the home box container and
+submit a job — until M7 lands extraction there is no real work to interrupt, and a job
+closes in about 90ms. Claim it, `docker kill` the container, and watch the admin list:
+the row sits `claimed` with its heartbeat age climbing, then returns to `pending` within
+about seven minutes and is claimed again with `attempts` one higher. Repeat past
+`MAX_ATTEMPTS` and it lands on `failed` and stops being handed out.
+
 ## The worker
 
 `worker/` is a Go binary that polls the queue and runs jobs. As of M4 it runs no jobs:

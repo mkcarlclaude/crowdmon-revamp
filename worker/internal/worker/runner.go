@@ -91,6 +91,24 @@ func (r Runner) PollOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
+	// Work cut short by the process going down is not a failed job, and
+	// reporting it as one would be terminal: `complete` with status='failed'
+	// retires the row, so an ordinary restart would permanently kill whatever
+	// was in flight and burn a video that had nothing wrong with it.
+	//
+	// Left `claimed` instead, for the reaper (M6.2) to hand back. That costs
+	// one lease window of latency and spends an attempt the job already spent
+	// on being claimed — which is the same deal a crash gets, and a graceful
+	// shutdown should not be treated worse than a crash.
+	//
+	// Guarded on ctx.Err() as well as the error, because work that cancels
+	// itself — an ffprobe deadline, say — returns the same error shape and is
+	// a genuine failure that must still be reported.
+	if ctx.Err() != nil && isCancellation(workErr) {
+		logger.WarnContext(ctx, "shutting down mid-job, leaving it for the reaper")
+		return true, nil
+	}
+
 	// Detached from ctx, not derived from it. Reporting the outcome is the one
 	// call that must still go out, and by this point ctx may already be
 	// cancelled two ways: leaseCtx is released the moment work returns, and on
@@ -122,6 +140,13 @@ func (r Runner) PollOnce(ctx context.Context) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// isCancellation reports whether err is a context ending rather than a job
+// going wrong. Wrapped errors count: work deep in the pipeline will have
+// annotated it on the way up.
+func isCancellation(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // work runs the job, or succeeds immediately when there is nothing to run.

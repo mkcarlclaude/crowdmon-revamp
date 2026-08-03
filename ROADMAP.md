@@ -334,26 +334,89 @@ the reverse.
 *Depends on: M4.*
 *Done when:* killing the worker mid-job produces a visible reap and retry.
 
-### M6.1 — Attempts and terminal failure
-- [ ] `attempts` incremented on each claim
-- [ ] Terminal `failed` state above a threshold
-- [ ] Failure reason persisted
-- [ ] Prevents a poison job — deleted video, geo-blocked, malformed — retrying forever
+**Built 2026-08-03; not yet applied.** The code and the Terraform are merged and
+tested, but `terraform apply` has not been run, so no Cron Trigger exists in the
+account and nothing is reaping production yet. M6.4's verification is blocked behind
+that apply and is the honest remaining work — see the note under it.
 
-### M6.2 — Cron reaper
-- [ ] Workers Cron Trigger declared in Terraform
-- [ ] Resets jobs with stale `heartbeat_at` back to `pending`
-- [ ] Respects the attempts ceiling
+### M6.1 — Attempts and terminal failure
+- [x] `attempts` incremented on each claim — already true since M3.4, on the claim
+      rather than on a later failure so a worker that dies without reporting still
+      counts
+- [x] Terminal `failed` state above a threshold — `MAX_ATTEMPTS`, enforced in the
+      reaper, **which covers crashes and not reported failures.** The reaper is the
+      only place a job re-enters `pending`, so it is the only place a ceiling can bite;
+      a second check at claim time would be dead code wearing the costume of defence in
+      depth. A worker that *reports* a failure is still retired on the first report
+      whatever `attempts` says — correct for the poison cases this milestone names
+      (deleted, geo-blocked, malformed), where a retry cannot help, and wrong for a
+      transient one. Sorting reported failures into retryable and terminal is M7.1's,
+      which is where failures with a shape to classify first exist. Recorded rather
+      than glossed: read carelessly, this bullet claims more than the code does
+- [x] Failure reason persisted, and distinguishable: a job the reaper retires says it
+      exhausted its attempts, not merely that it failed, so an operator can tell a
+      poison job from a worker reporting a real error
+- [x] Prevents a poison job retrying forever — asserted by running the loop
+      (claim → crash → reap → claim) until it terminates, not by testing the
+      statements one at a time. Nothing in a single statement's test shows the cycle
+      ends
+
+### M6.2 — Cron reaper — **the split with wrangler is the load-bearing part**
+- [x] Workers Cron Trigger declared in Terraform (`infra/reaper.tf`), every 5 minutes
+      — the cadence CONTEXT.md §Q20 had already budgeted as "288/day for the reaper"
+- [x] Resets jobs with stale `heartbeat_at` back to `pending`, clearing `claimed_by`,
+      `claimed_at` and `heartbeat_at` together. A row left naming a holder reads as
+      claimed to everything that inspects it
+- [x] Respects the attempts ceiling. The two `UPDATE`s are disjoint on `attempts` and
+      run in one `batch()`: a row matched by both would be re-queued *and* retired in
+      the same tick — `pending` in the table while Grafana counted a failure
+- [x] **Terraform can own the schedule only because wrangler leaves it alone.**
+      wrangler PUTs `/schedules` under `if (crons)` over
+      `args.triggers ?? config.triggers?.crons`, so an absent `[triggers]` table means
+      no request at all. An *empty* one is the trap: `crons = []` is truthy there, so
+      adding the table with nothing in it silently deletes the Terraform-owned
+      schedule. No deploy fails, and the only symptom is crashed jobs sitting
+      `claimed` forever — M6's own failure mode, arriving quietly. A test asserts the
+      table stays absent
+- [ ] `terraform apply` — **not run.** Until it is, the handler is deployed and
+      nothing calls it
 
 ### M6.3 — Reclaim visibility
-- [ ] Reclaim events emitted as spans or metrics
-- [ ] Reclaim rate visible in Grafana
-- [ ] Failed jobs visible in the admin list
+- [x] Reclaim events emitted as spans. Not metrics, because there are none to emit:
+      @microlabs/otel-cf-workers exports traces only. One span per job rather than one
+      per tick carrying a count — Tempo's metrics-generator turns span *rate* into a
+      series, and a count inside an attribute is not a rate and cannot be made into
+      one here
+- [x] Two span names, `job.reclaimed` and `job.retired`, rather than one name plus an
+      `outcome` attribute. The metrics-generator keys on service, span name, kind and
+      status; an arbitrary attribute is not among them, so the attribute version would
+      be unsplittable in Grafana — the exact thing this bullet asks for
+- [ ] Reclaim rate visible in Grafana — blocked on the apply above. The panel is
+      M9.1's, and building it against a series that has never emitted would be
+      guessing at the query
+- [x] Failed jobs visible in the admin list — already delivered by M5.3, which returns
+      `status` and `failure_reason` and renders both
 
-### M6.4 — Verify by killing it
+### M6.4 — Verify by killing it — **needs the apply and the home box**
+- [x] Document the recovery behaviour — README "Recovery from a crash", including the
+      worst-case seven-minute pickup and why it is not tuned tighter
+- [x] A way to have a job worth killing. Until M7 lands extraction a job closes in
+      about 90ms, so there is no middle to interrupt: `CROWDMON_SIMULATED_WORK` holds
+      a claimed job for a configured duration. Seeding a stale `claimed` row into D1
+      was the alternative and was rejected — it tests the reaper's SQL, which the
+      unit tests already do, while saying nothing about what a killed container
+      actually leaves behind, which is the whole question
 - [ ] Kill the container mid-job; confirm reap and retry
 - [ ] Confirm a permanently failing job reaches `failed` and stops
-- [ ] Document the recovery behaviour
+
+**Found while building this, and fixed here rather than filed:** a graceful shutdown
+retired the job it was holding. Work interrupted by SIGTERM returns `context.Canceled`,
+the runner passed that to `complete` as a cause, and `complete` with a cause writes
+`status='failed'` — which is terminal. An ordinary `docker restart` would have
+permanently killed whatever was in flight, and burned a video that had nothing wrong
+with it. The worker now leaves the row `claimed` and lets the reaper hand it back: that
+costs one lease window and spends an attempt, which is the same deal a crash gets. It
+was invisible before M6 because `Runner.Work` was nil and no job could be interrupted.
 
 ---
 

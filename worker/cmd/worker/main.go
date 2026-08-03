@@ -78,13 +78,26 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	// Runner.Work is left nil: M4.3 claims a job, holds the lease, and
-	// reports it done without touching the video. Extraction lands in M7 and
-	// slots in here.
+	// Work is nil by default: M4.3 claims a job, holds the lease, and reports
+	// it done without touching the video. Extraction lands in M7 and slots in
+	// here.
+	//
+	// CROWDMON_SIMULATED_WORK substitutes a job that merely takes time, which
+	// M6.4 needs — killing a worker mid-job requires a job with a middle, and
+	// the real one closes in about 90ms. Nothing else reads the setting, and
+	// M7 removes it.
+	var work worker.WorkFunc
+	if cfg.SimulatedWork > 0 {
+		logger.WarnContext(ctx, "simulating work instead of running jobs",
+			"duration", cfg.SimulatedWork)
+		work = worker.SimulatedWork(cfg.SimulatedWork)
+	}
+
 	runner := worker.Runner{
 		Queue:             jobs,
 		Logger:            logger,
 		HeartbeatInterval: worker.DefaultHeartbeatInterval,
+		Work:              work,
 	}
 
 	loop := worker.Loop{

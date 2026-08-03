@@ -7,6 +7,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 // ServiceName is what this process calls itself in telemetry. A constant
@@ -34,6 +35,19 @@ type Config struct {
 	// gets an export past the gate in front of the collector.
 	AccessClientID     string
 	AccessClientSecret string
+	// SimulatedWork makes a claimed job take this long instead of completing
+	// immediately. Zero — the default, and the only value production should
+	// ever run with — leaves Runner.Work nil.
+	//
+	// It exists for M6.4. Verifying that killing a worker mid-job produces a
+	// reap and a retry needs a job with a middle to be killed in, and until
+	// M7 lands extraction there is none: a job completes in about 90ms. The
+	// alternative was seeding a stale `claimed` row straight into D1, which
+	// tests the reaper but proves nothing about what a killed worker leaves
+	// behind — and what it leaves behind is the whole question.
+	//
+	// M7 replaces this with real work and it goes away.
+	SimulatedWork time.Duration
 }
 
 // TracingEnabled reports whether an exporter should be built. Config answers
@@ -56,6 +70,21 @@ func Load() (Config, error) {
 
 	if cfg.APIBaseURL == "" {
 		return Config{}, fmt.Errorf("CROWDMON_API_BASE_URL is required")
+	}
+
+	// Parsed rather than defaulted on error. "90" instead of "90s" would
+	// otherwise leave the worker completing jobs instantly during an M6.4
+	// verification run, and the run would report that the reaper never
+	// fired — which is the very conclusion it exists to test.
+	if raw := os.Getenv("CROWDMON_SIMULATED_WORK"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("CROWDMON_SIMULATED_WORK is not a duration: %w", err)
+		}
+		if d < 0 {
+			return Config{}, fmt.Errorf("CROWDMON_SIMULATED_WORK must not be negative, got %s", raw)
+		}
+		cfg.SimulatedWork = d
 	}
 
 	// The hostname is the right default because a container's hostname is its
