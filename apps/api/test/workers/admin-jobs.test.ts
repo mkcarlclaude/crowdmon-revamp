@@ -128,4 +128,35 @@ describe("GET /api/admin/jobs", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it("filters by status", async () => {
+    // The one branch that rewrites the SQL string rather than just its
+    // bindings (the `WHERE j.status = ?` clause). Seeded directly with an
+    // explicit status rather than driven through claim/complete, because the
+    // only thing under test is whether the filter — and its extra binding —
+    // land correctly, not how a job gets to a given status.
+    //
+    // Different kinds, not just different statuses: idx_jobs_one_download_per_video
+    // allows only one 'download' job per video, so a second 'download' row here
+    // would fail on the unique index rather than exercise the filter.
+    await env.DB.prepare(
+      "INSERT INTO jobs (kind, video_id, status) VALUES ('download', ?, 'pending')",
+    )
+      .bind("dQw4w9WgXcQ")
+      .run();
+    await env.DB.prepare("INSERT INTO jobs (kind, video_id, status) VALUES ('chunk', ?, 'failed')")
+      .bind("dQw4w9WgXcQ")
+      .run();
+
+    const res = await app.request(
+      "/api/admin/jobs?status=failed",
+      { headers: await adminHeaders() },
+      env,
+    );
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as { jobs: Array<{ status: string }> };
+    expect(body.jobs).toHaveLength(1);
+    expect(body.jobs[0]?.status).toBe("failed");
+  });
 });

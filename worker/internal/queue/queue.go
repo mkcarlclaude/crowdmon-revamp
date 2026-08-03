@@ -47,7 +47,7 @@ type Client struct {
 
 // New builds a client for the API at baseURL, identifying as workerID.
 //
-// baseURL is expected to be an origin — `https://api.crowdmon.mkcarl.com` —
+// baseURL is expected to be an origin — `https://crowdmon.mkcarl.com` —
 // with or without a trailing slash; the generated client resolves operation
 // paths relatively, so both work, and a test pins that. A baseURL carrying a
 // *path prefix* is the case to avoid: relative resolution drops the last

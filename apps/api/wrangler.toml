@@ -87,8 +87,13 @@ bucket_name = "crowdmon-frames"
 # instead of turning it into a CORS failure.
 #
 # `directory` is built by `pnpm --filter @crowdmon/web run build` and is
-# gitignored — a deploy that skips that build publishes a Worker with no assets
-# and no error.
+# gitignored. A *missing* directory is not the hazard — wrangler 4.118.0 hard-
+# errors on that. A stale or empty one is: wrangler reads whatever is there,
+# logs "Read 0 files from the assets directory" for an empty one, and exits 0
+# either way, publishing yesterday's bundle (or none) with nothing to say so.
+# `apps/api/package.json`'s `deploy` script runs the build first for exactly
+# this reason — do not call `wrangler deploy` directly on a machine whose
+# `dist` might be stale.
 [assets]
 directory = "../web/dist"
 not_found_handling = "single-page-application"

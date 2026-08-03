@@ -47,9 +47,17 @@ function varsSection(): string {
  * over the whole file would not notice, because the text is still there —
  * just owned by the wrong table. Mirrors varsSection() above, scoped in the
  * other direction.
+ *
+ * Line-anchored, like varsSection(): wrangler.toml has a comment reading
+ * "Keep [vars] above the [[d1_databases]]..." above the real header, and a
+ * raw `config.indexOf("[vars]")` matches that literal text inside the
+ * comment first, not the table header this is meant to anchor on.
  */
 function rootSection(): string {
-  return config.slice(0, config.indexOf("[vars]"));
+  const lines = config.split("\n");
+  const end = lines.findIndex((line) => line.trim() === "[vars]");
+  expect(end, "wrangler.toml has no [vars] table").toBeGreaterThanOrEqual(0);
+  return lines.slice(0, end).join("\n");
 }
 
 /**
@@ -133,7 +141,8 @@ describe("wrangler.toml", () => {
   );
 
   it("points [assets] at the web package's build output", () => {
-    expect(config).toMatch(/^directory\s*=\s*"\.\.\/web\/dist"\s*$/m);
+    const assets = config.slice(config.indexOf("[assets]"));
+    expect(assets).toMatch(/^directory\s*=\s*"\.\.\/web\/dist"\s*$/m);
   });
 
   /**

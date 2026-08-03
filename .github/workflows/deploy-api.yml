@@ -41,9 +41,12 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Before the migration step, so a build failure costs nothing. wrangler
-      # uploads whatever is in apps/web/dist; if this is skipped the directory
-      # does not exist and the deploy publishes a Worker with no assets.
+      # Before the migration step, so a build failure costs nothing. Belt and
+      # braces rather than load-bearing: `apps/api/package.json`'s `deploy`
+      # script now builds web itself, so a missing or stale `apps/web/dist`
+      # can't reach `wrangler deploy` from this workflow even if this step
+      # were removed. It stays because a build failure caught here, before
+      # migrations run, is cheaper than one caught inside the deploy step.
       - name: Build web
         run: pnpm --filter @crowdmon/web run build
 

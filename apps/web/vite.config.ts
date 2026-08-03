@@ -13,8 +13,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
     outDir: "dist",
-    // Fail loudly rather than shipping a bundle whose size nobody looked at.
-    // The admin surface is three screens; anything past this is a mistake.
+    // Lowers the threshold at which `vite build` prints its bundle-size
+    // warning. It is only that — a warning. `vite build` still exits 0 past
+    // it, so nothing here fails a CI run or blocks a deploy; this is a
+    // tripwire for whoever is watching build output, not a gate. The admin
+    // surface is three screens (current output is ~552 kB), so anything past
+    // 600 kB is worth a look, not an automatic block.
     chunkSizeWarningLimit: 600,
   },
   server: {

@@ -71,8 +71,14 @@ Paste them into the commented binding blocks in `apps/api/wrangler.toml`.
 | `access.tf` | The Worker's custom domains (current and, during the M5 migration, legacy), and the Access application over `/api/admin/*` |
 | `outputs.tf` | IDs consumed by `wrangler.toml` |
 
-Still to come: the Access application over the admin SPA route (M5.1), and the
-cron trigger for the job reaper (M6.2).
+Still to come: the cron trigger for the job reaper (M6.2).
+
+There is deliberately no Access application over the admin SPA route itself.
+`CONTEXT.md` §Q19 gates the API, not the bundle, and putting Access in front of
+`/admin` would break M5.4 by construction — the SPA shell could never load to
+render the expired-session banner, because the shell would sit behind the very
+gate that just expired. See `ROADMAP.md`'s amended M5.1 for the full reasoning.
+If you came here looking for where to add that application: don't.
 
 ### Ordering, for `access.tf`
 
@@ -93,9 +99,13 @@ pnpm --filter @crowdmon/api exec wrangler secret put ADMIN_EMAILS
 The allowlist exists twice on purpose. `admin_emails` here decides who
 Cloudflare will issue an assertion to; `ADMIN_EMAILS` decides who the Worker
 will act for. Widening one does not widen the other, which is the point — and
-it matters because the Worker is also served on its `workers.dev` hostname,
-where no Access application exists and nothing but the Worker's own check
-stands in front of the admin API.
+it matters because the two gates fail independently. `admin_emails` lives in
+the Access application and can be widened, or the application deleted
+outright, from the Cloudflare dashboard by anyone with account access, with no
+code change and no review — that takes the outer gate away without touching
+the inner one. `ADMIN_EMAILS` only changes by a `wrangler secret put` and a
+deploy, which leaves a trail. Two allowlists means a slip in the one that is
+easiest to change silently still leaves the one that isn't standing.
 
 **Not here, deliberately:** the cloudflared tunnel and the OTLP endpoint. Those
 belong to the monitoring stack, which is a separate project with its own
@@ -182,7 +192,10 @@ all. The order is:
    `/api/admin` verifies against the new `aud`.
 4. Repoint the Go worker's API base URL and the repository's `API_BASE_URL`
    variable at `local.app_hostname`, and confirm it is polling successfully on the
-   new host.
+   new host. Also update `deploy/homebox/.env.example`'s `CROWDMON_API_BASE_URL` —
+   it is checked in against `api.crowdmon.mkcarl.com`, which is correct today and
+   wrong the moment this step runs, and a future rebuild of the home box copies
+   from it.
 5. Only then delete `cloudflare_workers_custom_domain.legacy_api` and
    `local.legacy_api_hostname` from `access.tf`, and apply again. Sample the old
    hostname several times, not once, before calling it retired — a single response

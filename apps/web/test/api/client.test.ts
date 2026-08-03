@@ -90,9 +90,12 @@ describe("apiFetch", () => {
   it("rejects a 200 whose body does not match the schema", async () => {
     // The contract is the schema, not the status code. A response that parses
     // as JSON but disagrees with the shape is a bug worth a loud failure, not
-    // an undefined three components deep.
+    // an undefined three components deep. Pinned to ZodError specifically —
+    // a bare `.toThrow()` would still pass if the content-type branch above
+    // regressed and threw SessionExpiredError instead, which is not the
+    // failure this test is named for.
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(respond('{"ok":"yes"}', { status: 200 })));
-    await expect(apiFetch("/api/admin/jobs", Body)).rejects.toThrow();
+    await expect(apiFetch("/api/admin/jobs", Body)).rejects.toBeInstanceOf(z.ZodError);
   });
 
   it("merges caller headers regardless of HeadersInit shape", async () => {
