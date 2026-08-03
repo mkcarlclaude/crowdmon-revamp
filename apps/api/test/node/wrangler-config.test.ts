@@ -24,7 +24,14 @@ const config = readFileSync(
 );
 
 /** Plain vars the Worker reads from `c.env`. Secrets are not declared here. */
-const EXPECTED_VARS = ["ENVIRONMENT", "OTLP_ENDPOINT", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD"];
+const EXPECTED_VARS = [
+  "ENVIRONMENT",
+  "OTLP_ENDPOINT",
+  "ACCESS_TEAM_DOMAIN",
+  "ACCESS_AUD",
+  "LEASE_STALE_SECONDS",
+  "MAX_ATTEMPTS",
+];
 
 function varsSection(): string {
   const lines = config.split("\n");
@@ -154,5 +161,19 @@ describe("wrangler.toml", () => {
   it("answers unmatched paths with the SPA shell", () => {
     const assets = config.slice(config.indexOf("[assets]"));
     expect(assets).toMatch(/^not_found_handling\s*=\s*"single-page-application"\s*$/m);
+  });
+
+  /**
+   * The reaper's schedule belongs to Terraform (`infra/reaper.tf`), and this
+   * test is what makes that safe rather than merely tidy — see CONTEXT.md
+   * §Q14. Absence is the assertion: wrangler skips the schedules API entirely
+   * while `[triggers]` is missing, but an empty `crons = []` is truthy in its
+   * check and would silently delete the Terraform-owned schedule. No deploy
+   * would fail, and the only symptom would be crashed jobs sitting `claimed`
+   * forever — M6's own failure mode, arriving quietly.
+   */
+  it("leaves cron schedules to Terraform", () => {
+    expect(config).not.toMatch(/^\s*\[triggers\]/m);
+    expect(config).not.toMatch(/^\s*crons\s*=/m);
   });
 });

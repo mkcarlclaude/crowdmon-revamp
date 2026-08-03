@@ -237,6 +237,45 @@ Required consequences:
 
 Reclaim rate is a real health metric worth a Grafana panel.
 
+**Amended in M6, which is where the above stopped being a sketch.** Four decisions locked
+while building the reaper, each with the option that lost:
+
+*Thresholds.* `LEASE_STALE_SECONDS` is 120 — four missed 30s heartbeats — and
+`MAX_ATTEMPTS` is 3. Vars in `wrangler.toml`, not constants, because they are the two
+numbers an operator would want to change without a code review; `reaper.ts` throws on a
+malformed one rather than defaulting, since these are pinned by a test and the only way
+to reach a bad value is a hand edit that should not appear to have worked. The staleness
+threshold is set against the *heartbeat*, not against the cron period: detection latency
+is 0–5 minutes whatever it is, so tightening it buys nothing and starts reaping workers
+that merely hit a transient API error — which `runner.go` deliberately keeps beating
+through. Worst-case pickup is therefore ~7 minutes, invisible against a 10–20 minute job.
+
+*Spans, not metrics, and one per job.* @microlabs/otel-cf-workers exports traces only, so
+a counter has nowhere to go — the choice was never open. One span per reclaimed job
+rather than one per tick carrying a count, because Tempo's metrics-generator turns span
+*rate* into a series and a count inside an attribute is not a rate. Two span names,
+`job.reclaimed` and `job.retired`, rather than one name plus an `outcome` attribute: the
+generator keys on service, span name, kind and status, so the attribute version would be
+unsplittable in Grafana, which is the one thing the panel needs.
+
+*The ceiling covers crashes, not reported failures.* The reaper is the only place a job
+re-enters `pending`, so it is the only place the ceiling is enforced. A worker that
+*reports* a failure is retired on the first report, whatever `attempts` says — right for
+the poison cases this milestone names (deleted, geo-blocked, malformed), where a retry
+cannot help. Classifying reported failures into retryable and terminal belongs to M7.1,
+which is where failures with a shape to classify first exist. Building the mechanism
+sooner would be a taxonomy with nothing in it.
+
+*Terraform owns the cron schedule; wrangler owns the handler.* The §3 split, applied to a
+resource that sits on the script — and it holds only because wrangler PUTs `/schedules`
+under `if (crons)` over `args.triggers ?? config.triggers?.crons`. An absent `[triggers]`
+table means no request at all, so Terraform's schedule survives every deploy. An **empty**
+one does not: `crons = []` is truthy in that check, so adding the table with nothing in it
+PUTs an empty array and deletes the schedule. No deploy fails; the only symptom is
+crashed jobs sitting `claimed` forever, which is M6's own failure mode arriving silently.
+`apps/api/test/node/wrangler-config.test.ts` asserts the table stays absent, and that test
+is the whole reason the split is safe rather than merely tidy.
+
 **D1 read replication stays disabled** (`infra/main.tf`), and that follows from the
 paragraph above rather than from cost. Replicas are eventually consistent, and the claim
 is only atomic against a single primary — a worker whose read landed on a replica could

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoadRequiresAPIBaseURL(t *testing.T) {
@@ -110,5 +111,48 @@ func TestLoadDefaultsEnvironment(t *testing.T) {
 	}
 	if cfg.APIBaseURL != "https://api.example.com" {
 		t.Errorf("APIBaseURL = %q, want %q", cfg.APIBaseURL, "https://api.example.com")
+	}
+}
+
+// M6.4 needs a job that lasts long enough to kill the container in the middle
+// of it. Until M7 lands extraction, Runner.Work is nil and a job completes in
+// under 100ms, so there is no middle to interrupt.
+func TestLoadTreatsSimulatedWorkAsOptional(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_SIMULATED_WORK", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+
+	if cfg.SimulatedWork != 0 {
+		t.Errorf("SimulatedWork = %v, want the zero duration", cfg.SimulatedWork)
+	}
+}
+
+func TestLoadReadsSimulatedWorkAsADuration(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_SIMULATED_WORK", "90s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+
+	if cfg.SimulatedWork != 90*time.Second {
+		t.Errorf("SimulatedWork = %v, want 90s", cfg.SimulatedWork)
+	}
+}
+
+// Fail rather than fall back to zero. A verification run configured with
+// "90" instead of "90s" would otherwise complete instantly and look like the
+// reaper never fired, which is the exact conclusion the run exists to test.
+func TestLoadRejectsAnUnparseableSimulatedWork(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_SIMULATED_WORK", "90")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a duration with no unit")
 	}
 }

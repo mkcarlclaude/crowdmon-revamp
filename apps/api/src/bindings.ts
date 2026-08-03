@@ -27,6 +27,14 @@ export type Bindings = {
   ACCESS_TEAM_DOMAIN: string;
   ACCESS_AUD: string;
 
+  // The reaper's two thresholds (M6.2), documented on `ReapOptions` in
+  // reaper.ts and chosen in CONTEXT.md §Q14. Numbers rather than strings: TOML
+  // types them and wrangler passes them through as-is. `reapOptions` still
+  // parses defensively, because a deployment variable edited by hand arrives
+  // as whatever was typed.
+  LEASE_STALE_SECONDS: number;
+  MAX_ATTEMPTS: number;
+
   // Comma-separated allowlist, checked after the assertion verifies. A secret
   // only because it is a list of real email addresses and this repo is public
   // — it grants nothing on its own.
