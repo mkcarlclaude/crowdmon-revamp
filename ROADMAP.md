@@ -299,10 +299,28 @@ the reverse.
 - [x] Chunks grouped under their parent job
 - [x] Auto-refresh on an interval
 
-### M5.4 — Handle Access session expiry
-- [ ] Detect the 302-to-login that `fetch` silently follows and returns as HTML/200
-- [ ] Force a full page navigation so the browser can complete the login flow
-- [ ] Verified against a genuinely expired session, not a simulated one
+### M5.4 — Handle Access session expiry — **the predicted symptom was wrong, and the first fix looped**
+
+- [x] Detect the redirect to login. **Not as HTML/200.** Production redirects to
+      `mkcarl.cloudflareaccess.com`, a different origin, so the followed redirect
+      carries no CORS headers and `fetch` rejects with a `TypeError` before any
+      status exists to read. The HTML-200 form this bullet predicted is what a
+      *same-origin* login page produces. The client treats both as one event, so
+      detection was right for a reason it did not know about
+- [x] Force a full page navigation so the browser can complete the login flow —
+      **to `/api/admin/login`, not to the current URL.** The first implementation
+      navigated to `window.location.href`, which is `/admin`: a static asset that
+      M5.1 deliberately leaves ungated, so the reload returned the SPA shell,
+      which re-fetched, failed identically, and re-rendered the banner. A loop
+      with no reachable login screen. The new route exists solely to sit under
+      the Access-gated prefix so the navigation is intercepted, and redirects to
+      `/admin` once an assertion exists
+- [x] Verified against a real unauthenticated session on 2026-08-03 — the loop
+      was found by using it, not by testing it. The unit test asserted
+      `location.assign` was *called*, which the broken version also did.
+      **Still unverified: a session that expires mid-use.** Signing in and
+      revoking is the remaining check; nothing yet proves the 24-hour boundary
+      behaves like the never-authenticated one
 
 ---
 

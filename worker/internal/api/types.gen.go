@@ -366,6 +366,13 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/jobs (the `ListJobs` operationId).
 	ListJobs(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AdminLogin Complete an Access login and return to the dashboard
+	//
+	// Exists to be navigated to, not fetched. Access gates the path, so an unauthenticated browser is sent through the login flow and only then redirected on to `/admin`.
+	//
+	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
+	AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// SubmitVideoWithBody Submit a YouTube URL for processing
 	//
 	// Creates the video row and enqueues its download job. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -447,6 +454,23 @@ type ClientInterface interface {
 // Corresponds with GET /api/admin/jobs (the `ListJobs` operationId).
 func (c *Client) ListJobs(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListJobsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminLogin Complete an Access login and return to the dashboard
+//
+// Exists to be navigated to, not fetched. Access gates the path, so an unauthenticated browser is sent through the login flow and only then redirected on to `/admin`.
+//
+// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
+func (c *Client) AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminLoginRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -676,6 +700,33 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
 		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminLoginRequest constructs an http.Request for the AdminLogin method
+func NewAdminLoginRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -940,6 +991,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/jobs (the `ListJobs` operationId).
 	ListJobsWithResponse(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*ListJobsResponse, error)
 
+	// AdminLoginWithResponse Complete an Access login and return to the dashboard
+	//
+	// Exists to be navigated to, not fetched. Access gates the path, so an unauthenticated browser is sent through the login flow and only then redirected on to `/admin`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
+	AdminLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminLoginResponse, error)
+
 	// SubmitVideoWithBodyWithResponse Submit a YouTube URL for processing
 	//
 	// Creates the video row and enqueues its download job. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -1079,6 +1139,68 @@ func (r ListJobsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListJobsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// AdminLoginResponse302Headers the declared response headers of an HTTP 302 response for AdminLogin
+type AdminLoginResponse302Headers struct {
+	Location *string
+}
+
+type AdminLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// Headers302 the parsed response headers for an HTTP 302 response
+	Headers302 *AdminLoginResponse302Headers
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminLoginResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AdminLoginResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminLoginResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminLoginResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1361,6 +1483,21 @@ func (c *ClientWithResponses) ListJobsWithResponse(ctx context.Context, params *
 	return ParseListJobsResponse(rsp)
 }
 
+// AdminLoginWithResponse Complete an Access login and return to the dashboard
+//
+// Exists to be navigated to, not fetched. Access gates the path, so an unauthenticated browser is sent through the login flow and only then redirected on to `/admin`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
+func (c *ClientWithResponses) AdminLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminLoginResponse, error) {
+	rsp, err := c.AdminLogin(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminLoginResponse(rsp)
+}
+
 // SubmitVideoWithBodyWithResponse Submit a YouTube URL for processing
 //
 // Creates the video row and enqueues its download job. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -1539,6 +1676,62 @@ func ParseListJobsResponse(rsp *http.Response) (*ListJobsResponse, error) {
 		}
 		response.JSON503 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseAdminLoginResponse parses an HTTP response from a AdminLoginWithResponse call
+func ParseAdminLoginResponse(rsp *http.Response) (*AdminLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		var headers AdminLoginResponse302Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers302 = &headers
 	}
 
 	return response, nil

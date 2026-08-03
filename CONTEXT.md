@@ -538,9 +538,36 @@ nothing inspecting HTTP paths can see it. Hiding the admin bundle is cosmetic. E
 `/api/admin/*` endpoint must independently verify the caller. Assume the admin bundle
 is public.
 
-**SPA gotcha:** when the Access session expires, `fetch` to an admin endpoint follows
-the 302 to the login page and returns HTML with a 200. Detect it and force a full page
-navigation so the browser can complete the login flow. Default session is 24 hours.
+**SPA gotcha — observed 2026-08-03, and it is not the symptom this section predicted.**
+The written expectation was that `fetch` follows the 302 and returns the login page as
+HTML with a 200. In production it does not: Access redirects to
+`mkcarl.cloudflareaccess.com`, a *different origin*, so the followed redirect carries no
+CORS headers and `fetch` rejects with a `TypeError` before any status is observable
+(`No 'Access-Control-Allow-Origin' header is present`). The HTML-200 form is what
+happens when the login page is same-origin; it is not what this deployment does.
+
+`apps/web/src/api/client.ts` treats both as the same event, so detection was unaffected.
+Default session is 24 hours.
+
+**The recovery was broken, and the two decisions that broke it were each correct.**
+Detection worked; the fix did not. `reauthenticate()` navigated to
+`window.location.href`, on the reasoning that a top-level load completes the redirect
+chain `fetch` cannot. It does — but only for a URL Access actually gates, and the
+decision immediately above deliberately leaves `/admin` ungated. Navigating there
+returned the SPA shell, which re-fetched, failed identically, and re-rendered the
+banner: a loop with no reachable login screen. Nothing caught it, because the unit test
+asserted `location.assign` was *called*, which was true of the broken code too.
+
+Recovery now navigates to `/api/admin/login` — a Worker route that exists only to sit
+*under* the gated prefix. Access intercepts the navigation, the browser completes the
+login flow, and the handler redirects to `/admin` once an assertion exists. It hardcodes
+that target rather than honouring a `redirect_url` parameter: the one endpoint
+guaranteed to be reached with a freshly minted session is the worst possible open
+redirect.
+
+The general lesson is worth more than the fix. "Gate the API, not the UI route" and
+"recover by reloading the page" are each defensible in isolation and contradict each
+other in composition, and no test of either one alone can see it.
 
 **Thresholds are dataset provenance, not just settings.** Changing the pHash threshold
 does not re-deduplicate old videos; changing the uncertainty band does not update
