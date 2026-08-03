@@ -547,6 +547,59 @@
         }
       }
     },
+    "/api/admin/login": {
+      "get": {
+        "operationId": "adminLogin",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Complete an Access login and return to the dashboard",
+        "description": "Exists to be navigated to, not fetched. Access gates the path, so an unauthenticated browser is sent through the login flow and only then redirected on to `/admin`.",
+        "responses": {
+          "302": {
+            "description": "Authenticated; redirecting to the admin dashboard",
+            "headers": {
+              "Location": {
+                "description": "Always `/admin`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/claim": {
       "post": {
         "operationId": "claimJob",

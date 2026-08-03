@@ -5,6 +5,7 @@ import { requireAccess } from "./middleware/access";
 import { nameSpanAfterRoute } from "./middleware/trace-route";
 import { openApiConfig } from "./openapi";
 import { listJobsHandler, listJobsRoute } from "./routes/admin-jobs";
+import { adminLoginHandler, adminLoginRoute } from "./routes/admin-login";
 import { healthHandler, healthRoute } from "./routes/health";
 import {
   claimJobHandler,
@@ -79,6 +80,7 @@ app.openapi(healthRoute, healthHandler);
 
 app.openapi(submitVideoRoute, submitVideoHandler);
 app.openapi(listJobsRoute, listJobsHandler);
+app.openapi(adminLoginRoute, adminLoginHandler);
 app.openapi(claimJobRoute, claimJobHandler);
 app.openapi(heartbeatRoute, heartbeatHandler);
 app.openapi(completeJobRoute, completeJobHandler);

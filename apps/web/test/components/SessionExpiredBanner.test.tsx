@@ -15,16 +15,34 @@ describe("SessionExpiredBanner", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("offers a full-page navigation to re-authenticate", async () => {
-    // A full navigation, not a fetch: only a top-level load can follow Access's
-    // redirect chain to the identity provider and back.
+  it("navigates to an Access-gated path, not back to the current page", async () => {
+    // The bug this pins, found only once M5 was deployed: the original
+    // implementation navigated to `window.location.href`. `/admin` is a static
+    // asset with no Access application in front of it, so that reload returned
+    // the SPA shell, which re-fetched, failed identically, and re-rendered this
+    // banner — a loop with no reachable login screen.
+    //
+    // The old test asserted `assign` was called with the current URL and passed
+    // against the broken code, which is why it is written the other way round
+    // now: the destination must be a path Access actually binds to.
     const assign = vi.fn();
-    vi.stubGlobal("location", { href: "https://crowdmon.mkcarl.com/admin", assign });
+    const href = "https://crowdmon.mkcarl.com/admin";
+    vi.stubGlobal("location", { href, assign });
 
     render(<SessionExpiredBanner error={new SessionExpiredError()} />);
     await userEvent.click(screen.getByRole("button", { name: /sign in again/i }));
 
-    expect(assign).toHaveBeenCalledWith("https://crowdmon.mkcarl.com/admin");
+    // A full navigation, not a fetch: only a top-level load can follow Access's
+    // redirect chain to an identity provider on another origin.
+    expect(assign).toHaveBeenCalledTimes(1);
+    const target = assign.mock.calls[0]?.[0] as string;
+
+    expect(target).not.toBe(href);
+    // Under `/api/admin`, which is the prefix the Access application binds to
+    // (infra/access.tf). Anything outside it is served without a gate and
+    // reproduces the loop.
+    expect(target.startsWith("/api/admin/")).toBe(true);
+
     vi.unstubAllGlobals();
   });
 });
