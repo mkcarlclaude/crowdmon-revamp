@@ -334,10 +334,20 @@ the reverse.
 *Depends on: M4.*
 *Done when:* killing the worker mid-job produces a visible reap and retry.
 
-**Built 2026-08-03; not yet applied.** The code and the Terraform are merged and
-tested, but `terraform apply` has not been run, so no Cron Trigger exists in the
-account and nothing is reaping production yet. M6.4's verification is blocked behind
-that apply and is the honest remaining work — see the note under it.
+**Built 2026-08-03, applied and verified against production 2026-08-04 (UTC).** The
+reaper runs on a real Cron Trigger, and a worker was killed mid-job three times to prove
+it. Timeline of the first kill, which is the milestone's "done when" in full:
+
+| Time (UTC) | Event |
+|---|---|
+| 15:47:19 | job 13 claimed, `attempts=1` |
+| 15:47:47 | `docker kill` — SIGKILL, 28s into a 5m lease |
+| 15:49:19 | lease stale (120s unrenewed) |
+| 15:50:00 | cron tick |
+| 15:50:18 | `status=pending`, `attempts=1`, holder and heartbeat cleared |
+
+2m31s from kill to re-queued, inside the ~7 minute worst case the README predicts.
+Two further cycles spent attempts 2 and 3; the third retired the job as `failed`.
 
 ### M6.1 — Attempts and terminal failure
 - [x] `attempts` incremented on each claim — already true since M3.4, on the claim
@@ -378,8 +388,10 @@ that apply and is the honest remaining work — see the note under it.
       schedule. No deploy fails, and the only symptom is crashed jobs sitting
       `claimed` forever — M6's own failure mode, arriving quietly. A test asserts the
       table stays absent
-- [ ] `terraform apply` — **not run.** Until it is, the handler is deployed and
-      nothing calls it
+- [x] `terraform apply` — run 2026-08-04, trigger created 15:31:25Z. Confirmed from
+      both sides: `cloudflare_workers_cron_trigger.reaper` in state, and the account's
+      `/schedules` returning `*/5 * * * *`. Checking only one side would not have been
+      enough — a `wrangler deploy` can delete the schedule while state still claims it
 
 ### M6.3 — Reclaim visibility
 - [x] Reclaim events emitted as spans. Not metrics, because there are none to emit:
@@ -391,13 +403,15 @@ that apply and is the honest remaining work — see the note under it.
       `outcome` attribute. The metrics-generator keys on service, span name, kind and
       status; an arbitrary attribute is not among them, so the attribute version would
       be unsplittable in Grafana — the exact thing this bullet asks for
-- [ ] Reclaim rate visible in Grafana — blocked on the apply above. The panel is
-      M9.1's, and building it against a series that has never emitted would be
-      guessing at the query
+- [x] Reclaim rate visible in Grafana. The metrics-generator turns both span names into
+      series: `traces_spanmetrics_calls_total{span_name="job.reclaimed"}` read 2 and
+      `{span_name="job.retired"}` read 1 after the three crash cycles, which is exactly
+      the split that happened. A *dashboard panel* is still M9.1's — what is closed here
+      is that the query exists and returns the right numbers
 - [x] Failed jobs visible in the admin list — already delivered by M5.3, which returns
       `status` and `failure_reason` and renders both
 
-### M6.4 — Verify by killing it — **needs the apply and the home box**
+### M6.4 — Verify by killing it — **done 2026-08-04**
 - [x] Document the recovery behaviour — README "Recovery from a crash", including the
       worst-case seven-minute pickup and why it is not tuned tighter
 - [x] A way to have a job worth killing. Until M7 lands extraction a job closes in
@@ -406,8 +420,30 @@ that apply and is the honest remaining work — see the note under it.
       was the alternative and was rejected — it tests the reaper's SQL, which the
       unit tests already do, while saying nothing about what a killed container
       actually leaves behind, which is the whole question
-- [ ] Kill the container mid-job; confirm reap and retry
-- [ ] Confirm a permanently failing job reaches `failed` and stops
+- [x] Kill the container mid-job; confirm reap and retry — the table above, then a
+      second cycle re-queueing at `attempts=2`. **The first two attempts at this test
+      proved nothing, and the reasons are worth keeping.** The first ran without
+      `CROWDMON_SIMULATED_WORK` reaching the process: `env_file` is read when the
+      container is *created*, so a restart kept the old environment and jobs closed in
+      0s. The second killed the worker while it was **idle** — the job had been
+      submitted a minute earlier and the poll backoff had not reached it, so no lease
+      existed and the reaper correctly had nothing to do. Both looked identical from
+      the dashboard: "nothing got claimed"
+- [x] Confirm a permanently failing job reaches `failed` and stops. Third cycle
+      retired job 13 at `attempts=3` with `exhausted its attempts without reporting an
+      outcome`, and a restarted worker then polled without claiming it — "stops being
+      handed out" checked by observation, not inferred from the status column
+- [x] Reclaim spans confirmed end to end in Tempo, which no test could show:
+      `job.reclaimed` and `job.retired` both arrived as children of
+      `scheduledHandler */5 * * * *`, carrying `crowdmon.job.id=13` and the right
+      `attempts`, with `crowdmon.reaper.requeued`/`retired` on the tick
+
+**A trap worth recording:** `docker kill` leaves the container stopped. Docker
+suppresses `unless-stopped` for anything halted by hand, so the worker does not come
+back on its own — which is what M4.5 already warned about from the other direction.
+During this verification that meant a killed worker stayed dead, and the next submitted
+job sat `pending` indefinitely looking like a reaper failure. `docker compose up -d`
+is the way back.
 
 **Found while building this, and fixed here rather than filed:** a graceful shutdown
 retired the job it was holding. Work interrupted by SIGTERM returns `context.Canceled`,

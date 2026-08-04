@@ -224,12 +224,30 @@ because Tempo's metrics-generator keys on span name, so this is what makes recla
 Grafana panel at all. The tick's own span carries the totals, so a healthy tick with no
 children still says it ran.
 
-**Verifying it by hand.** Set `CROWDMON_SIMULATED_WORK=5m` on the home box container and
-submit a job — until M7 lands extraction there is no real work to interrupt, and a job
-closes in about 90ms. Claim it, `docker kill` the container, and watch the admin list:
-the row sits `claimed` with its heartbeat age climbing, then returns to `pending` within
-about seven minutes and is claimed again with `attempts` one higher. Repeat past
-`MAX_ATTEMPTS` and it lands on `failed` and stops being handed out.
+**Verified against production on 2026-08-04.** A worker was killed 28s into a held lease;
+the job returned to `pending` 2m31s later with `attempts` unchanged at 1. Two more cycles
+spent attempts 2 and 3, and the third retired it as `failed`. Both span names reached
+Tempo and both appear in Prometheus as `traces_spanmetrics_calls_total{span_name=...}`.
+
+**Repeating it by hand.** Set `CROWDMON_SIMULATED_WORK=5m` in `~/crowdmon/.env` on the
+home box — until M7 lands extraction there is no real work to interrupt, and a job closes
+in about 90ms. Three things will waste your afternoon if you skip them:
+
+- **`docker compose up -d --force-recreate`, not `restart`.** `env_file` is read when the
+  container is created, so a plain restart runs with the old environment and jobs keep
+  closing in 0s. `docker inspect crowdmon-worker --format '{{json .Config.Env}}'` is the
+  check; the startup log line `simulating work instead of running jobs` is the proof.
+- **Wait for the claim before killing.** The poll backoff reaches 120s when idle, so a
+  job submitted a minute before the kill will not have been claimed — and a kill with no
+  lease held leaves nothing for the reaper to find. Watch for `claimed a job` in the
+  container log.
+- **`docker kill` leaves it stopped.** Docker suppresses `unless-stopped` for anything
+  halted by hand, so the worker will not come back and the next job will sit `pending`
+  forever, which looks exactly like a broken reaper.
+
+Then expect: the row sits `claimed` with its heartbeat age climbing, returns to `pending`
+within about seven minutes with `attempts` one higher, and past `MAX_ATTEMPTS` lands on
+`failed` and stops being handed out. Unset the variable when you are done.
 
 ## The worker
 
