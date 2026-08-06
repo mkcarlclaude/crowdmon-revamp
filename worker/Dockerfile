@@ -58,6 +58,14 @@ RUN useradd --create-home --shell /usr/sbin/nologin --uid 10001 worker
 USER worker
 WORKDIR /home/worker
 
+# Created here, as `worker`, and that is load-bearing rather than tidy: the
+# compose file mounts a named volume over this path, and Docker seeds a fresh
+# volume with the ownership of the directory it covers. Left absent from the
+# image, the volume would be created root-owned, and the unprivileged process
+# would fail every download with permission denied — on a box where the
+# directory visibly exists.
+RUN mkdir -p /home/worker/videos
+
 COPY --from=build /out/worker /usr/local/bin/crowdmon-worker
 
 # Tells GHCR which repository this image belongs to, which is what links the

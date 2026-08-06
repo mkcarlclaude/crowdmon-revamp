@@ -130,7 +130,9 @@ describe("POST /api/jobs/{id}/fanout", () => {
     // `segments` still describes the video; `created` is what this call did.
     expect(await again.json()).toEqual({ video_id: "ccccccccccc", segments: 3, created: 0 });
 
-    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM jobs WHERE kind = 'chunk'").first<{
+    const count = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM jobs WHERE kind = 'chunk'",
+    ).first<{
       n: number;
     }>();
     expect(count?.n).toBe(3);
@@ -143,12 +145,10 @@ describe("POST /api/jobs/{id}/fanout", () => {
     // rest do not. The re-run must fill the gap without duplicating the rest.
     await env.DB.batch([
       env.DB.prepare("INSERT INTO jobs (kind, video_id) VALUES ('chunk', ?)").bind("ddddddddddd"),
-      env.DB
-        .prepare(
-          `INSERT INTO chunks (job_id, video_id, segment_index, start_seconds, end_seconds)
+      env.DB.prepare(
+        `INSERT INTO chunks (job_id, video_id, segment_index, start_seconds, end_seconds)
                 VALUES (last_insert_rowid(), ?, 0, 0, 60)`,
-        )
-        .bind("ddddddddddd"),
+      ).bind("ddddddddddd"),
     ]);
 
     const res = await fanOut(jobId, probed({ duration_seconds: 150 }));
@@ -160,7 +160,11 @@ describe("POST /api/jobs/{id}/fanout", () => {
     )
       .bind("ddddddddddd")
       .all();
-    expect(rows.results).toEqual([{ segment_index: 0 }, { segment_index: 1 }, { segment_index: 2 }]);
+    expect(rows.results).toEqual([
+      { segment_index: 0 },
+      { segment_index: 1 },
+      { segment_index: 2 },
+    ]);
 
     // Every chunk job has exactly one chunk row. A job inserted without one is
     // the state M3.4's claim handler retires as corruption, so a fan-out that

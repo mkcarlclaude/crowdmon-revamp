@@ -462,25 +462,88 @@ was invisible before M6 because `Runner.Work` was nil and no job could be interr
 *Depends on: M4, M6.*
 *Done when:* submitting a URL produces chunk rows covering the whole video.
 
+**Built 2026-08-07.** All four sub-milestones landed as one branch: the fan-out endpoint
+and the worker pipeline are one mechanism split across two runtimes, and shipping the
+halves separately would have meant a worker calling an endpoint that did not exist, or an
+endpoint nothing called.
+
 ### M7.1 — yt-dlp download
-- [ ] Download to local disk with a TTL — source video is never uploaded to R2
-- [ ] Handle unavailable, private and geo-blocked videos as terminal failures
-- [ ] Download duration and file size recorded as span attributes
+- [x] Download to local disk with a TTL — `video.Store` owns the directory and the
+      expiry, and source video never touches R2. Pruning runs at the start of each
+      download rather than on a timer: downloads are what fill the disk, so downloads pay
+      for the cleanup, and a worker that has stopped downloading is one whose disk is not
+      growing. The TTL (6h) is deliberately far longer than a video takes to drain its
+      chunk jobs — a file pruned out from under a pending chunk produces M7.4's failure
+      on a box that did nothing wrong
+- [x] **A video already on disk is not re-fetched.** Not an optimisation: a download job
+      reaped mid-fan-out is claimed again, and re-fetching gigabytes to arrive at the file
+      already there would make a reap during phase one cost more than the work it
+      interrupted
+- [x] Handle unavailable, private and geo-blocked videos as terminal failures — plus
+      members-only and age-gated, matched against yt-dlp's own stderr. **The list is short
+      on purpose and the default is retryable:** an unlisted failure costs a lease window
+      and an attempt, a wrongly listed one burns a video permanently. `Sign in to confirm
+      you're not a bot` is the pattern kept off it — it reads exactly like the age gate
+      and is about this box's address, not about the video
+- [x] The other half of that sorting lives in the runner, and it inverts what M6 shipped:
+      only a terminal failure is reported through `complete`, because `complete` with a
+      cause retires the row on the first report. Everything else is left `claimed` for the
+      reaper, which is the same deal a crash gets
+- [x] Download duration and file size recorded as span attributes — `crowdmon.download.bytes`
+      and `crowdmon.download.duration_ms` on `video.download`, plus
+      `crowdmon.download.skipped` so a re-run reads as a skipped download rather than a
+      suspiciously fast one. Size is read from the file on disk, not from anything yt-dlp
+      said about it
 
 ### M7.2 — Probe and enqueue chunks
-- [ ] ffprobe for duration and resolution
-- [ ] Enqueue one chunk job per 60s segment
-- [ ] Video metadata persisted
+- [x] ffprobe for duration and resolution, measured on the file that landed rather than
+      taken from YouTube's metadata — the format selection decides what actually arrives,
+      and the segments have to tile that. Duration is rounded **up**: rounding down would
+      leave the tail of the video in no chunk at all
+- [x] Enqueue one chunk job per 60s segment, with the last segment short rather than
+      running past the end of the file
+- [x] **The enqueue is an API endpoint, not the worker writing rows.**
+      `POST /api/jobs/{id}/fanout` does the whole fan-out in one D1 `batch()`, which is
+      what M3.4 required of it: the claim handler retires a chunk job whose `chunks` row is
+      missing as corruption, and that is only correct if the pair cannot be observed
+      half-written. A worker making one call per segment could not have been transactional
+- [x] Video metadata persisted on the `videos` row, with the title left alone when the
+      download was skipped and had none to report — `COALESCE`, so a re-run cannot
+      overwrite a title with nothing
+- [x] **Video length has a ceiling, and it is a schema bound.** Segments are statements, so
+      six hours is 721 of them in one batch; `FanOutRequest` rejects longer with a 400
+      naming the limit rather than letting a batch fail halfway. A test fans out four
+      hours for real
 
 ### M7.3 — Idempotency
-- [ ] Re-running phase one does not duplicate chunk jobs
-- [ ] Deterministic chunk identity from `(video_id, segment_index)`
+- [x] Re-running phase one does not duplicate chunk jobs, and the API says so: the
+      response separates `segments` (what the video has) from `created` (what this call
+      inserted), so a re-run is observable from outside rather than inferred from row
+      counts
+- [x] Deterministic chunk identity from `(video_id, segment_index)` — `idx_chunks_identity`
+      was already unique; what M7 adds is a fan-out that collides with it deliberately
+- [x] **Both statements of a pair carry the same `NOT EXISTS` guard, and that is the
+      subtle part.** `ON CONFLICT DO NOTHING` on the chunk insert would leave its job row
+      already inserted — an orphan, which is the corruption above. And the guards must be
+      *identical*: `last_insert_rowid()` returns the previous insert's id when a statement
+      inserted nothing, so a chunk insert running while its job insert was skipped would
+      attach itself to another segment's job
 - [ ] Verified by forcing a reap mid-fan-out
 
 ### M7.4 — Affinity guard
-- [ ] Chunk jobs assert the source file is present locally before claiming
-- [ ] Missing file fails cleanly rather than half-processing
-- [ ] Constraint documented — chunks must run on the box that downloaded
+- [x] Chunk jobs assert the source file is present locally — after claiming, not before:
+      a worker cannot inspect a job it has not been given, and the claim endpoint has no
+      idea which box holds which file. What the guard buys is that the check happens once,
+      up front, instead of ffmpeg discovering it partway through
+- [x] Missing file fails cleanly rather than half-processing, and fails *terminally*: no
+      amount of retrying puts a file on a disk that does not have it. Half a chunk's frames
+      are worse than none, because the rows they produce look like a complete segment
+- [x] A disk that answered with an error is not a disk that answered "no" — only
+      `ErrNotDownloaded` is the affinity failure; an unreadable directory stays retryable
+- [x] Constraint documented — README "Phase one: download and fan-out", CONTEXT.md §Q13's
+      M7 amendment, and the failure message itself, which names the constraint rather than
+      saying "not found". An operator reading "not found" would go looking for a bug rather
+      than for the second worker that should not exist
 
 ---
 
