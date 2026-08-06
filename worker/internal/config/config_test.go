@@ -114,43 +114,52 @@ func TestLoadDefaultsEnvironment(t *testing.T) {
 	}
 }
 
-// M6.4 needs a job that lasts long enough to kill the container in the middle
-// of it. Until M7 lands extraction, Runner.Work is nil and a job completes in
-// under 100ms, so there is no middle to interrupt.
-func TestLoadTreatsSimulatedWorkAsOptional(t *testing.T) {
+func TestLoadDefaultsTheWorkDirAndTTL(t *testing.T) {
 	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
-	t.Setenv("CROWDMON_SIMULATED_WORK", "")
+	t.Setenv("CROWDMON_WORK_DIR", "")
+	t.Setenv("CROWDMON_SOURCE_TTL", "")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() returned an unexpected error: %v", err)
 	}
 
-	if cfg.SimulatedWork != 0 {
-		t.Errorf("SimulatedWork = %v, want the zero duration", cfg.SimulatedWork)
+	// Defaulted rather than required: every deployment wants the same answer,
+	// and a worker that refused to start without them would make the container
+	// harder to run for no decision anybody has to make.
+	if cfg.WorkDir != DefaultWorkDir {
+		t.Errorf("WorkDir = %q, want %q", cfg.WorkDir, DefaultWorkDir)
+	}
+	if cfg.SourceTTL != DefaultSourceTTL {
+		t.Errorf("SourceTTL = %v, want %v", cfg.SourceTTL, DefaultSourceTTL)
 	}
 }
 
-func TestLoadReadsSimulatedWorkAsADuration(t *testing.T) {
+func TestLoadReadsTheWorkDirAndTTL(t *testing.T) {
 	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
-	t.Setenv("CROWDMON_SIMULATED_WORK", "90s")
+	t.Setenv("CROWDMON_WORK_DIR", "/mnt/videos")
+	t.Setenv("CROWDMON_SOURCE_TTL", "90m")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() returned an unexpected error: %v", err)
 	}
 
-	if cfg.SimulatedWork != 90*time.Second {
-		t.Errorf("SimulatedWork = %v, want 90s", cfg.SimulatedWork)
+	if cfg.WorkDir != "/mnt/videos" {
+		t.Errorf("WorkDir = %q, want /mnt/videos", cfg.WorkDir)
+	}
+	if cfg.SourceTTL != 90*time.Minute {
+		t.Errorf("SourceTTL = %v, want 90m", cfg.SourceTTL)
 	}
 }
 
-// Fail rather than fall back to zero. A verification run configured with
-// "90" instead of "90s" would otherwise complete instantly and look like the
-// reaper never fired, which is the exact conclusion the run exists to test.
-func TestLoadRejectsAnUnparseableSimulatedWork(t *testing.T) {
+// Fail rather than fall back to the default. "6" instead of "6h" parses as six
+// nanoseconds, which would delete every source video the moment the next
+// download pruned — and every chunk job would then report the affinity failure
+// M7.4 exists to report about a genuinely misplaced file.
+func TestLoadRejectsAnUnparseableSourceTTL(t *testing.T) {
 	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
-	t.Setenv("CROWDMON_SIMULATED_WORK", "90")
+	t.Setenv("CROWDMON_SOURCE_TTL", "6")
 
 	if _, err := Load(); err == nil {
 		t.Fatal("expected an error for a duration with no unit")
