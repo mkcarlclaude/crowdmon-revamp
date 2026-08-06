@@ -358,6 +358,70 @@
           "worker_id",
           "status"
         ]
+      },
+      "ChunkFanOut": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "segments": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 20
+          },
+          "created": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 20
+          }
+        },
+        "required": [
+          "video_id",
+          "segments",
+          "created"
+        ]
+      },
+      "FanOutRequest": {
+        "type": "object",
+        "properties": {
+          "worker_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "carls-ubuntu-1"
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 21600,
+            "example": 1200
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1920
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1080
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500,
+            "example": "Genshin Impact — Paimon"
+          }
+        },
+        "required": [
+          "worker_id",
+          "duration_seconds",
+          "width",
+          "height"
+        ]
       }
     },
     "parameters": {}
@@ -735,6 +799,69 @@
           },
           "400": {
             "description": "Malformed job id or body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No job with this id is held by this worker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/fanout": {
+      "post": {
+        "operationId": "fanOutJob",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Record what a download probed, and enqueue its chunk jobs",
+        "description": "Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on `(video_id, segment_index)`, so a download reaped mid-fan-out re-runs without duplicating the segments that already exist.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FanOutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The video's chunk jobs exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkFanOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed job id or body, or a job that is not a download",
             "content": {
               "application/json": {
                 "schema": {
