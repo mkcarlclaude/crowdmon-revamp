@@ -127,6 +127,12 @@ func TestDownloadSkipsAVideoAlreadyOnDisk(t *testing.T) {
 	if source.Title != "" {
 		t.Errorf("Title = %q, want empty when the download was skipped", source.Title)
 	}
+	// Said, not inferred. The span attribute that reports a skipped download
+	// reads this; deriving it from elapsed time would call a fast download of
+	// an untitled video a skip.
+	if !source.Skipped {
+		t.Error("Skipped = false for a video that was already on disk")
+	}
 }
 
 func TestDownloadReportsUnavailableVideosAsTerminal(t *testing.T) {

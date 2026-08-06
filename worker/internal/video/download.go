@@ -57,6 +57,11 @@ type Source struct {
 	// fan-out leaves what it has rather than overwriting a title with nothing.
 	Title string
 	Bytes int64
+	// Skipped reports that the file was already there and nothing was fetched.
+	// Stated rather than inferred from how quickly the download returned: a
+	// small video on a fast line looks identical from the outside, and the span
+	// attribute that carries this would then be a guess.
+	Skipped bool
 }
 
 // Downloader fetches source videos with yt-dlp.
@@ -80,7 +85,7 @@ func (d Downloader) Download(ctx context.Context, videoID, url string) (Source, 
 		if statErr != nil {
 			return Source{}, fmt.Errorf("measuring the source video: %w", statErr)
 		}
-		return Source{Path: path, Bytes: info.Size()}, nil
+		return Source{Path: path, Bytes: info.Size(), Skipped: true}, nil
 	case !errors.Is(err, ErrNotDownloaded):
 		return Source{}, err
 	}

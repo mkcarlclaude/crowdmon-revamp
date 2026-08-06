@@ -116,6 +116,30 @@ export const completeJobRoute = createRoute({
   },
 });
 
+export const fanOutJobRoute = createRoute({
+  method: "post",
+  path: "/api/jobs/{id}/fanout",
+  operationId: "fanOutJob",
+  tags: ["jobs"],
+  summary: "Record what a download probed, and enqueue its chunk jobs",
+  description:
+    "Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on " +
+    "`(video_id, segment_index)`, so a download reaped mid-fan-out re-runs " +
+    "without duplicating the segments that already exist.",
+  request: {
+    params: JobIdParam,
+    body: { content: { "application/json": { schema: FanOutRequest } }, required: true },
+  },
+  responses: {
+    200: {
+      description: "The video's chunk jobs exist",
+      content: { "application/json": { schema: ChunkFanOut } },
+    },
+    400: errorResponse("Malformed job id or body, or a job that is not a download"),
+    404: errorResponse("No job with this id is held by this worker"),
+  },
+});
+
 export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bindings }> = async (
   c,
 ) => {
@@ -164,9 +188,13 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
 
   // A job whose work definition is incomplete cannot be run, and handing it
   // out anyway only moves the discovery to the worker, an hour later, after a
-  // download. Chunk fan-out is not transactional (CONTEXT.md §Q13) — it can be
-  // reaped halfway through — so a chunk job with no `chunks` row is a state
-  // the system can genuinely reach, not just a hand-edited database.
+  // download.
+  //
+  // Since M7.2 a chunk job with no `chunks` row is corruption rather than a
+  // reachable state: the fan-out below writes the pair in one `batch()`. This
+  // stays because it is the check that lets that guarantee be a guarantee — if
+  // it ever fires, something outside the fan-out wrote a job row, and retiring
+  // it is better than handing it out on every poll forever.
   if (!video) return failUnrunnable(c, job.id, "video row missing");
   if (job.kind === "chunk" && !chunk) {
     return failUnrunnable(c, job.id, "chunk row missing");
@@ -221,30 +249,6 @@ export const heartbeatHandler: RouteHandler<typeof heartbeatRoute, { Bindings: B
 
   return c.body(null, 204);
 };
-
-export const fanOutJobRoute = createRoute({
-  method: "post",
-  path: "/api/jobs/{id}/fanout",
-  operationId: "fanOutJob",
-  tags: ["jobs"],
-  summary: "Record what a download probed, and enqueue its chunk jobs",
-  description:
-    "Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on " +
-    "`(video_id, segment_index)`, so a download reaped mid-fan-out re-runs " +
-    "without duplicating the segments that already exist.",
-  request: {
-    params: JobIdParam,
-    body: { content: { "application/json": { schema: FanOutRequest } }, required: true },
-  },
-  responses: {
-    200: {
-      description: "The video's chunk jobs exist",
-      content: { "application/json": { schema: ChunkFanOut } },
-    },
-    400: errorResponse("Malformed job id or body, or a job that is not a download"),
-    404: errorResponse("No job with this id is held by this worker"),
-  },
-});
 
 export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: Bindings }> = async (
   c,
@@ -326,24 +330,6 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: B
   return c.json({ video_id: job.video_id, segments: segments.length, created }, 200);
 };
 
-/**
- * The 60s segments covering a video of `duration` seconds.
- *
- * The last one is short rather than running past the end of the file: ffmpeg
- * would simply stop early, but the row would then claim to cover time the
- * video does not have, and the extracted frame count for it would look wrong
- * against every other chunk.
- */
-function segmentsFor(duration: number): { index: number; start: number; end: number }[] {
-  const segments = [];
-
-  for (let start = 0, index = 0; start < duration; start += SEGMENT_SECONDS, index++) {
-    segments.push({ index, start, end: Math.min(start + SEGMENT_SECONDS, duration) });
-  }
-
-  return segments;
-}
-
 export const completeJobHandler: RouteHandler<
   typeof completeJobRoute,
   { Bindings: Bindings }
@@ -369,3 +355,21 @@ export const completeJobHandler: RouteHandler<
 
   return c.body(null, 204);
 };
+
+/**
+ * The 60s segments covering a video of `duration` seconds.
+ *
+ * The last one is short rather than running past the end of the file: ffmpeg
+ * would simply stop early, but the row would then claim to cover time the
+ * video does not have, and the extracted frame count for it would look wrong
+ * against every other chunk.
+ */
+function segmentsFor(duration: number): { index: number; start: number; end: number }[] {
+  const segments = [];
+
+  for (let start = 0, index = 0; start < duration; start += SEGMENT_SECONDS, index++) {
+    segments.push({ index, start, end: Math.min(start + SEGMENT_SECONDS, duration) });
+  }
+
+  return segments;
+}

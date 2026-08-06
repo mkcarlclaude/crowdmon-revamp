@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { app } from "../../src/app";
+import { MAX_VIDEO_SECONDS } from "../../src/schemas";
 import { seedVideo } from "./seed";
 
 /**
@@ -141,8 +142,10 @@ describe("POST /api/jobs/{id}/fanout", () => {
   it("finishes a fan-out that was interrupted halfway", async () => {
     const jobId = await seedHeldDownloadJob("ddddddddddd");
 
-    // What a reap mid-fan-out leaves behind: the first segments exist and the
-    // rest do not. The re-run must fill the gap without duplicating the rest.
+    // A half-fanned-out video, seeded by hand because the single batch means
+    // production should never produce one. The guards are per segment anyway,
+    // and this is what says so: "should never" is a claim about the batch, not
+    // a property of the fan-out, and the two are worth testing separately.
     await env.DB.batch([
       env.DB.prepare("INSERT INTO jobs (kind, video_id) VALUES ('chunk', ?)").bind("ddddddddddd"),
       env.DB.prepare(
@@ -209,6 +212,24 @@ describe("POST /api/jobs/{id}/fanout", () => {
 
     expect((await fanOut(jobId, probed({ duration_seconds: 0 }))).status).toBe(400);
     expect((await fanOut(jobId, probed({ duration_seconds: -60 }))).status).toBe(400);
+  });
+
+  it("refuses a video past the ceiling rather than trying the batch", async () => {
+    const jobId = await seedHeldDownloadJob("iiiiiiiiiii");
+
+    // The ceiling is a schema bound so that the answer is a 400 naming it. A
+    // batch that failed halfway would report whatever D1 says about batch size,
+    // to a worker that had just spent an hour downloading.
+    const res = await fanOut(jobId, probed({ duration_seconds: MAX_VIDEO_SECONDS + 1 }));
+
+    expect(res.status).toBe(400);
+    const chunks = await env.DB.prepare("SELECT COUNT(*) AS n FROM chunks").first<{ n: number }>();
+    expect(chunks?.n).toBe(0);
+
+    // And the boundary itself is accepted: an off-by-one here would retire
+    // every video of exactly the maximum length as terminally failed.
+    const atTheLimit = await fanOut(jobId, probed({ duration_seconds: MAX_VIDEO_SECONDS }));
+    expect(atTheLimit.status).toBe(200);
   });
 
   it("fans out a long video in one batch", async () => {

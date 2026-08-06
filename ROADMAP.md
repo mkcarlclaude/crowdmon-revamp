@@ -519,7 +519,11 @@ endpoint nothing called.
 - [x] Re-running phase one does not duplicate chunk jobs, and the API says so: the
       response separates `segments` (what the video has) from `created` (what this call
       inserted), so a re-run is observable from outside rather than inferred from row
-      counts
+      counts. **What it does not do is re-tile a video whose duration came back
+      different** — segments are keyed on `(video_id, segment_index)` alone, so existing
+      rows keep their boundaries. The source file is reused rather than re-fetched, so a
+      second probe measures the same file and cannot disagree unless somebody deleted it
+      between attempts
 - [x] Deterministic chunk identity from `(video_id, segment_index)` — `idx_chunks_identity`
       was already unique; what M7 adds is a fan-out that collides with it deliberately
 - [x] **Both statements of a pair carry the same `NOT EXISTS` guard, and that is the

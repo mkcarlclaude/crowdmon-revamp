@@ -206,17 +206,31 @@ keeping in view:
   request schema, which is where the answer is a 400 naming the limit rather than a
   batch that fails halfway through.
 
-Re-running is free: a fan-out reports `segments` (what the video has) and `created`
-(what this call inserted), and a download reaped halfway through comes back, finds its
-video already on disk, and fills only the gap.
+Re-running is free. A download reaped anywhere in phase one — before the fan-out, or
+after it but before the job was reported — comes back, finds its video already on disk,
+and re-fans-out to `created: 0`. The response separates `segments` (what the video has)
+from `created` (what this call inserted), so that is visible rather than inferred. The
+per-segment guards make a genuinely partial fan-out survivable too, though the single
+batch means production should never produce one; the test that seeds one exists because
+"should never" is not a mechanism.
+
+One thing the guards deliberately do *not* do: re-tile a video whose duration came back
+different. Segments are keyed on `(video_id, segment_index)` alone, so existing rows keep
+their boundaries. The source file is reused rather than re-fetched, so a second probe
+measures the same file and cannot disagree — the case only arises if somebody deletes the
+file between attempts, and the honest repair for that is to delete the video's rows.
 
 **Chunk jobs read the file from local disk, so they must run on the box that downloaded
 it.** That is free with one worker and not free with two. A chunk job checks the source
-is present before doing anything and fails terminally if it is not, naming the
-constraint — half a chunk's frames are worse than none, because the rows they produce
-look like a complete segment. Source videos live in `CROWDMON_WORK_DIR` behind a named
-volume, and are pruned past `CROWDMON_SOURCE_TTL` (6h) at the start of each download:
-the thing that fills the disk pays for the cleanup.
+is present before doing anything else — that check is the whole of a chunk job until M8
+adds extraction — and fails terminally if it is missing, naming the constraint. Half a
+chunk's frames are worse than none, because the rows they produce look like a complete
+segment. The check happens after the claim, not before it: a worker cannot inspect a job
+it has not been given, and the claim endpoint has no idea which box holds which file. The
+cost is one spent attempt per misplaced chunk, paid only in a two-worker world that does
+not exist yet. Source videos live in `CROWDMON_WORK_DIR` behind a named volume, and are
+pruned past `CROWDMON_SOURCE_TTL` (6h) at the start of each download: the thing that
+fills the disk pays for the cleanup.
 
 **Failures are sorted into terminal and retryable, and the default is retryable.**
 `complete` with a cause retires a row on the first report, so only failures a retry

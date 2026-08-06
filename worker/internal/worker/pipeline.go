@@ -129,10 +129,10 @@ func (p Pipeline) downloadSource(ctx context.Context, job *api.Job) (video.Sourc
 		// A reaped download re-runs (M7.3) and finds the file already there.
 		// Without this the span looks like a suspiciously fast download rather
 		// than one that never happened.
-		attribute.Bool("crowdmon.download.skipped", elapsed < time.Second && source.Title == ""),
+		attribute.Bool("crowdmon.download.skipped", source.Skipped),
 	)
 
-	p.log(ctx).InfoContext(ctx, "source video ready",
+	p.log().InfoContext(ctx, "source video ready",
 		"video_id", job.VideoId, "path", source.Path, "bytes", source.Bytes,
 		"download_ms", elapsed.Milliseconds())
 
@@ -184,7 +184,7 @@ func (p Pipeline) fanOut(
 		attribute.Int("crowdmon.fanout.created", result.Created),
 	)
 
-	p.log(ctx).InfoContext(ctx, "fanned out",
+	p.log().InfoContext(ctx, "fanned out",
 		"video_id", job.VideoId, "segments", result.Segments, "created", result.Created)
 
 	return nil
@@ -231,7 +231,7 @@ func (p Pipeline) chunk(ctx context.Context, job *api.Job) error {
 	// Extraction is M8.1. Said out loud in the log rather than left as a
 	// silent success, so a chunk job marked `done` with no images behind it is
 	// explicable while that is still true.
-	p.log(ctx).InfoContext(ctx, "chunk source present; extraction lands in M8",
+	p.log().InfoContext(ctx, "chunk source present; extraction lands in M8",
 		"video_id", job.VideoId, "path", path)
 
 	return nil
@@ -243,15 +243,15 @@ func (p Pipeline) chunk(ctx context.Context, job *api.Job) error {
 func (p Pipeline) prune(ctx context.Context) {
 	removed, err := p.Store.Prune()
 	if err != nil {
-		p.log(ctx).WarnContext(ctx, "pruning expired source videos failed", "error", err)
+		p.log().WarnContext(ctx, "pruning expired source videos failed", "error", err)
 		return
 	}
 	if removed > 0 {
-		p.log(ctx).InfoContext(ctx, "pruned expired source videos", "removed", removed)
+		p.log().InfoContext(ctx, "pruned expired source videos", "removed", removed)
 	}
 }
 
-func (p Pipeline) log(context.Context) *slog.Logger {
+func (p Pipeline) log() *slog.Logger {
 	if p.Logger == nil {
 		return slog.Default()
 	}

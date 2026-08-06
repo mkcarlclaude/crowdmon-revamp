@@ -158,7 +158,9 @@ export const CompleteRequest = z
  * (CONTEXT.md §Q13), so segments are statements, and a bound belongs here —
  * where the answer is a 400 naming the limit — rather than in a batch that
  * fails halfway through with whatever D1 says when a batch is too big. Six
- * hours is 360 segments and 721 statements, which a test runs for real.
+ * hours is 360 segments and 721 statements; a test fans out four hours (481
+ * statements) against a real D1 rather than trusting that a batch that size
+ * works, and another pins the rejection at the boundary.
  */
 export const MAX_VIDEO_SECONDS = 6 * 60 * 60;
 
