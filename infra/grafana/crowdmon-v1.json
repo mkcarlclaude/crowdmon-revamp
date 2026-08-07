@@ -62,7 +62,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -72,20 +77,35 @@
             "fillOpacity": 10,
             "spanNulls": false,
             "showPoints": "never",
-            "stacking": { "mode": "normal", "group": "A" },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
             "axisLabel": "rows"
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "last"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "expr": "sum by (status, kind) (queue_depth)",
           "legendFormat": "{{status}} / {{kind}}"
         }
@@ -100,7 +120,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -116,19 +141,35 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "last",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "expr": "histogram_quantile(0.50, sum by (le) (rate(chunk_duration_seconds_bucket{exported_job=\"crowdmon-worker\"}[$__rate_interval])))",
           "legendFormat": "p50"
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chunk_duration_seconds_bucket{exported_job=\"crowdmon-worker\"}[$__rate_interval])))",
           "legendFormat": "p95"
         }
@@ -138,12 +179,17 @@
       "id": 3,
       "type": "timeseries",
       "title": "Dedup ratio",
-      "description": "Fraction of decoded frames kept after pHash dedup (CONTEXT.md §4), computed as rate(frames_kept_total)/rate(frames_extracted_total) — a rate-of-sums ratio over the raw frame counters, not an average of the frames.dedup.ratio histogram's per-chunk observations. The two differ in what they weight: this ratio is frame-weighted, so a 600-frame chunk influences it proportionally to a 3-frame one, which matches what actually drives R2 storage and labelling cost. The histogram's own mean (sum(rate(frames_dedup_ratio_sum))/sum(rate(frames_dedup_ratio_count))) is chunk-weighted instead — every chunk counts equally regardless of how many frames it held — which is the wrong denominator for a cost question, though it stays queryable in Prometheus directly if a chunk-weighted view is ever wanted. Expect roughly 30-60% (40-70% dropped, per §4's design estimate). A bad value is this ratio near 100% for a sustained period: either the threshold (CROWDMON_DEDUP_THRESHOLD) got set too loose, or the source video is unusually static and dedup is doing nothing.",
+      "description": "Fraction of decoded frames *dropped* as near-duplicates by pHash dedup, computed as 1 - rate(frames_kept_total)/rate(frames_extracted_total).\n\nDropped rather than kept, though kept is the simpler query, because `frames.dedup.ratio` in the Go worker is already defined as (extracted-kept)/extracted and M8's production verification is written up in those terms (\"47% dedup\"). A panel whose \"dedup ratio\" meant the complement of the metric called dedup ratio is exactly the disagreement CONTEXT.md §7 warns about, and it would surface at the worst moment.\n\nFrame-weighted, not chunk-weighted: this is a rate-of-sums over the raw counters, so a 600-frame chunk moves it proportionally more than a 3-frame one, which matches what actually drives R2 storage and labelling cost. The histogram's own mean (sum(rate(frames_dedup_ratio_sum))/sum(rate(frames_dedup_ratio_count))) weights every chunk equally regardless of size — the wrong denominator for a cost question, but still queryable directly if a per-chunk view is ever wanted.\n\nExpect roughly 40-70% dropped (CONTEXT.md §4's design estimate; M8 measured 47% on real footage). A bad value is near 0% for a sustained period — the threshold (CROWDMON_DEDUP_THRESHOLD) is too tight and nothing is being deduplicated — or near 100%, where it is so loose that almost every frame is being discarded.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -155,21 +201,34 @@
             "fillOpacity": 15,
             "spanNulls": false,
             "showPoints": "never",
-            "axisLabel": "kept / extracted"
+            "axisLabel": "dropped / extracted"
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "mean"] },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "last",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(rate(frames_kept_total{exported_job=\"crowdmon-worker\"}[$__rate_interval])) / sum(rate(frames_extracted_total{exported_job=\"crowdmon-worker\"}[$__rate_interval]))",
-          "legendFormat": "kept / extracted"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "1 - (\n  sum(rate(frames_kept_total{exported_job=\"crowdmon-worker\"}[$__rate_interval]))\n  /\n  sum(rate(frames_extracted_total{exported_job=\"crowdmon-worker\"}[$__rate_interval]))\n)",
+          "legendFormat": "dropped"
         }
       ]
     },
@@ -182,7 +241,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -199,13 +263,26 @@
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "max"] },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "last",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"crowdmon-api\", span_name=\"job.reclaimed\"}[$__rate_interval]))",
           "legendFormat": "reclaimed/s"
         }
@@ -220,7 +297,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -233,18 +315,34 @@
             "showPoints": "never",
             "axisLabel": "retired/s"
           },
-          "color": { "mode": "fixed", "fixedColor": "red" }
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "max"] },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "last",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"crowdmon-api\", span_name=\"job.retired\"}[$__rate_interval]))",
           "legendFormat": "retired/s"
         }
@@ -253,9 +351,16 @@
   ],
   "refresh": "30s",
   "schemaVersion": 41,
-  "tags": ["crowdmon"],
-  "templating": { "list": [] },
-  "time": { "from": "now-6h", "to": "now" },
+  "tags": [
+    "crowdmon"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "",
   "title": "Crowdmon — v1 system health",
