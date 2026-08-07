@@ -46,8 +46,17 @@ type Config struct {
 	// OTLPEndpoint is the collector's OTLP *HTTP* traces URL, path included.
 	// Empty disables tracing.
 	OTLPEndpoint string
+	// OTLPLogsEndpoint is the collector's OTLP *HTTP* logs URL, path included.
+	// Empty disables log export — the JSON stdout handler still runs either
+	// way, so a worker with this unset behaves exactly as it did before Loki
+	// wiring existed. Separate from OTLPEndpoint rather than one endpoint with
+	// two paths appended in code: the collector fronts both at the same host
+	// today, but nothing requires that, and a struct field is cheaper to keep
+	// correct than a string-surgery assumption.
+	OTLPLogsEndpoint string
 	// AccessClientID and AccessClientSecret are the Access service token that
-	// gets an export past the gate in front of the collector.
+	// gets an export past the gate in front of the collector. Shared by
+	// traces and logs — one token, one Access application, per CONTEXT.md §6.
 	AccessClientID     string
 	AccessClientSecret string
 	// WorkDir is where downloaded source videos live (M7.1). Chunk jobs read
@@ -74,6 +83,10 @@ type Config struct {
 // off" is a stated condition rather than an accident of a typo.
 func (c Config) TracingEnabled() bool { return c.OTLPEndpoint != "" }
 
+// LogsEnabled reports whether the OTLP log exporter should be built. Mirrors
+// TracingEnabled exactly, for the same reason.
+func (c Config) LogsEnabled() bool { return c.OTLPLogsEndpoint != "" }
+
 // Load reads configuration from the environment, applying defaults where a
 // missing value is not an error. It returns an error rather than exiting so
 // callers decide how a misconfigured worker should fail.
@@ -83,6 +96,7 @@ func Load() (Config, error) {
 		Environment:        envOrDefault("CROWDMON_ENV", "development"),
 		WorkerID:           os.Getenv("CROWDMON_WORKER_ID"),
 		OTLPEndpoint:       os.Getenv("CROWDMON_OTLP_ENDPOINT"),
+		OTLPLogsEndpoint:   os.Getenv("CROWDMON_OTLP_LOGS_ENDPOINT"),
 		AccessClientID:     os.Getenv("CF_ACCESS_CLIENT_ID"),
 		AccessClientSecret: os.Getenv("CF_ACCESS_CLIENT_SECRET"),
 		WorkDir:            envOrDefault("CROWDMON_WORK_DIR", DefaultWorkDir),
@@ -123,10 +137,12 @@ func Load() (Config, error) {
 	// Fail closed rather than export without the headers. Access answers an
 	// unauthenticated export with a redirect to its login page, which an OTLP
 	// exporter reports as an ordinary HTTP failure — so the symptom of
-	// omitting these is spans that never arrive, noticed days later.
-	if cfg.TracingEnabled() && (cfg.AccessClientID == "" || cfg.AccessClientSecret == "") {
+	// omitting these is spans (or log records) that never arrive, noticed
+	// days later.
+	if (cfg.TracingEnabled() || cfg.LogsEnabled()) && (cfg.AccessClientID == "" || cfg.AccessClientSecret == "") {
 		return Config{}, fmt.Errorf(
-			"CROWDMON_OTLP_ENDPOINT is set, so CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET are required")
+			"CROWDMON_OTLP_ENDPOINT or CROWDMON_OTLP_LOGS_ENDPOINT is set, so " +
+				"CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET are required")
 	}
 
 	return cfg, nil

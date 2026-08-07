@@ -2,10 +2,14 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
 )
 
 // handler is a slog.Handler that stamps every record with the ids of the span
@@ -17,13 +21,63 @@ import (
 type handler struct{ slog.Handler }
 
 // NewHandler builds the worker's log handler: JSON to w, at or above level,
-// with trace correlation.
+// with trace correlation, fanned out to the OTLP log exporter Setup installed
+// (a real one when logs are configured, a no-op otherwise — see setupLogs).
 //
-// JSON because these lines are read by Loki far more often than by a human —
-// and when a human does read them, `docker compose logs | jq` is a fair price
-// for being able to filter on trace_id at all.
+// JSON to w because these lines are also read by a human sometimes, and when
+// that happens `docker compose logs | jq` is a fair price for being able to
+// filter on trace_id. The OTLP copy is how they reach Loki: Setup must run
+// before this so the global LoggerProvider it installs is the real one.
 func NewHandler(w io.Writer, level slog.Level) slog.Handler {
-	return &handler{Handler: slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})}
+	stdout := &handler{Handler: slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})}
+	otlp := otelslog.NewHandler(config.ServiceName)
+	return multiHandler{stdout, otlp}
+}
+
+// multiHandler fans one record out to every handler it wraps. slog has no
+// built-in for this — Handler is one interface with no notion of a list —
+// and pulling in a dependency for what amounts to four one-line loops was not
+// worth it.
+type multiHandler []slog.Handler
+
+func (m multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	for _, h := range m {
+		if h.Enabled(ctx, level) {
+			return true
+		}
+	}
+	return false
+}
+
+// Handle calls every handler regardless of an individual failure — one
+// destination being down (an unreachable collector) must not silence stdout,
+// and vice versa. errors.Join reports both if both fail.
+func (m multiHandler) Handle(ctx context.Context, record slog.Record) error {
+	var errs []error
+	for _, h := range m {
+		if h.Enabled(ctx, record.Level) {
+			if err := h.Handle(ctx, record.Clone()); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (m multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	next := make(multiHandler, len(m))
+	for i, h := range m {
+		next[i] = h.WithAttrs(attrs)
+	}
+	return next
+}
+
+func (m multiHandler) WithGroup(name string) slog.Handler {
+	next := make(multiHandler, len(m))
+	for i, h := range m {
+		next[i] = h.WithGroup(name)
+	}
+	return next
 }
 
 // Handle adds trace_id and span_id when the context is inside a recording
