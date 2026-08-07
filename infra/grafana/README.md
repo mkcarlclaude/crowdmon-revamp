@@ -12,9 +12,17 @@ provisioned" below for what that boundary means and why it holds.
    `__inputs` section declares it and every panel references
    `${DS_PROMETHEUS}` instead of a datasource UID (see below). Pick the
    `Prometheus` datasource already configured on `grafana.mkcarl.com`.
-4. Import. The dashboard lands at `/d/crowdmon-v1/...` — the fixed `uid` in
+4. Put it in the **`crowdmon`** folder. That Grafana serves several unrelated
+   projects — its Prometheus carries a `website` service alongside this one —
+   so a folder is what keeps this dashboard findable among them.
+5. Import. The dashboard lands at `/d/crowdmon-v1/...` — the fixed `uid` in
    the file, which is what `/admin`'s link targets, so re-importing after an
    edit keeps the same URL rather than minting a new one.
+
+The folder is deliberately absent from the JSON. Grafana addresses a dashboard
+by `uid` alone, so the folder never appears in the URL and moving it later
+cannot break the link from `/admin` — which is the whole reason the link
+targets a `uid` rather than a path someone can reorganise.
 
 ## Why committed, not provisioned
 
