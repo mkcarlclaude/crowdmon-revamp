@@ -106,6 +106,32 @@ describe("POST /api/jobs/claim", () => {
   });
 });
 
+describe("the trace context carried on a job row (M9.2)", () => {
+  it("hands back the traceparent the row was stamped with", async () => {
+    const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    await seedDownloadJob("jjjjjjjjjjj", traceparent);
+
+    const job = (await (await claim()).json()) as JobResponse;
+
+    // The worker extracts this with propagation.TraceContext and starts the
+    // job's spans as a child of it — the only way submit and claim end up in
+    // one trace, since nothing calls claim synchronously from submit.
+    expect(job.traceparent).toBe(traceparent);
+  });
+
+  it("hands back null for a job with no stored context", async () => {
+    // Every row from before migration 0002, and every submit that ran with
+    // tracing disabled or no active span, looks like this. The worker's
+    // fallback — start a root span, exactly as it does today — depends on
+    // being able to tell that apart from a value it failed to extract.
+    await seedDownloadJob("kkkkkkkkkkk");
+
+    const job = (await (await claim()).json()) as JobResponse;
+
+    expect(job.traceparent).toBeNull();
+  });
+});
+
 describe("a job that can never be run", () => {
   it("retires a chunk job with no chunk row rather than handing it out", async () => {
     await seedVideo("iiiiiiiiiii");

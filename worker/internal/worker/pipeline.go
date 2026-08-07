@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/api"
@@ -107,6 +108,8 @@ type Pipeline struct {
 
 // Work runs the job, whichever kind it is. It satisfies WorkFunc.
 func (p Pipeline) Work(ctx context.Context, job *api.Job) error {
+	ctx = withStoredTraceContext(ctx, job.Traceparent)
+
 	switch job.Kind {
 	case api.Download:
 		return p.download(ctx, job)
@@ -481,6 +484,31 @@ func (p Pipeline) log() *slog.Logger {
 		return slog.Default()
 	}
 	return p.Logger
+}
+
+// withStoredTraceContext extracts a job's stored traceparent (M9.2) into ctx,
+// so the `job.download` or `job.chunk` span opened a moment later is a child
+// of whichever request wrote the row — submit for a download job, the
+// fan-out call for a chunk job — joining this worker's spans to the trace
+// that has been running since the video was first submitted.
+//
+// `propagation.TraceContext`, not a hand-rolled parse: it is the propagator
+// telemetry.Setup already installs as the global (for the outbound side —
+// see queue.tracingTransport), and using it here rather than a second parser
+// means there is exactly one place that decides what a valid `traceparent`
+// looks like.
+//
+// A nil or malformed value is not an error and is never logged as one:
+// Extract leaves ctx unchanged when the carrier's `traceparent` does not
+// parse, which is precisely today's behaviour for a job with nothing stored
+// at all — a fresh root span. Telemetry must never be the reason a job fails,
+// so there is nothing here worth checking or reporting.
+func withStoredTraceContext(ctx context.Context, traceparent *string) context.Context {
+	if traceparent == nil || *traceparent == "" {
+		return ctx
+	}
+	carrier := propagation.MapCarrier{"traceparent": *traceparent}
+	return otel.GetTextMapPropagator().Extract(ctx, carrier)
 }
 
 // tracer is resolved per call rather than once at construction. The global

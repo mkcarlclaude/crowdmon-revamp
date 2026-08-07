@@ -1,6 +1,7 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import type { Bindings } from "../bindings";
 import { errorResponse, SubmitVideoRequest, VideoSubmission } from "../schemas";
+import { currentTraceparent } from "../tracing";
 import { youtubeVideoId } from "../youtube";
 
 export const submitVideoRoute = createRoute({
@@ -63,10 +64,18 @@ export const submitVideoHandler: RouteHandler<
   // `DO NOTHING ... RETURNING` returns no row on conflict, so the duplicate is
   // detected by the database rather than by a SELECT the next request could
   // race past.
+  //
+  // The submit request's own trace context (M9.2) is stamped onto the row it
+  // creates here, because there is nowhere else for it to live: the worker
+  // that claims this job does so minutes or hours later, in an unrelated
+  // request, so a header cannot carry the connection — only the row can.
+  // `currentTraceparent()` returns null with tracing disabled or no active
+  // span, which the claim handler treats exactly like a job from before this
+  // column existed: start a root trace.
   const job = await c.env.DB.prepare(
-    "INSERT INTO jobs (kind, video_id) VALUES ('download', ?) ON CONFLICT DO NOTHING RETURNING id",
+    "INSERT INTO jobs (kind, video_id, traceparent) VALUES ('download', ?, ?) ON CONFLICT DO NOTHING RETURNING id",
   )
-    .bind(videoId)
+    .bind(videoId, currentTraceparent())
     .first<{ id: number }>();
 
   if (!job) {

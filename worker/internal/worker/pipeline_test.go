@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/api"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/frames"
@@ -641,5 +642,112 @@ func TestDownloadRecordsItsSizeAndDurationOnASpan(t *testing.T) {
 	}
 	if attributes["crowdmon.fanout.segments"] != int64(3) {
 		t.Errorf("crowdmon.fanout.segments = %v, want 3", attributes["crowdmon.fanout.segments"])
+	}
+}
+
+// M9.2: a job carrying a stored traceparent opens its span as a child of it,
+// which is what joins this worker's spans onto the trace that started at
+// submit — there is no HTTP call between the two for header propagation to
+// ride, so the job row is the only thing carrying the context across.
+//
+// setStoredPropagator installs the same propagator telemetry.Setup does in
+// production and restores the package default on cleanup, since the global is
+// otherwise left however the previous test in this binary left it.
+func setStoredPropagator(t *testing.T) {
+	t.Helper()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator()) })
+}
+
+// recordingProvider installs a tracer provider that captures every span this
+// process opens for the rest of the test, and restores a fresh one on
+// cleanup so later tests do not inherit these recordings.
+func recordingProvider(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	spans := tracetest.NewSpanRecorder()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans)))
+	t.Cleanup(func() { otel.SetTracerProvider(sdktrace.NewTracerProvider()) })
+	return spans
+}
+
+// endedSpan finds the one recorded span with the given name. Every case below
+// expects the pipeline to have opened exactly one.
+func endedSpan(t *testing.T, spans *tracetest.SpanRecorder, name string) sdktrace.ReadOnlySpan {
+	t.Helper()
+	for _, span := range spans.Ended() {
+		if span.Name() == name {
+			return span
+		}
+	}
+	t.Fatalf("no %q span recorded among %d ended spans", name, len(spans.Ended()))
+	return nil
+}
+
+func TestAJobSpanContinuesItsStoredTraceparent(t *testing.T) {
+	setStoredPropagator(t)
+	spans := recordingProvider(t)
+
+	pipeline, _, _, _ := workingPipeline()
+	job := aJob()
+	// The example from the W3C trace context spec — nothing about it is
+	// specific to this worker, only its shape needs to be valid.
+	traceparent := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	job.Traceparent = &traceparent
+
+	if err := pipeline.Work(t.Context(), job); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	span := endedSpan(t, spans, "job.download")
+	if got := span.Parent().TraceID().String(); got != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Errorf("job.download's parent trace id = %s, want the stored traceparent's", got)
+	}
+	if got := span.Parent().SpanID().String(); got != "00f067aa0ba902b7" {
+		t.Errorf("job.download's parent span id = %s, want the stored traceparent's", got)
+	}
+	// The span's own trace id has to match too — a parent from one trace and
+	// a span minted into another would not be "one trace" by any definition.
+	if got := span.SpanContext().TraceID().String(); got != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Errorf("job.download's own trace id = %s, want the same trace as the stored traceparent", got)
+	}
+}
+
+func TestAMalformedTraceparentDegradesToARootSpanRatherThanFailingTheJob(t *testing.T) {
+	setStoredPropagator(t)
+	spans := recordingProvider(t)
+
+	pipeline, _, _, _ := workingPipeline()
+	job := aJob()
+	malformed := "not-a-w3c-traceparent"
+	job.Traceparent = &malformed
+
+	// The job must still run: a value that failed to parse is a reason to
+	// fall back to today's default, never a reason to fail the job — telemetry
+	// is not allowed that kind of leverage over the pipeline it observes.
+	if err := pipeline.Work(t.Context(), job); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	span := endedSpan(t, spans, "job.download")
+	if span.Parent().IsValid() {
+		t.Errorf("job.download has a parent %v from a malformed traceparent, want a root span", span.Parent())
+	}
+}
+
+func TestAJobWithNoStoredTraceparentIsARootSpan(t *testing.T) {
+	setStoredPropagator(t)
+	spans := recordingProvider(t)
+
+	pipeline, _, _, _ := workingPipeline()
+
+	// aJob() carries no Traceparent — the state of every job from before
+	// migration 0002 and every job submitted with tracing disabled.
+	if err := pipeline.Work(t.Context(), aJob()); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	span := endedSpan(t, spans, "job.download")
+	if span.Parent().IsValid() {
+		t.Errorf("job.download has a parent %v with no stored traceparent, want a root span", span.Parent())
 	}
 }

@@ -192,10 +192,19 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
             attempts     = attempts + 1,
             updated_at   = ?
       WHERE id = (SELECT id FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1)
-  RETURNING id, kind, video_id, attempts`,
+  RETURNING id, kind, video_id, attempts, traceparent`,
   )
     .bind(worker_id, claimedAt, claimedAt, claimedAt)
-    .first<{ id: number; kind: "download" | "chunk"; video_id: string; attempts: number }>();
+    .first<{
+      id: number;
+      kind: "download" | "chunk";
+      video_id: string;
+      attempts: number;
+      // Whatever the row that created this job stamped onto it (M9.2) — the
+      // submit request for a download, the fan-out request for a chunk.
+      // Genuinely null for a job with no stored context, not merely absent.
+      traceparent: string | null;
+    }>();
 
   if (!job) return c.body(null, 204);
 
@@ -236,6 +245,11 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
       video_id: job.video_id,
       video_url: video.url,
       attempts: job.attempts,
+      // Handed back as stored, not re-derived: the worker extracts it with
+      // `propagation.TraceContext` into the context its job spans start from,
+      // so a job whose row carries no context (or one that fails to parse)
+      // falls back to the root span it would have started anyway (M9.2).
+      traceparent: job.traceparent,
       ...(chunk ? { chunk } : {}),
     },
     200,
@@ -308,6 +322,17 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: B
   const segments = segmentsFor(duration_seconds);
   const at = now();
 
+  // The trace this request arrived inside (M9.2), read straight off the
+  // header rather than through `trace.getActiveSpan()`. The Go worker injects
+  // `traceparent` on its outbound call using whichever span was active when
+  // it fanned out — a child of the download job's own span, which was itself
+  // extracted from what submit stamped on that job's row — so forwarding the
+  // header verbatim is what carries the whole chain's trace id onto every
+  // chunk this call creates. Absent when tracing produced nothing upstream,
+  // in which case every chunk job gets the same null a pre-M9.2 row would
+  // have, and the worker's fallback (a root span) is unchanged.
+  const traceparent = c.req.header("traceparent") ?? null;
+
   // One batch, and that is a constraint M3.4 imposed on this endpoint rather
   // than a preference: the claim handler retires a chunk job whose `chunks`
   // row is missing as corruption, which is only correct if the pair can never
@@ -333,10 +358,10 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: B
   for (const segment of segments) {
     statements.push(
       c.env.DB.prepare(
-        `INSERT INTO jobs (kind, video_id)
-              SELECT 'chunk', ?
+        `INSERT INTO jobs (kind, video_id, traceparent)
+              SELECT 'chunk', ?, ?
                WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE video_id = ? AND segment_index = ?)`,
-      ).bind(job.video_id, job.video_id, segment.index),
+      ).bind(job.video_id, traceparent, job.video_id, segment.index),
       c.env.DB.prepare(
         `INSERT INTO chunks (job_id, video_id, segment_index, start_seconds, end_seconds)
               SELECT last_insert_rowid(), ?, ?, ?, ?
