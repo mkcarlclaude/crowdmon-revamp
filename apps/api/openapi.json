@@ -422,6 +422,94 @@
           "width",
           "height"
         ]
+      },
+      "ImageReport": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "images": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 12
+          }
+        },
+        "required": [
+          "video_id",
+          "images"
+        ]
+      },
+      "ReportImagesRequest": {
+        "type": "object",
+        "properties": {
+          "worker_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "carls-ubuntu-1"
+          },
+          "frames_extracted": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 60
+          },
+          "frames_kept": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 12
+          },
+          "dedup_threshold": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 8
+          },
+          "config_version": {
+            "type": "string",
+            "maxLength": 200,
+            "example": "2026-08-01-a"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImageFrame"
+            },
+            "maxItems": 120
+          }
+        },
+        "required": [
+          "worker_id",
+          "frames_extracted",
+          "frames_kept",
+          "dedup_threshold",
+          "config_version",
+          "images"
+        ]
+      },
+      "ImageFrame": {
+        "type": "object",
+        "properties": {
+          "r2_key": {
+            "type": "string",
+            "minLength": 1,
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "example": 42
+          },
+          "phash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$",
+            "example": "af3c9e1b2d4f7a80"
+          }
+        },
+        "required": [
+          "r2_key",
+          "timestamp_seconds",
+          "phash"
+        ]
       }
     },
     "parameters": {}
@@ -862,6 +950,69 @@
           },
           "400": {
             "description": "Malformed job id or body, or a job that is not a download",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No job with this id is held by this worker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/images": {
+      "post": {
+        "operationId": "reportImages",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Report the frames a chunk worker extracted, deduplicated and uploaded",
+        "description": "M8.4: writes the image rows and stamps the threshold and config version that produced them in the same batch, so a report can never leave the dataset with rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportImagesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rows exist, and chunks/jobs carry this run's provenance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed job id or body, frames_kept disagreeing with images.length, or a job that is not a chunk",
             "content": {
               "application/json": {
                 "schema": {

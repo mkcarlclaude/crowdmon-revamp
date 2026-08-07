@@ -383,3 +383,105 @@ func TestFanOutReportsARejectedFanOutAsPermanent(t *testing.T) {
 		t.Fatalf("FanOut() error = %v, want it distinct from a lost lease", err)
 	}
 }
+
+func anExtraction() queue.Extraction {
+	return queue.Extraction{
+		Extracted:      60,
+		Kept:           2,
+		DedupThreshold: 8,
+		ConfigVersion:  "extract=ffmpeg-fps1;phash=dct64;threshold=8",
+		Images: []queue.Image{
+			{Key: "frames/dQw4w9WgXcQ/00120.000.jpg", TimestampSeconds: 120, PHash: "af3c9e1b2d4f7a80"},
+			{Key: "frames/dQw4w9WgXcQ/00123.000.jpg", TimestampSeconds: 123, PHash: "00ff00ff00ff00ff"},
+		},
+	}
+}
+
+func TestReportImagesSendsTheRowsAndTheProvenanceTogether(t *testing.T) {
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "images": 2}`)
+	})
+
+	if err := newClient(t, server.URL).ReportImages(context.Background(), 9, anExtraction()); err != nil {
+		t.Fatalf("ReportImages() returned an unexpected error: %v", err)
+	}
+
+	if len(*seen) != 1 {
+		t.Fatalf("the API saw %d requests, want 1", len(*seen))
+	}
+	got := (*seen)[0]
+	if got.method != http.MethodPost || got.path != "/api/jobs/9/images" {
+		t.Errorf("ReportImages() sent %s %s", got.method, got.path)
+	}
+	// Writing rows is writing on a lease, exactly as fanning out is.
+	if got.body["worker_id"] != "worker-under-test" {
+		t.Errorf("body carried worker_id %v", got.body["worker_id"])
+	}
+	// M8.4: the threshold and the configuration travel with the rows they
+	// produced, in the same request, because the API writes them in one batch.
+	if got.body["dedup_threshold"] != float64(8) {
+		t.Errorf("body carried dedup_threshold %v", got.body["dedup_threshold"])
+	}
+	if got.body["config_version"] != "extract=ffmpeg-fps1;phash=dct64;threshold=8" {
+		t.Errorf("body carried config_version %v", got.body["config_version"])
+	}
+	if got.body["frames_extracted"] != float64(60) || got.body["frames_kept"] != float64(2) {
+		t.Errorf("body carried extracted=%v kept=%v, want 60 and 2",
+			got.body["frames_extracted"], got.body["frames_kept"])
+	}
+
+	images, ok := got.body["images"].([]any)
+	if !ok || len(images) != 2 {
+		t.Fatalf("body carried images %v, want 2 rows", got.body["images"])
+	}
+	first, _ := images[0].(map[string]any)
+	if first["r2_key"] != "frames/dQw4w9WgXcQ/00120.000.jpg" {
+		t.Errorf("first row's r2_key is %v", first["r2_key"])
+	}
+	// A whole number on the wire, not 120.00001: the float32 the generated
+	// type uses represents every second of a six-hour video exactly, and a
+	// timestamp that drifted would land the row beside its object rather than
+	// on it.
+	if first["timestamp_seconds"] != float64(120) {
+		t.Errorf("first row's timestamp_seconds is %v, want 120", first["timestamp_seconds"])
+	}
+	if first["phash"] != "af3c9e1b2d4f7a80" {
+		t.Errorf("first row's phash is %v", first["phash"])
+	}
+}
+
+func TestReportImagesReportsALostLease(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error": "no job with this id is held by this worker"}`)
+	})
+
+	err := newClient(t, server.URL).ReportImages(context.Background(), 9, anExtraction())
+
+	// The reaper took the chunk back while it was uploading. Same event, same
+	// error, same response: stop, and let whoever holds it now finish it.
+	if !errors.Is(err, queue.ErrLeaseLost) {
+		t.Fatalf("ReportImages() error = %v, want ErrLeaseLost", err)
+	}
+}
+
+func TestReportImagesReportsARefusedReportAsPermanent(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error": "frames_kept (3) must equal images.length (2)"}`)
+	})
+
+	err := newClient(t, server.URL).ReportImages(context.Background(), 9, anExtraction())
+
+	// A report the contract refuses is this worker's bug, and it is the same
+	// bug on the next attempt: counts that disagree, a phash that is not hex,
+	// a timestamp outside the segment. Retrying spends the ceiling to be told
+	// the same thing three times.
+	if !errors.Is(err, queue.ErrRejected) {
+		t.Fatalf("ReportImages() error = %v, want ErrRejected", err)
+	}
+	if errors.Is(err, queue.ErrLeaseLost) {
+		t.Fatalf("ReportImages() error = %v, want it distinct from a lost lease", err)
+	}
+}

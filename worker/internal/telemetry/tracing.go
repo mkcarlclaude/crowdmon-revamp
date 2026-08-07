@@ -1,11 +1,12 @@
 // Package telemetry wires this process into the observability spine M2 built:
-// spans over OTLP HTTP to the collector behind otlp.mkcarl.com, and logs that
-// carry the ids of the span they were emitted under.
+// spans over OTLP HTTP to the collector behind otlp.mkcarl.com, logs that
+// carry the ids of the span they were emitted under, and — as of M8.2 —
+// metrics counting frame extraction and dedup for chunk jobs.
 //
-// Both halves are set up here rather than at the call sites because both are
-// process-global — OTel's tracer provider and slog's default logger are single
-// values, and having two packages race to install them is how a worker ends up
-// exporting to nowhere.
+// All three are set up here rather than at the call sites because all three are
+// process-global — OTel's tracer, logger and meter providers are single
+// values, and having independent packages race to install them is how a worker
+// ends up exporting to nowhere.
 package telemetry
 
 import (
@@ -24,8 +25,9 @@ import (
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
 )
 
-// Setup installs the global tracer provider, logger provider and propagator,
-// and returns the shutdown that flushes whatever is still buffered in either.
+// Setup installs the global tracer provider, logger provider, meter provider
+// and propagator, and returns the shutdown that flushes whatever is still
+// buffered in any of them.
 //
 // The returned shutdown is always non-nil, including on the disabled path and
 // on error, so callers can defer it unconditionally instead of guarding every
@@ -64,11 +66,22 @@ func Setup(ctx context.Context, cfg config.Config) (func(context.Context) error,
 		return shutdownTracing, err
 	}
 
-	// Both flushed on the way out. A worker that exports both signals must
-	// not lose one because the other's Shutdown errored first — collecting
-	// rather than short-circuiting is what makes that true.
+	shutdownMetrics, err := setupMetrics(ctx, res, cfg)
+	if err != nil {
+		// Tracing and logs already installed successfully — their shutdowns
+		// still have to run on the way out even though metrics failed to set
+		// up, or a worker that fails only the metrics half loses trace and
+		// log export it never needed to lose.
+		return func(ctx context.Context) error {
+			return errors.Join(shutdownTracing(ctx), shutdownLogs(ctx))
+		}, err
+	}
+
+	// All three flushed on the way out. A worker that exports all three
+	// signals must not lose one because another's Shutdown errored first —
+	// collecting rather than short-circuiting is what makes that true.
 	return func(ctx context.Context) error {
-		return errors.Join(shutdownTracing(ctx), shutdownLogs(ctx))
+		return errors.Join(shutdownTracing(ctx), shutdownLogs(ctx), shutdownMetrics(ctx))
 	}, nil
 }
 

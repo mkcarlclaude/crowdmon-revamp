@@ -49,6 +49,35 @@ once, then let Terraform manage everything else.
    terraform plan
    ```
 
+## Minting the worker's R2 token (M8.3)
+
+The Go worker uploads extracted frames straight to R2 over the S3-compatible
+API (CONTEXT.md §2) — bytes never transit the Workers API, which is the whole
+point of using this API instead of an admin-only upload endpoint. Like the
+state bucket's token in Bootstrap step 2, this is a **manual dashboard step,
+not a Terraform resource**, and for the identical reason: an R2 API token is
+account-level credential material, not infrastructure that `terraform destroy`
+should ever be in the business of tearing down or `terraform apply` printing
+into a plan. Terraform still owns the bucket itself (`main.tf`'s
+`cloudflare_r2_bucket.frames`) — only the credential that lets a non-Cloudflare
+client authenticate to it is out of band.
+
+1. Cloudflare dashboard → R2 → Manage API Tokens → Create API Token.
+2. Permissions: **Object Read & Write**, scoped to the `crowdmon-frames` bucket
+   only — not account-wide, and not Admin Read & Write. The worker never lists
+   buckets or changes settings; it PUTs objects at deterministic keys
+   (`worker/internal/frames.Key`, CONTEXT.md §Q14) and nothing else. A wider
+   grant is a wider blast radius for a token that lives in a plaintext `.env`
+   file on a home box with no secrets manager.
+3. Copy the access key ID and secret into `deploy/homebox/.env` as
+   `CROWDMON_R2_ACCESS_KEY_ID` and `CROWDMON_R2_SECRET_ACCESS_KEY`, alongside
+   the account id as `CROWDMON_R2_ACCOUNT_ID`. See `.env.example` in that
+   directory for the full set and why each one fails closed if only some of
+   them are present.
+4. Restart the worker (`docker compose up -d` picks up a changed `.env`). It
+   uploads on the next chunk job it claims — there's nothing to apply here,
+   because nothing here is a Terraform resource.
+
 ## Handoff to wrangler
 
 `terraform apply` emits the IDs that `apps/api/wrangler.toml` cannot know until

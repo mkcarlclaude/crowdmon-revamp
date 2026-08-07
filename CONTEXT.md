@@ -199,6 +199,44 @@ Secondary benefit: it makes the Go worker genuinely substantial (concurrent extr
 hash, compare, upload) and gives OTel its first non-trivial signal — frames extracted
 vs kept, dedup ratio, hash-compare duration.
 
+**Amended in M8, which is where the above stopped being a sketch.** Five decisions
+locked while building extraction, each with what it rules out:
+
+*The hash is a DCT pHash, written by hand, no dependency.* 32x32 greyscale, DCT-II, the
+top-left 8x8 block with the DC term dropped, each of the remaining 63 coefficients
+against their median. Dropping DC is the load-bearing part: it carries overall
+brightness, so keeping it would make every hash track exposure and a scene that merely
+got darker would read as a new frame. An average hash was the cheaper option and loses
+for the same reason — gameplay footage is a static HUD over a moving scene, and the HUD
+dominates the mean.
+
+*The threshold is stamped on every row, not just configured.* 10 of 64 bits by default,
+`CROWDMON_DEDUP_THRESHOLD` to change it. Changing it does not re-deduplicate old videos,
+so a dataset that recorded only the current value would be an unrecorded mixture of
+regimes and no dedup ratio drawn from it would mean anything. The job additionally
+carries a `config_version` naming every setting that shaped its output — stated in
+words rather than hashed, because the operator reading it a year from now wants to know
+what the settings *were*, not that they differed from another opaque digest.
+
+*Extraction is 1 fps and that is not configurable.* It is baked into the timestamps, the
+R2 key format and the dedup's assumption that consecutive frames are a second apart. A
+second rate would make the dataset a mixture in a way `dedup_threshold` alone could not
+record, so if it ever changes it changes as a schema question, not a setting.
+
+*Frames go to a temp directory; only source videos get the volume.* The volume exists
+specifically so a video survives a container recreate (M7.1). Frames must not have that
+property — they are worthless the moment they are in R2 — and a leaked directory per
+chunk would fill the disk downloads need, surfacing several jobs later as a download
+failure with nothing pointing back here.
+
+*Metrics are real OTLP metrics on the Go side, unlike M6's answer on the Worker side.*
+That decision — "spans, not metrics" — was about `@microlabs/otel-cf-workers`, which
+exports traces only, so a counter had nowhere to go. The Go worker runs the full SDK and
+the home collector already had an OTLP metrics pipeline feeding Prometheus, so
+`frames.extracted`, `frames.kept`, `frames.dedup.ratio` and `chunk.duration` are
+instruments. None of them carries a video id: unbounded cardinality would add a
+Prometheus series per video, forever.
+
 ### Job granularity (Q13) — two-phase fan-out
 
 Job 1 downloads and probes the video, then enqueues N chunk jobs, one per 60s segment.

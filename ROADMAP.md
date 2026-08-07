@@ -628,26 +628,34 @@ the directory visibly exists. Verified the right way round: the volume came up
 *Done when:* images are in R2 and rows are in D1, visibly deduplicated.
 
 ### M8.1 — ffmpeg extraction
-- [ ] Extract at 1fps for the chunk's segment only
-- [ ] Frames written to a temporary working directory
-- [ ] Extraction duration and frame count recorded
+- [x] Extract at 1fps for the chunk's segment only
+- [x] Frames written to a temporary working directory
+- [x] Extraction duration and frame count recorded
 
 ### M8.2 — Perceptual-hash dedup
-- [ ] pHash each frame; drop frames within the Hamming threshold of the last kept frame
-- [ ] Threshold configurable, not hardcoded
-- [ ] Frames extracted, frames kept and dedup ratio emitted as metrics
+- [x] pHash each frame; drop frames within the Hamming threshold of the last kept frame
+- [x] Threshold configurable, not hardcoded
+- [x] Frames extracted, frames kept and dedup ratio emitted as metrics
 
 ### M8.3 — R2 upload
-- [ ] Deterministic keys from `(video_id, timestamp)` — overwrite rather than duplicate
-- [ ] Upload concurrency bounded
+- [x] Deterministic keys from `(video_id, timestamp)` — overwrite rather than duplicate
+- [x] Upload concurrency bounded
 - [ ] Verified: re-running a chunk does not inflate the dataset
 
+      Half proven. The D1 half is pinned by a test against a real database: the
+      same report replayed, and replayed again under a *changed* threshold,
+      updates its rows rather than adding any. The R2 half — that the second
+      PUT overwrites the first object rather than sitting beside it — follows
+      from the keys being deterministic and is not yet demonstrated against the
+      real bucket. It needs the acceptance run, and the R2 token that run needs
+      does not exist yet (infra/README.md).
+
 ### M8.4 — Image rows and threshold provenance
-- [ ] `images` rows carrying R2 key, phash, source video, timestamp
-- [ ] **The dedup threshold in force is stamped onto the rows it produced.** Changing
+- [x] `images` rows carrying R2 key, phash, source video, timestamp
+- [x] **The dedup threshold in force is stamped onto the rows it produced.** Changing
       the threshold later does not re-deduplicate old videos, so without this the
       dataset becomes an unrecorded mixture of regimes
-- [ ] Config version recorded on the job
+- [x] Config version recorded on the job
 
 ---
 

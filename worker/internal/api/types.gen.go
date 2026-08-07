@@ -242,6 +242,27 @@ type HeartbeatRequest struct {
 	WorkerId string `json:"worker_id"`
 }
 
+// ImageFrame defines model for ImageFrame.
+type ImageFrame struct {
+	// Phash Example: af3c9e1b2d4f7a80
+	Phash string `json:"phash"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// TimestampSeconds Example: 42
+	TimestampSeconds float32 `json:"timestamp_seconds"`
+}
+
+// ImageReport defines model for ImageReport.
+type ImageReport struct {
+	// Images Example: 12
+	Images int `json:"images"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
 // Job defines model for Job.
 type Job struct {
 	// Attempts Example: 1
@@ -272,6 +293,25 @@ type JobList struct {
 
 // JobStatus defines model for JobStatus.
 type JobStatus string
+
+// ReportImagesRequest defines model for ReportImagesRequest.
+type ReportImagesRequest struct {
+	// ConfigVersion Example: 2026-08-01-a
+	ConfigVersion string `json:"config_version"`
+
+	// DedupThreshold Example: 8
+	DedupThreshold int `json:"dedup_threshold"`
+
+	// FramesExtracted Example: 60
+	FramesExtracted int `json:"frames_extracted"`
+
+	// FramesKept Example: 12
+	FramesKept int          `json:"frames_kept"`
+	Images     []ImageFrame `json:"images"`
+
+	// WorkerId Example: carls-ubuntu-1
+	WorkerId string `json:"worker_id"`
+}
 
 // SubmitVideoRequest defines model for SubmitVideoRequest.
 type SubmitVideoRequest struct {
@@ -317,6 +357,9 @@ type FanOutJobJSONRequestBody = FanOutRequest
 
 // HeartbeatJobJSONRequestBody defines body for HeartbeatJob for application/json ContentType.
 type HeartbeatJobJSONRequestBody = HeartbeatRequest
+
+// ReportImagesJSONRequestBody defines body for ReportImages for application/json ContentType.
+type ReportImagesJSONRequestBody = ReportImagesRequest
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -491,6 +534,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/heartbeat (the `HeartbeatJob` operationId).
 	HeartbeatJob(ctx context.Context, id int, body HeartbeatJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportImagesWithBody Report the frames a chunk worker extracted, deduplicated and uploaded
+	//
+	// M8.4: writes the image rows and stamps the threshold and config version that produced them in the same batch, so a report can never leave the dataset with rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
+	ReportImagesWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportImages Report the frames a chunk worker extracted, deduplicated and uploaded
+	//
+	// M8.4: writes the image rows and stamps the threshold and config version that produced them in the same batch, so a report can never leave the dataset with rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
+	ReportImages(ctx context.Context, id int, body ReportImagesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Liveness and deployment identity
 	//
@@ -708,6 +769,44 @@ func (c *Client) HeartbeatJobWithBody(ctx context.Context, id int, contentType s
 // Corresponds with POST /api/jobs/{id}/heartbeat (the `HeartbeatJob` operationId).
 func (c *Client) HeartbeatJob(ctx context.Context, id int, body HeartbeatJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHeartbeatJobRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportImagesWithBody Report the frames a chunk worker extracted, deduplicated and uploaded
+//
+// M8.4: writes the image rows and stamps the threshold and config version that produced them in the same batch, so a report can never leave the dataset with rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
+func (c *Client) ReportImagesWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportImagesRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportImages Report the frames a chunk worker extracted, deduplicated and uploaded
+//
+// M8.4: writes the image rows and stamps the threshold and config version that produced them in the same batch, so a report can never leave the dataset with rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
+func (c *Client) ReportImages(ctx context.Context, id int, body ReportImagesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportImagesRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1047,6 +1146,53 @@ func NewHeartbeatJobRequestWithBody(server string, id int, contentType string, b
 	return req, nil
 }
 
+// NewReportImagesRequest calls the generic ReportImages builder with application/json body
+func NewReportImagesRequest(server string, id int, body ReportImagesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReportImagesRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewReportImagesRequestWithBody constructs an http.Request for the ReportImages method, with any body, and a specified content type
+func NewReportImagesRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/jobs/%s/images", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -1221,6 +1367,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/heartbeat (the `HeartbeatJob` operationId).
 	HeartbeatJobWithResponse(ctx context.Context, id int, body HeartbeatJobJSONRequestBody, reqEditors ...RequestEditorFn) (*HeartbeatJobResponse, error)
+
+	// ReportImagesWithBodyWithResponse Report the frames a chunk worker extracted, deduplicated and uploaded
+	//
+	// M8.4: writes the image rows and stamps the threshold and config version that produced them in the same batch, so a report can never leave the dataset with rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
+	ReportImagesWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportImagesResponse, error)
+
+	// ReportImagesWithResponse Report the frames a chunk worker extracted, deduplicated and uploaded
+	//
+	// M8.4: writes the image rows and stamps the threshold and config version that produced them in the same batch, so a report can never leave the dataset with rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
+	ReportImagesWithResponse(ctx context.Context, id int, body ReportImagesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportImagesResponse, error)
 
 	// GetHealthWithResponse Liveness and deployment identity
 	//
@@ -1636,6 +1800,61 @@ func (r HeartbeatJobResponse) ContentType() string {
 	return ""
 }
 
+type ReportImagesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ImageReport
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReportImagesResponse) GetJSON200() *ImageReport {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReportImagesResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReportImagesResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ReportImagesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportImagesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportImagesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReportImagesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1851,6 +2070,36 @@ func (c *ClientWithResponses) HeartbeatJobWithResponse(ctx context.Context, id i
 		return nil, err
 	}
 	return ParseHeartbeatJobResponse(rsp)
+}
+
+// ReportImagesWithBodyWithResponse Report the frames a chunk worker extracted, deduplicated and uploaded
+//
+// M8.4: writes the image rows and stamps the threshold and config version that produced them in the same batch, so a report can never leave the dataset with rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
+func (c *ClientWithResponses) ReportImagesWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportImagesResponse, error) {
+	rsp, err := c.ReportImagesWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportImagesResponse(rsp)
+}
+
+// ReportImagesWithResponse Report the frames a chunk worker extracted, deduplicated and uploaded
+//
+// M8.4: writes the image rows and stamps the threshold and config version that produced them in the same batch, so a report can never leave the dataset with rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
+func (c *ClientWithResponses) ReportImagesWithResponse(ctx context.Context, id int, body ReportImagesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportImagesResponse, error) {
+	rsp, err := c.ReportImages(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportImagesResponse(rsp)
 }
 
 // GetHealthWithResponse Liveness and deployment identity
@@ -2165,6 +2414,46 @@ func ParseHeartbeatJobResponse(rsp *http.Response) (*HeartbeatJobResponse, error
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportImagesResponse parses an HTTP response from a ReportImagesWithResponse call
+func ParseReportImagesResponse(rsp *http.Response) (*ReportImagesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportImagesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImageReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ErrorResponse

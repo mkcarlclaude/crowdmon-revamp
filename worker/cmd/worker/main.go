@@ -1,13 +1,16 @@
 // Command worker is the home-side extraction worker.
 //
 // It polls the queue, claims a job, holds the lease while it runs, and reports
-// the outcome. Since M7 the work is real: a download job fetches the video with
-// yt-dlp, measures it with ffprobe and asks the API to fan it out into 60s
-// chunk jobs. Frame extraction is M8 and slots into worker.Pipeline.
+// the outcome. Both phases of CONTEXT.md §Q13 are here: a download job fetches
+// the video with yt-dlp, measures it with ffprobe and asks the API to fan it
+// out into 60s chunk jobs (M7); a chunk job extracts its segment at 1fps,
+// drops the perceptual near-duplicates, uploads what survives to R2 and
+// reports the rows (M8).
 package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -15,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/frames"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/telemetry"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/video"
@@ -75,11 +79,47 @@ func run(ctx context.Context) error {
 		"source_ttl", cfg.SourceTTL,
 		"tracing", cfg.TracingEnabled(),
 		"logs_export", cfg.LogsEnabled(),
+		"metrics_export", cfg.MetricsEnabled(),
+		"r2_bucket", cfg.R2Bucket,
+		// The effective threshold, resolved through frames.Config rather than
+		// logged as the raw config value: a worker that left it unset would
+		// otherwise report "0", which is not the number it will deduplicate at.
+		"dedup_threshold", frames.Config{DedupThreshold: cfg.DedupThreshold}.Threshold(),
 	)
 
 	jobs, err := queue.New(cfg.APIBaseURL, cfg.WorkerID)
 	if err != nil {
 		return err
+	}
+
+	// Refused at startup rather than per job, and that is the whole point.
+	// Chunk work is most of the queue, and a worker that claimed chunk jobs it
+	// could not upload would burn each one's three attempts (CONTEXT.md §Q14)
+	// before retiring it as permanently failed — turning a missing environment
+	// variable into a video that can never be processed again. Failing here
+	// leaves every one of those jobs pending for a worker that is configured.
+	if !cfg.UploadsEnabled() {
+		return fmt.Errorf(
+			"CROWDMON_R2_ACCOUNT_ID, CROWDMON_R2_ACCESS_KEY_ID and " +
+				"CROWDMON_R2_SECRET_ACCESS_KEY are required: a worker that cannot " +
+				"upload frames would fail every chunk job it claimed")
+	}
+
+	s3Client, err := frames.NewClient(ctx, cfg.R2AccountID, cfg.R2AccessKeyID, cfg.R2SecretAccessKey)
+	if err != nil {
+		return err
+	}
+
+	// Nil when no metrics endpoint is configured, which the pipeline treats as
+	// "record nothing" rather than as a failure — the same shape tracing and
+	// log export already have.
+	var metrics worker.Metrics
+	if cfg.MetricsEnabled() {
+		frameMetrics, err := telemetry.NewFrameMetrics()
+		if err != nil {
+			return err
+		}
+		metrics = frameMetrics
 	}
 
 	// One store, shared by the downloader that writes into it and the affinity
@@ -93,6 +133,14 @@ func run(ctx context.Context) error {
 		Downloader: video.Downloader{Store: store},
 		Prober:     video.Prober{},
 		Queue:      jobs,
+		Extractor:  frames.Extractor{},
+		Deduper:    frames.Deduper{},
+		Uploader:   frames.Uploader{Client: s3Client, Bucket: cfg.R2Bucket},
+		// The same client as Queue. Two fields because they belong to the two
+		// job kinds, not because there are two connections.
+		Images:     jobs,
+		Extraction: frames.Config{DedupThreshold: cfg.DedupThreshold},
+		Metrics:    metrics,
 		Logger:     logger,
 	}
 
