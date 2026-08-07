@@ -4,6 +4,11 @@ crowdmon-nextjs/
 crowdmon-video-frame-extractor/
 crowdmon-extract-render/
 
+# Agent scratch worktrees. Each is a real checkout with its own .git file, so
+# `git add -A` from the repo root turns them into gitlink entries pointing at
+# branches that will not exist tomorrow.
+.claude/worktrees/
+
 # Node
 node_modules/
 dist/
