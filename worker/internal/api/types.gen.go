@@ -273,6 +273,9 @@ type Job struct {
 	Id   int     `json:"id"`
 	Kind JobKind `json:"kind"`
 
+	// Traceparent Example: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+	Traceparent *string `json:"traceparent"`
+
 	// VideoId Example: dQw4w9WgXcQ
 	VideoId string `json:"video_id"`
 

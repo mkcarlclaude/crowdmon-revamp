@@ -116,6 +116,17 @@ export const Job = z
     // Incremented on claim, so the worker can see how close this job is to the
     // ceiling that will retire it as failed.
     attempts: z.int().nonnegative().openapi({ example: 1 }),
+    // The trace context (M9.2) whoever wrote this row was inside, in W3C
+    // `traceparent` form. `.nullable()` rather than `.optional()`: the column
+    // is genuinely nullable in migration 0002 — every row from before it
+    // existed, and any job written with no active span — and the worker has
+    // to tell "there is no context" apart from "the field was left out",
+    // which an absent key and a JSON `null` cannot otherwise be told apart
+    // from in JavaScript. A null here means exactly what it means on a job
+    // with no `traceparent` today: start a root span.
+    traceparent: z.string().nullable().openapi({
+      example: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    }),
     // Present only for `chunk` jobs. Optional rather than a second response
     // schema per kind: one queue, one job type on the wire (CONTEXT.md §Q14),
     // and oapi-codegen renders this as a nil-able pointer the worker can

@@ -14,10 +14,15 @@ export async function seedVideo(id: string) {
     .run();
 }
 
-export async function seedDownloadJob(videoId: string) {
+/**
+ * `traceparent` defaults to null, matching every row from before migration
+ * 0002 and every submit that ran with no active span (M9.2) — the common
+ * case for the tests that do not care about it at all.
+ */
+export async function seedDownloadJob(videoId: string, traceparent: string | null = null) {
   await seedVideo(videoId);
-  await env.DB.prepare("INSERT INTO jobs (kind, video_id) VALUES ('download', ?)")
-    .bind(videoId)
+  await env.DB.prepare("INSERT INTO jobs (kind, video_id, traceparent) VALUES ('download', ?, ?)")
+    .bind(videoId, traceparent)
     .run();
 }
 

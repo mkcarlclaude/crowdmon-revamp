@@ -16,6 +16,9 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/api"
 )
 
@@ -67,12 +70,39 @@ func New(baseURL, workerID string) (*Client, error) {
 		return nil, errors.New("a worker id is required: it is what the lease is held by")
 	}
 
-	client, err := api.NewClient(baseURL, api.WithHTTPClient(&http.Client{Timeout: requestTimeout}))
+	client, err := api.NewClient(baseURL, api.WithHTTPClient(&http.Client{
+		Timeout:   requestTimeout,
+		Transport: tracingTransport{},
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("building the API client: %w", err)
 	}
 
 	return &Client{api: client, workerID: workerID}, nil
+}
+
+// tracingTransport injects the calling context's span onto every outbound
+// request as a W3C `traceparent` header, which is the other half of M9.2's
+// join: the fan-out call this produces arrives at the API already inside the
+// download job's trace, so the chunk jobs it stamps a traceparent onto
+// (jobs.ts's fanOutJobHandler) share that trace rather than starting new ones.
+//
+// A hand-rolled RoundTripper rather than otelhttp.NewTransport: the contrib
+// package instruments the request with its own span and metrics, which this
+// worker already gets one layer up — every call here runs inside a span
+// `pipeline.go` opened with `tracer().Start` — so the only thing missing at
+// this seam is the header, and injecting it is two lines against a dependency
+// already in go.mod.
+type tracingTransport struct{}
+
+func (tracingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// A no-op when req.Context() carries no span: TraceContext.Inject checks
+	// validity itself and leaves the header unset, which is exactly what a
+	// worker running with tracing disabled needs — every request it sends
+	// still goes out, just without the header a live trace would carry.
+	otel.GetTextMapPropagator().Inject(req.Context(), propagation.HeaderCarrier(req.Header))
+
+	return http.DefaultTransport.RoundTrip(req)
 }
 
 // Claim takes the next pending job, or returns nil when there is none.

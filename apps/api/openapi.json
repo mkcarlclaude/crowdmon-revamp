@@ -269,6 +269,11 @@
             "minimum": 0,
             "example": 1
           },
+          "traceparent": {
+            "type": "string",
+            "nullable": true,
+            "example": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+          },
           "chunk": {
             "$ref": "#/components/schemas/ChunkWork"
           }
@@ -278,7 +283,8 @@
           "kind",
           "video_id",
           "video_url",
-          "attempts"
+          "attempts",
+          "traceparent"
         ]
       },
       "ChunkWork": {

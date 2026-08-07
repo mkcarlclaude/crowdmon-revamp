@@ -1,0 +1,12 @@
+-- Carries a job's trace context through D1, which is the only thing that
+-- connects a submit to the claim that runs it (M9.2).
+--
+-- HTTP-level propagation cannot join these two spans on its own: the worker
+-- initiates the claim, minutes or hours after the submit request that created
+-- the job has already finished, so there is no synchronous call for a
+-- traceparent header to ride. The job row is what survives that gap.
+--
+-- Nullable, because every row that exists before this migration predates the
+-- column, and a job with nothing stored here must still be claimable — the
+-- worker falls back to starting a root trace, exactly as it does today.
+ALTER TABLE jobs ADD COLUMN traceparent TEXT;

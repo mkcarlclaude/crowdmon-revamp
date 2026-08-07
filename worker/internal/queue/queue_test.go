@@ -9,15 +9,20 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
 )
 
 // request is what the API saw. The seam is the wire, so the tests assert on
 // this and never on how the client got there.
 type request struct {
-	method string
-	path   string
-	body   map[string]any
+	method  string
+	path    string
+	body    map[string]any
+	headers http.Header
 }
 
 // serverRecording answers every request with the given handler and records
@@ -38,7 +43,7 @@ func serverRecording(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 				t.Errorf("request body is not JSON: %s", raw)
 			}
 		}
-		seen = append(seen, request{method: r.Method, path: r.URL.Path, body: body})
+		seen = append(seen, request{method: r.Method, path: r.URL.Path, body: body, headers: r.Header})
 
 		handler(w, r)
 	}))
@@ -343,6 +348,62 @@ func TestFanOutOmitsATitleItDoesNotHave(t *testing.T) {
 
 	if _, present := (*seen)[0].body["title"]; present {
 		t.Errorf("body carried a title key with no title to put in it: %v", (*seen)[0].body)
+	}
+}
+
+// The other half of M9.2's join: whatever span is active on the caller's
+// context has to reach the API as a `traceparent` header, or the API's own
+// span for this request — and the stored value it later stamps onto every
+// chunk job — would start a trace of its own instead of continuing this one.
+func TestFanOutCarriesTheActiveSpanAsATraceparentHeader(t *testing.T) {
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator()) })
+
+	provider := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "segments": 1, "created": 1}`)
+	})
+
+	ctx, span := provider.Tracer("test").Start(context.Background(), "video.fanout")
+	_, err := newClient(t, server.URL).FanOut(ctx, 7, queue.Probed{
+		DurationSeconds: 60, Width: 1920, Height: 1080,
+	})
+	span.End()
+	if err != nil {
+		t.Fatalf("FanOut() returned an unexpected error: %v", err)
+	}
+
+	want := "00-" + span.SpanContext().TraceID().String() + "-" + span.SpanContext().SpanID().String() + "-01"
+	if got := (*seen)[0].headers.Get("traceparent"); got != want {
+		t.Errorf("traceparent header = %q, want %q (the fan-out call's own active span)", got, want)
+	}
+}
+
+// With no active span, injection has nothing to write — the propagator's own
+// validity check is what makes this a no-op rather than a header carrying a
+// zero-valued trace id, which the API would otherwise store as if it meant
+// something.
+func TestFanOutSendsNoTraceparentWithoutAnActiveSpan(t *testing.T) {
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator()) })
+
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "segments": 1, "created": 1}`)
+	})
+
+	_, err := newClient(t, server.URL).FanOut(context.Background(), 7, queue.Probed{
+		DurationSeconds: 60, Width: 1920, Height: 1080,
+	})
+	if err != nil {
+		t.Fatalf("FanOut() returned an unexpected error: %v", err)
+	}
+
+	if got := (*seen)[0].headers.Get("traceparent"); got != "" {
+		t.Errorf("traceparent header = %q with no active span, want none sent at all", got)
 	}
 }
 

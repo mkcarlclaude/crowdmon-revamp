@@ -52,6 +52,24 @@ describe("POST /api/admin/videos", () => {
     expect(video).toEqual({ id: "dQw4w9WgXcQ", url: WATCH_URL });
   });
 
+  // app.request() here carries no active span — that only exists once
+  // index.ts's instrument() wraps the fetch handler, which this test
+  // deliberately bypasses (app.ts's own module comment explains why). The
+  // W3C serialisation itself is proven on real spans in
+  // test/node/traceparent.test.ts; what this pins down is the fallback: a
+  // download job created with no active span must still be claimable, the
+  // same as one from before migration 0002.
+  it("stamps no traceparent when nothing is tracing the request (M9.2)", async () => {
+    const res = await submit(WATCH_URL);
+    const body = (await res.json()) as { job_id: number };
+
+    const job = await env.DB.prepare("SELECT traceparent FROM jobs WHERE id = ?")
+      .bind(body.job_id)
+      .first<{ traceparent: string | null }>();
+
+    expect(job?.traceparent).toBeNull();
+  });
+
   it("rejects the same video a second time", async () => {
     await submit(WATCH_URL);
     const res = await submit(WATCH_URL);

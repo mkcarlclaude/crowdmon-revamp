@@ -31,12 +31,16 @@ async function seedHeldDownloadJob(videoId: string, workerId = "w1"): Promise<nu
   return row.id;
 }
 
-function fanOut(jobId: number, body: Record<string, unknown>) {
+function fanOut(
+  jobId: number,
+  body: Record<string, unknown>,
+  headers: Record<string, string> = {},
+) {
   return app.request(
     `/api/jobs/${jobId}/fanout`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
     },
     env,
@@ -243,5 +247,62 @@ describe("POST /api/jobs/{id}/fanout", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ video_id: "hhhhhhhhhhh", segments: 240, created: 240 });
+  });
+});
+
+describe("the trace context carried onto chunk jobs (M9.2)", () => {
+  it("stamps every chunk job with the fan-out request's own traceparent", async () => {
+    const jobId = await seedHeldDownloadJob("jjjjjjjjjjj");
+    const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+    const res = await fanOut(jobId, probed({ duration_seconds: 150 }), { traceparent });
+
+    expect(res.status).toBe(200);
+    const rows = await env.DB.prepare(
+      "SELECT traceparent FROM jobs WHERE kind = 'chunk' AND video_id = ?",
+    )
+      .bind("jjjjjjjjjjj")
+      .all<{ traceparent: string | null }>();
+
+    // Forwarded verbatim rather than re-derived: this request is already a
+    // child of the download job's own span (the Go worker injects
+    // traceparent on its outbound call), so every chunk job inherits the same
+    // trace id and the whole video ends up as one trace rather than several.
+    expect(rows.results).toHaveLength(3);
+    for (const row of rows.results) {
+      expect(row.traceparent).toBe(traceparent);
+    }
+  });
+
+  it("stamps null on chunk jobs when the fan-out call carried no traceparent", async () => {
+    const jobId = await seedHeldDownloadJob("kkkkkkkkkkk");
+
+    const res = await fanOut(jobId, probed({ duration_seconds: 60 }));
+
+    expect(res.status).toBe(200);
+    const row = await env.DB.prepare("SELECT traceparent FROM jobs WHERE kind = 'chunk'").first<{
+      traceparent: string | null;
+    }>();
+
+    // The same null a job predating migration 0002 carries — the worker's
+    // fallback (start a root span) does not need to distinguish the two.
+    expect(row?.traceparent).toBeNull();
+  });
+
+  it("does not restamp a chunk row that already exists on a re-run", async () => {
+    // A reaped fan-out re-runs (M7.3): the first call's traceparent must not
+    // be silently overwritten by whatever the retry happened to carry, since
+    // the row already reflects the trace that actually created it.
+    const jobId = await seedHeldDownloadJob("lllllllllll");
+    const first = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    const second = "00-11111111111111111111111111111111-2222222222222222-01";
+
+    await fanOut(jobId, probed({ duration_seconds: 60 }), { traceparent: first });
+    await fanOut(jobId, probed({ duration_seconds: 60 }), { traceparent: second });
+
+    const row = await env.DB.prepare("SELECT traceparent FROM jobs WHERE kind = 'chunk'").first<{
+      traceparent: string | null;
+    }>();
+    expect(row?.traceparent).toBe(first);
   });
 });
