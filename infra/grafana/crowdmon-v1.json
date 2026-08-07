@@ -1,0 +1,265 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "The home box's Prometheus (see CONTEXT.md §2) — remote-write target for Tempo's metrics-generator and scrape target for the Go worker's OTLP metrics via otel-collector's :8889 prometheus exporter.",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "12.3.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Job-pipeline health for crowdmon's v1 flywheel: queue depth, chunk-extraction duration, dedup ratio, and reaper-driven reclaim/failure rates. Business data (annotations, dataset counts, model versions) lives in D1 and is shown in /admin, not here — see CONTEXT.md §7's \"Do not rebuild Grafana inside /admin.\"",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Queue depth",
+      "description": "D1 job-table rows by status and kind, from the Go worker's `queue.depth` OTel gauge (queue_depth{status,kind} in Prometheus). Landed alongside this dashboard — see infra/grafana/README.md if this panel is empty, that is expected until the exporting change ships. A bad value is `pending` climbing while `claimed` stays flat: work is arriving faster than the one worker claims it, or the worker is down. `claimed` climbing without `done`/`failed` following is a stuck lease — the reaper (5-minute cron, CONTEXT.md §Q14) should be pulling those back to `pending` within roughly 7 minutes; if `claimed` keeps growing past that, the reaper itself is the thing that's broken.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": { "mode": "normal", "group": "A" },
+            "axisLabel": "rows"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum by (status, kind) (queue_depth)",
+          "legendFormat": "{{status}} / {{kind}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Chunk duration (job duration)",
+      "description": "p50 and p95 wall time to extract and dedup one 60s chunk, from the Go worker's chunk.duration histogram (chunk_duration_seconds_bucket). Percentiles rather than an average: M8's chunk-granularity design (CONTEXT.md §4) means most chunks are fast and a minority — a fast-motion scene, a contended box — run long, and an average would hide exactly the tail an operator needs to see. A bad value is p95 pulling away from p50: that is chunks intermittently stalling rather than the whole fleet slowing down together, which points at contention (the reaper competing with a live worker for the same box's 2 cores, per CONTEXT.md's \"parallelism argument is weak\" note) rather than a systemic regression.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "seconds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(chunk_duration_seconds_bucket{exported_job=\"crowdmon-worker\"}[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chunk_duration_seconds_bucket{exported_job=\"crowdmon-worker\"}[$__rate_interval])))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Dedup ratio",
+      "description": "Fraction of decoded frames kept after pHash dedup (CONTEXT.md §4), computed as rate(frames_kept_total)/rate(frames_extracted_total) — a rate-of-sums ratio over the raw frame counters, not an average of the frames.dedup.ratio histogram's per-chunk observations. The two differ in what they weight: this ratio is frame-weighted, so a 600-frame chunk influences it proportionally to a 3-frame one, which matches what actually drives R2 storage and labelling cost. The histogram's own mean (sum(rate(frames_dedup_ratio_sum))/sum(rate(frames_dedup_ratio_count))) is chunk-weighted instead — every chunk counts equally regardless of how many frames it held — which is the wrong denominator for a cost question, though it stays queryable in Prometheus directly if a chunk-weighted view is ever wanted. Expect roughly 30-60% (40-70% dropped, per §4's design estimate). A bad value is this ratio near 100% for a sustained period: either the threshold (CROWDMON_DEDUP_THRESHOLD) got set too loose, or the source video is unusually static and dedup is doing nothing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "kept / extracted"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "mean"] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(frames_kept_total{exported_job=\"crowdmon-worker\"}[$__rate_interval])) / sum(rate(frames_extracted_total{exported_job=\"crowdmon-worker\"}[$__rate_interval]))",
+          "legendFormat": "kept / extracted"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Reclaim rate",
+      "description": "Rate of job.reclaimed spans — leases the Workers Cron reaper found stale and handed back to `pending` with attempts still remaining (CONTEXT.md §Q14/M6 amendment). Built from Tempo span metrics (traces_spanmetrics_calls_total), not a Worker counter, because @microlabs/otel-cf-workers exports traces only; this is the reason the reaper emits one span per reclaimed job instead of one span per tick with a count, since only span *rate* becomes a Prometheus series here. A reclaim at low attempts is an ordinary crash or a transient network error the worker didn't recover from; a bad value is a sustained non-zero rate, which means jobs are dying mid-run repeatedly — check whether it is one poison video climbing toward MAX_ATTEMPTS (3) or many different jobs, which point at different causes (a bad video vs. a bad box).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "reclaims/s"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "max"] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"crowdmon-api\", span_name=\"job.reclaimed\"}[$__rate_interval]))",
+          "legendFormat": "reclaimed/s"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Failure rate",
+      "description": "Rate of job.retired spans — jobs the reaper found stale with no attempts left and moved straight to `failed` (CONTEXT.md §Q14/M6 amendment), from the same span-metrics source as reclaim rate. Read the gap before trusting this as \"all failures\": a worker that itself reports a terminal failure on the first attempt (deleted, private, geo-blocked, members-only, or age-gated video — the taxonomy in CONTEXT.md's M7 amendment to §Q13) calls POST /api/jobs/:id/complete, which returns 204 and leaves the span named, statused and dimensioned identically whether the job succeeded or failed — verified against apps/api/src/routes/jobs.ts, which never calls setAttribute or setStatus on that route. Those failures are invisible to Tempo's span metrics today and are not counted here; this panel is the reaper's failure count only, not the pipeline's. A bad value is any sustained non-zero rate — every retirement here is a video permanently lost from the dataset.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "retired/s"
+          },
+          "color": { "mode": "fixed", "fixedColor": "red" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "max"] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"crowdmon-api\", span_name=\"job.retired\"}[$__rate_interval]))",
+          "legendFormat": "retired/s"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["crowdmon"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Crowdmon — v1 system health",
+  "uid": "crowdmon-v1",
+  "version": 1,
+  "weekStart": ""
+}
