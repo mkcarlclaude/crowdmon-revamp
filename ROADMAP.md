@@ -640,15 +640,18 @@ the directory visibly exists. Verified the right way round: the volume came up
 ### M8.3 — R2 upload
 - [x] Deterministic keys from `(video_id, timestamp)` — overwrite rather than duplicate
 - [x] Upload concurrency bounded
-- [ ] Verified: re-running a chunk does not inflate the dataset
+- [x] Verified: re-running a chunk does not inflate the dataset
 
-      Half proven. The D1 half is pinned by a test against a real database: the
-      same report replayed, and replayed again under a *changed* threshold,
-      updates its rows rather than adding any. The R2 half — that the second
-      PUT overwrites the first object rather than sitting beside it — follows
-      from the keys being deterministic and is not yet demonstrated against the
-      real bucket. It needs the acceptance run, and the R2 token that run needs
-      does not exist yet (infra/README.md).
+      Proven in production on 2026-08-07, not merely by test. A chunk job was
+      forced back to `pending` in D1, re-claimed and re-run against the real
+      bucket; `images` held at exactly 674 rows and the objects were overwritten
+      at their existing keys. `attempts` went to 2, so the re-run genuinely
+      happened rather than being skipped.
+
+      Scope, stated because the acceptance criterion does not state it: this
+      covers a re-run under the *same* settings, which is the case the reaper
+      actually produces. A re-run whose dedup keeps a different set of
+      timestamps is a different question and is not what this box claims.
 
 ### M8.4 — Image rows and threshold provenance
 - [x] `images` rows carrying R2 key, phash, source video, timestamp
