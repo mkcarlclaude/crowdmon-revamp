@@ -462,7 +462,7 @@ was invisible before M6 because `Runner.Work` was nil and no job could be interr
 *Depends on: M4, M6.*
 *Done when:* submitting a URL produces chunk rows covering the whole video.
 
-**Built and applied to production 2026-08-07.** All four sub-milestones landed as one
+**Built, applied and verified against production 2026-08-07.** All four sub-milestones landed as one
 branch: the fan-out endpoint and the worker pipeline are one mechanism split across two
 runtimes, and shipping the halves separately would have meant a worker calling an endpoint
 that did not exist, or an endpoint nothing called.
@@ -480,7 +480,13 @@ trace `08737b124f04d6642570c4be1b81166c`:
 1475s divides into 24 full segments and a 35s tail, which is the rounding-up decision
 arriving in production. The second video was 11 seconds — one segment, `0-11` — which is
 the same decision at the other end: a video shorter than one segment still gets one, and
-its chunk stops at the duration rather than at 60.
+its chunk stops at the duration rather than at 60. A third, 69 minutes and 1.26GB, fanned
+out to 70 segments: 141 statements in one batch, committed in 383ms.
+
+**ffprobe read that third video as 4153s where yt-dlp's metadata said 4152.** It changed
+nothing here — both round to 70 segments — but it is the reason M7.2 measures the file
+rather than trusting what YouTube said about it. One second in the wrong place at a
+60-second boundary is a segment that does or does not exist.
 
 All three of M7.1's span attributes reached Tempo (`crowdmon.download.bytes`,
 `crowdmon.download.duration_ms`, `crowdmon.download.skipped=false`), as did the probe's
@@ -559,19 +565,44 @@ the directory visibly exists. Verified the right way round: the volume came up
       *identical*: `last_insert_rowid()` returns the previous insert's id when a statement
       inserted nothing, so a chunk insert running while its job insert was skipped would
       attach itself to another segment's job
-- [ ] Verified by forcing a reap mid-fan-out — **still open, and the reason is worth
-      keeping.** The window is narrower than the test needs. Phase one's real timing on
-      2026-08-07 was `source video ready` at 13:41:18.834, `fanned out` 302ms later, and
-      `job done` 171ms after that. A reap has to land in one of those two gaps for the
-      re-run to be the thing under test, and an attempt that watched for `fanned out` and
-      paused the container missed by 171ms — the job completed first, so there was
-      nothing stale to reap. Watching for `source video ready` instead gives a 473ms
-      window where both halves are informative: the first 302ms proves the re-run skips
-      the download, and the last 171ms proves that *plus* `created: 0`. The alternative
-      is to hand-write a stale lease onto the finished download job and let the real
-      reaper take it, which fakes only the timestamps — the reaper and the re-run are
-      both real. That is the inverse of what M6.4 rejected, where a seeded row would have
-      stood in for the reaper's input and proved nothing about a killed container
+- [x] Verified by forcing a reap mid-fan-out — **done 2026-08-07, and the two failed
+      attempts are the more useful half of the record.** A stale lease was written onto
+      the finished download job for a 69-minute video and the real Cron reaper took it:
+
+      | Time (UTC) | Event |
+      |---|---|
+      | 14:28:39 | `heartbeat_at` set 600s stale, `attempts=1` |
+      | 14:32:36.191 | reaper re-queued it; claimed at `attempts=2` |
+      | 14:32:36.192 | source ready, `download_ms=0` — **1ms after the claim** |
+      | 14:32:36.579 | fanned out: `segments:70`, **`created:0`** |
+
+      Afterwards: 70 chunk rows, 70 chunk jobs, zero orphans, job `done` at `attempts=2`,
+      and `crowdmon.download.skipped=true` on the span. The whole re-run took 388ms
+      against a video that had originally taken 235 seconds to fetch, which is the
+      argument for not re-downloading, in one number.
+
+- [x] **Two attempts to catch this from outside failed, and they failed structurally
+      rather than unluckily.** Both watched the container's log and paused it. Phase one's
+      real timing is `source video ready`, then `fanned out` ~302-383ms later, then
+      `job done` ~171ms after that. The first attempt watched for `fanned out` and missed
+      by 171ms. The second watched for `source video ready` and froze the process *during*
+      the completion call — the API had already committed `done`, and the worker surfaced
+      `context deadline exceeded` when it thawed. **Every log line is written after its
+      API call has already committed server-side**, so by the time `fanned out` is
+      visible, `complete` is already in flight. The window a reap has to land in contains
+      no externally observable event, on a video of any length. Hand-writing the
+      timestamps is not a shortcut around that — it is the only way in, and it fakes
+      strictly less than M6.4's rejected alternative did: there a seeded row would have
+      stood in for the reaper's *input*, proving nothing about a crash, whereas here the
+      reaper and the re-run are both real and only the thing that made the lease go stale
+      is synthetic
+
+- [x] **Found by the second failed attempt, and worth more than the attempt was:** the
+      "server committed, the client never heard" case happened for real. The API recorded
+      job 42 `done` while the frozen worker's 5s report timeout expired, so the worker
+      believed the call had failed. It logged a retryable poll error, backed off,
+      recovered and drained the 70 chunk jobs — no crash, no double report, no orphaned
+      lease. That path had never been exercised outside a unit test
 
 ### M7.4 — Affinity guard
 - [x] Chunk jobs assert the source file is present locally — after claiming, not before:
