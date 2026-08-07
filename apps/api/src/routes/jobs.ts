@@ -8,8 +8,10 @@ import {
   errorResponse,
   FanOutRequest,
   HeartbeatRequest,
+  ImageReport,
   Job,
   JobIdParam,
+  ReportImagesRequest,
   SEGMENT_SECONDS,
 } from "../schemas";
 
@@ -136,6 +138,33 @@ export const fanOutJobRoute = createRoute({
       content: { "application/json": { schema: ChunkFanOut } },
     },
     400: errorResponse("Malformed job id or body, or a job that is not a download"),
+    404: errorResponse("No job with this id is held by this worker"),
+  },
+});
+
+export const reportImagesRoute = createRoute({
+  method: "post",
+  path: "/api/jobs/{id}/images",
+  operationId: "reportImages",
+  tags: ["jobs"],
+  summary: "Report the frames a chunk worker extracted, deduplicated and uploaded",
+  description:
+    "M8.4: writes the image rows and stamps the threshold and config version that " +
+    "produced them in the same batch, so a report can never leave the dataset with " +
+    "rows nobody's provenance covers. Idempotent on (video_id, timestamp_seconds), " +
+    "so a chunk reaped mid-report re-runs without duplicating rows (CONTEXT.md §Q14).",
+  request: {
+    params: JobIdParam,
+    body: { content: { "application/json": { schema: ReportImagesRequest } }, required: true },
+  },
+  responses: {
+    200: {
+      description: "The rows exist, and chunks/jobs carry this run's provenance",
+      content: { "application/json": { schema: ImageReport } },
+    },
+    400: errorResponse(
+      "Malformed job id or body, frames_kept disagreeing with images.length, or a job that is not a chunk",
+    ),
     404: errorResponse("No job with this id is held by this worker"),
   },
 });
@@ -328,6 +357,131 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: B
   }
 
   return c.json({ video_id: job.video_id, segments: segments.length, created }, 200);
+};
+
+export const reportImagesHandler: RouteHandler<
+  typeof reportImagesRoute,
+  { Bindings: Bindings }
+> = async (c) => {
+  const { id } = c.req.valid("param");
+  const { worker_id, frames_extracted, frames_kept, dedup_threshold, config_version, images } =
+    c.req.valid("json");
+
+  // Checked before touching D1: it costs nothing to verify and a mismatch is
+  // always a worker bug, never a race with the reaper. Accepting it would put
+  // a dedup ratio in the metrics that no row in `images` backs up — the exact
+  // failure this field exists to catch.
+  if (frames_kept !== images.length) {
+    return c.json(
+      { error: `frames_kept (${frames_kept}) must equal images.length (${images.length})` },
+      400,
+    );
+  }
+
+  // One SELECT carries the lease check and the chunk's window in the same
+  // round trip — a LEFT JOIN rather than a second query, since the window is
+  // exactly what the validation below needs and this handler otherwise has no
+  // other reason to read `chunks` before the batch.
+  //
+  // `video_id` comes from here, not from the request body: a worker that only
+  // had to name a video could write image rows against a video it was never
+  // assigned, and nothing downstream would catch it before the dashboards did.
+  const job = await c.env.DB.prepare(
+    `SELECT jobs.kind AS kind, jobs.video_id AS video_id,
+            chunks.start_seconds AS start_seconds, chunks.end_seconds AS end_seconds
+       FROM jobs
+       LEFT JOIN chunks ON chunks.job_id = jobs.id
+      WHERE jobs.id = ? AND jobs.status = 'claimed' AND jobs.claimed_by = ?`,
+  )
+    .bind(id, worker_id)
+    .first<{
+      kind: "download" | "chunk";
+      video_id: string;
+      start_seconds: number | null;
+      end_seconds: number | null;
+    }>();
+
+  if (!job) return notHeldByCaller(c);
+
+  // 400, not 404, for the same reason fan-out answers a download-only request
+  // this way: the lease is real, the worker is who it says it is, and what is
+  // wrong is the request. A download job has no `chunks` row for this
+  // endpoint to update.
+  if (job.kind !== "chunk") {
+    return c.json({ error: "only a chunk job can report images" }, 400);
+  }
+
+  // `start_seconds`/`end_seconds` are only null if this chunk job's `chunks`
+  // row is missing — the corruption case M3.4's claim handler already retires
+  // before a worker could ever hold this job. Skipped rather than defended
+  // again here: there is no reachable path that reaches this line with a null
+  // window, and adding one would just be dead code pretending to be a check.
+  if (job.start_seconds != null && job.end_seconds != null) {
+    const outOfWindow = images.find(
+      (image) =>
+        image.timestamp_seconds < (job.start_seconds as number) ||
+        image.timestamp_seconds > (job.end_seconds as number),
+    );
+    if (outOfWindow) {
+      return c.json(
+        {
+          error:
+            `timestamp_seconds ${outOfWindow.timestamp_seconds} falls outside this chunk's ` +
+            `[${job.start_seconds}, ${job.end_seconds}] window`,
+        },
+        400,
+      );
+    }
+  }
+
+  const at = now();
+
+  // One batch, for the reason M8.4 exists at all: a report that wrote the
+  // image rows but failed to stamp `jobs.config_version` would leave rows in
+  // `images` whose `dedup_threshold` no `jobs` row corroborates, which is the
+  // provenance gap this milestone closes. D1 wraps a batch in a transaction,
+  // so the rows and the stamp land together or not at all.
+  //
+  // `ON CONFLICT(video_id, timestamp_seconds) DO UPDATE` rather than
+  // `DO NOTHING`: a reaped chunk re-runs (CONTEXT.md §Q14), and a re-run under
+  // a changed threshold must leave the row describing the regime that
+  // actually produced the object now sitting in R2 at that row's `r2_key` —
+  // `DO NOTHING` would leave the old threshold on a row whose bytes just
+  // changed underneath it.
+  //
+  // `idx_images_identity (video_id, timestamp_seconds)` is the conflict target,
+  // but `r2_key` also carries a `UNIQUE`. The two never fight: `r2_key` is
+  // derived deterministically from `(video_id, timestamp_seconds)` (migration
+  // 0001's comment on the column), so any two rows with the same key already
+  // have the same identity, and the conflict clause above fires first.
+  const statements = [
+    ...images.map((image) =>
+      c.env.DB.prepare(
+        `INSERT INTO images (r2_key, video_id, timestamp_seconds, phash, dedup_threshold)
+              VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(video_id, timestamp_seconds) DO UPDATE SET
+              r2_key          = excluded.r2_key,
+              phash           = excluded.phash,
+              dedup_threshold = excluded.dedup_threshold`,
+      ).bind(image.r2_key, job.video_id, image.timestamp_seconds, image.phash, dedup_threshold),
+    ),
+    c.env.DB.prepare(
+      "UPDATE chunks SET frames_extracted = ?, frames_kept = ? WHERE job_id = ?",
+    ).bind(frames_extracted, frames_kept, id),
+    c.env.DB.prepare("UPDATE jobs SET config_version = ?, updated_at = ? WHERE id = ?").bind(
+      config_version,
+      at,
+      id,
+    ),
+  ];
+
+  await c.env.DB.batch(statements);
+
+  // Every row in the request was written, insert or update — unlike fan-out's
+  // `created`, there is no "this already existed" outcome worth surfacing
+  // here, because an update still means this run's provenance is now correct
+  // on that row.
+  return c.json({ video_id: job.video_id, images: images.length }, 200);
 };
 
 export const completeJobHandler: RouteHandler<

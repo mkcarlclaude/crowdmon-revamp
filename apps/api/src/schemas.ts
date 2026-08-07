@@ -282,6 +282,69 @@ export const JobList = z
  * endpoint reads D1 on an interval from an open browser tab, so an unbounded
  * limit is a self-inflicted load generator.
  */
+/**
+ * One extracted-and-uploaded frame, as the chunk worker reports it.
+ *
+ * `phash` is constrained to exactly what the Go side writes — 16 lowercase hex
+ * characters, a 64-bit perceptual hash — rather than accepted as an opaque
+ * string. `idx_images_phash` (migration 0001) is only useful as a similarity
+ * index if every row in it is actually a hash; a column that took anything
+ * would let the index silently stop meaning anything and nothing downstream
+ * would fail loudly.
+ */
+const ImageFrame = z
+  .object({
+    r2_key: z.string().min(1).openapi({ example: "dQw4w9WgXcQ/0042.500.jpg" }),
+    timestamp_seconds: z.number().nonnegative().openapi({ example: 42.5 }),
+    phash: z
+      .string()
+      .regex(/^[0-9a-f]{16}$/)
+      .openapi({ example: "af3c9e1b2d4f7a80" }),
+  })
+  .openapi("ImageFrame");
+
+/**
+ * What a chunk worker reports after extracting, deduplicating and uploading
+ * its slice (M8.4).
+ *
+ * `worker_id` is here for the same reason it is on heartbeat, complete and
+ * fanout: this is a write on a lease, and a request that only knew a job id
+ * could write image rows against somebody else's job.
+ *
+ * `dedup_threshold` and `config_version` are not read back from `chunks` or
+ * `jobs` because the whole point is provenance *for this run* — the values
+ * the worker actually used, stamped onto the rows it actually wrote, so a
+ * threshold changed between runs cannot be attributed to the wrong images
+ * after the fact.
+ */
+export const ReportImagesRequest = z
+  .object({
+    worker_id: workerId,
+    frames_extracted: z.int().nonnegative().openapi({ example: 60 }),
+    frames_kept: z.int().nonnegative().openapi({ example: 12 }),
+    dedup_threshold: z.int().nonnegative().openapi({ example: 8 }),
+    config_version: z.string().max(200).openapi({ example: "2026-08-01-a" }),
+    // A 60s segment at 1fps cannot produce more than SEGMENT_SECONDS frames;
+    // doubled for headroom against a faster sample rate without leaving the
+    // bound open enough to be no bound at all. Mirrors MAX_VIDEO_SECONDS's
+    // reasoning for fan-out: the answer to an oversized report belongs here,
+    // as a 400 naming the limit, not in a batch that fails partway through
+    // after the worker already paid for the upload.
+    images: z.array(ImageFrame).max(SEGMENT_SECONDS * 2),
+  })
+  .openapi("ReportImagesRequest");
+
+/**
+ * Named `ImageReport`, not after the operation: oapi-codegen owns the
+ * `<OperationId>Response` namespace, and the operation is `reportImages`.
+ */
+export const ImageReport = z
+  .object({
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    images: z.int().nonnegative().openapi({ example: 12 }),
+  })
+  .openapi("ImageReport");
+
 export const JobListQuery = z.object({
   status: JobStatus.optional().openapi({ param: { name: "status", in: "query" } }),
   limit: z
