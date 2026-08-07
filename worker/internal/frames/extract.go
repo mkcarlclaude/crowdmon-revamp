@@ -16,6 +16,23 @@ import (
 // ffprobe and yt-dlp.
 const DefaultExtractBinary = "ffmpeg"
 
+// The two files ffmpeg writes per frame: the JPEG that goes to R2, and the
+// 32x32 greyscale thumbnail the hash reads (see Frame.HashPath). Fixed-width
+// counters, and the same counter in both, so a JPEG and its thumbnail are
+// paired by name rather than by position in a directory listing.
+const (
+	framePattern = "%06d.jpg"
+	hashPattern  = "hash-%06d.png"
+)
+
+// hashFileFor names the thumbnail beside a frame: `000007.jpg` becomes
+// `hash-000007.png`. Derived from the filename rather than from a loop index,
+// so the pairing survives ffmpeg starting its counter somewhere other than 1
+// or a directory listing arriving in an order nobody promised.
+func hashFileFor(frameName string) string {
+	return "hash-" + strings.TrimSuffix(frameName, ".jpg") + ".png"
+}
+
 // Segment is the slice of the source video a chunk job covers (CONTEXT.md
 // §Q13): StartSeconds inclusive, EndSeconds exclusive, both offsets into the
 // source video rather than into anything relative.
@@ -91,17 +108,34 @@ func (e Extractor) Extract(ctx context.Context, sourcePath string, seg Segment, 
 		// timeline. -t sidesteps the question by never naming an absolute time
 		// at all.
 		"-t", strconv.Itoa(seg.duration()),
-		// One frame per second (CONTEXT.md §Q12). Not configurable here: the
-		// rate is baked into how the returned timestamps are computed below,
-		// and frames.FPS is the one place that assumption is allowed to live.
-		"-vf", fmt.Sprintf("fps=%d", FPS),
+		// One decode, two outputs.
+		//
+		// `fps` runs once and `split` forks its result, so both branches are
+		// guaranteed to be the same frames — which is why this is a
+		// filter_complex with an explicit split rather than two `-vf` chains,
+		// one per output. Two independent `fps` filters would almost always
+		// decimate identically and would be silently wrong the one time they
+		// did not, pairing a frame with another frame's thumbnail.
+		//
+		// The second branch exists to keep the perceptual hash from decoding
+		// the full-size JPEG all over again just to average it down to 32x32:
+		// that is work this decode has already done. `flags=area` is the
+		// box/area filter, chosen to match what phash.go's own downscale did
+		// before this branch existed.
+		"-filter_complex", fmt.Sprintf(
+			"[0:v]fps=%d,split=2[full][small];[small]scale=%d:%d:flags=area,format=gray[grey]",
+			FPS, hashSize, hashSize),
+		"-map", "[full]",
 		// Quality 2: visually lossless-ish JPEG, the low end of ffmpeg's
 		// scale. The dataset's fidelity ceiling is this number, not the model
 		// training on it later, so it errs toward quality over the bytes it
 		// costs in R2.
 		"-q:v", "2",
 		"-f", "image2",
-		filepath.Join(dir, "%06d.jpg"),
+		filepath.Join(dir, framePattern),
+		"-map", "[grey]",
+		"-f", "image2",
+		filepath.Join(dir, hashPattern),
 	)
 	cmd.Stderr = &stderr
 
@@ -153,6 +187,17 @@ func readFrames(dir string, startSeconds int) ([]Frame, error) {
 
 	frames := make([]Frame, len(names))
 	for i, name := range names {
+		// Every JPEG must have its thumbnail. A missing one means the two
+		// branches of the filter graph disagreed about how many frames there
+		// were, which would otherwise surface far away as a hash computed from
+		// the wrong picture — or, worse, as a hash of the full-size JPEG via
+		// Frame.hashSource's fallback, silently putting one chunk in a
+		// different regime from every other.
+		hashPath := filepath.Join(dir, hashFileFor(name))
+		if _, err := os.Stat(hashPath); err != nil {
+			return nil, fmt.Errorf("frame %s has no %s thumbnail beside it: %w", name, hashPattern, err)
+		}
+
 		// The offset into the *source* video, not the index into this
 		// segment: fps=1 emits its first frame at the start of the trimmed
 		// stream regardless of where that stream began, so frame i lands at
@@ -162,6 +207,7 @@ func readFrames(dir string, startSeconds int) ([]Frame, error) {
 		frames[i] = Frame{
 			Path:             filepath.Join(dir, name),
 			TimestampSeconds: float64(startSeconds + i),
+			HashPath:         hashPath,
 		}
 	}
 

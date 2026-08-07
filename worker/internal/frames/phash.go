@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	_ "image/jpeg" // registers the JPEG decoder Decode below needs
+	_ "image/png"  // and the PNG decoder, for the 32x32 thumbnails (Frame.HashPath)
 	"math"
 	"os"
 	"sort"
@@ -24,12 +25,15 @@ const hashSize = 32
 // bit per coefficient, minus the DC term (see PHashImage).
 const blockSize = 8
 
-// PHash computes the 64-bit perceptual hash of the JPEG at path.
+// PHash computes the 64-bit perceptual hash of the image at path.
 //
-// It reads and decodes the whole file rather than streaming it, because the
-// downscale to hashSize needs every pixel once and a 1fps gameplay frame is a
-// few hundred KB — decoding it twice to avoid holding it in memory would cost
-// more than the memory saves.
+// In production that path is a 32x32 greyscale PNG that ffmpeg produced from
+// the same decode as the frame itself (Frame.HashPath), so the downscale below
+// has nothing left to do — each destination cell covers exactly one source
+// pixel and the box filter is the identity. It still runs, because a caller
+// handing this a full-size JPEG (the tests, or any frame with no thumbnail
+// beside it) must get the same answer it always did, and a resize that
+// special-cased its own no-op would be two code paths where one will do.
 func PHash(path string) (Hash, error) {
 	f, err := os.Open(path)
 	if err != nil {
