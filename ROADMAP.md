@@ -462,10 +462,37 @@ was invisible before M6 because `Runner.Work` was nil and no job could be interr
 *Depends on: M4, M6.*
 *Done when:* submitting a URL produces chunk rows covering the whole video.
 
-**Built 2026-08-07.** All four sub-milestones landed as one branch: the fan-out endpoint
-and the worker pipeline are one mechanism split across two runtimes, and shipping the
-halves separately would have meant a worker calling an endpoint that did not exist, or an
-endpoint nothing called.
+**Built and applied to production 2026-08-07.** All four sub-milestones landed as one
+branch: the fan-out endpoint and the worker pipeline are one mechanism split across two
+runtimes, and shipping the halves separately would have meant a worker calling an endpoint
+that did not exist, or an endpoint nothing called.
+
+Two videos went through the whole path. The first is the milestone's "done when" in full —
+trace `08737b124f04d6642570c4be1b81166c`:
+
+| Time (UTC) | Event |
+|---|---|
+| 12:23:33 | download job 14 claimed, `attempts=1` |
+| 12:24:59 | source ready — 441,397,007 bytes in 86,639ms |
+| 12:25:00 | probed 1475s at 1920x1080; fanned out **25 segments, 25 created** |
+| 12:25:03–08 | all 25 chunk jobs claimed, source present, done |
+
+1475s divides into 24 full segments and a 35s tail, which is the rounding-up decision
+arriving in production. The second video was 11 seconds — one segment, `0-11` — which is
+the same decision at the other end: a video shorter than one segment still gets one, and
+its chunk stops at the duration rather than at 60.
+
+All three of M7.1's span attributes reached Tempo (`crowdmon.download.bytes`,
+`crowdmon.download.duration_ms`, `crowdmon.download.skipped=false`), as did the probe's
+three and the fan-out's two.
+
+**The deployment order is load-bearing and is not obvious.** `docker compose pull` must
+run *before* the new compose file is in place, because Docker seeds a fresh named volume
+with the ownership of the directory it covers in the image. Bring the volume up against
+the old image — which has no `/home/worker/videos` — and it is created root-owned, after
+which the unprivileged process fails every download with permission denied on a box where
+the directory visibly exists. Verified the right way round: the volume came up
+`drwxr-xr-x worker worker` and writable.
 
 ### M7.1 — yt-dlp download
 - [x] Download to local disk with a TTL — `video.Store` owns the directory and the
@@ -532,7 +559,19 @@ endpoint nothing called.
       *identical*: `last_insert_rowid()` returns the previous insert's id when a statement
       inserted nothing, so a chunk insert running while its job insert was skipped would
       attach itself to another segment's job
-- [ ] Verified by forcing a reap mid-fan-out
+- [ ] Verified by forcing a reap mid-fan-out — **still open, and the reason is worth
+      keeping.** The window is narrower than the test needs. Phase one's real timing on
+      2026-08-07 was `source video ready` at 13:41:18.834, `fanned out` 302ms later, and
+      `job done` 171ms after that. A reap has to land in one of those two gaps for the
+      re-run to be the thing under test, and an attempt that watched for `fanned out` and
+      paused the container missed by 171ms — the job completed first, so there was
+      nothing stale to reap. Watching for `source video ready` instead gives a 473ms
+      window where both halves are informative: the first 302ms proves the re-run skips
+      the download, and the last 171ms proves that *plus* `created: 0`. The alternative
+      is to hand-write a stale lease onto the finished download job and let the real
+      reaper take it, which fakes only the timestamps — the reaper and the re-run are
+      both real. That is the inverse of what M6.4 rejected, where a seeded row would have
+      stood in for the reaper's input and proved nothing about a killed container
 
 ### M7.4 — Affinity guard
 - [x] Chunk jobs assert the source file is present locally — after claiming, not before:
