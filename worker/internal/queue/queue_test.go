@@ -285,3 +285,101 @@ func TestNewToleratesATrailingSlashOnTheBaseURL(t *testing.T) {
 		t.Errorf("claimed at %q, want /api/jobs/claim", got)
 	}
 }
+
+func TestFanOutSendsWhatWasProbed(t *testing.T) {
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "segments": 3, "created": 2}`)
+	})
+
+	result, err := newClient(t, server.URL).FanOut(context.Background(), 7, queue.Probed{
+		DurationSeconds: 150,
+		Width:           1920,
+		Height:          1080,
+		Title:           "Paimon compilation",
+	})
+	if err != nil {
+		t.Fatalf("FanOut() returned an unexpected error: %v", err)
+	}
+
+	if result.Segments != 3 || result.Created != 2 {
+		t.Errorf("FanOut() = %+v, want 3 segments and 2 created", result)
+	}
+
+	if len(*seen) != 1 {
+		t.Fatalf("the API saw %d requests, want 1", len(*seen))
+	}
+	got := (*seen)[0]
+	if got.method != http.MethodPost || got.path != "/api/jobs/7/fanout" {
+		t.Errorf("FanOut() sent %s %s", got.method, got.path)
+	}
+	// The lease holder, on the one endpoint that writes a video's whole work
+	// definition. Without it anything that knew a job id could enqueue chunks.
+	if got.body["worker_id"] != "worker-under-test" {
+		t.Errorf("body carried worker_id %v", got.body["worker_id"])
+	}
+	if got.body["duration_seconds"] != float64(150) {
+		t.Errorf("body carried duration_seconds %v", got.body["duration_seconds"])
+	}
+	if got.body["title"] != "Paimon compilation" {
+		t.Errorf("body carried title %v", got.body["title"])
+	}
+}
+
+func TestFanOutOmitsATitleItDoesNotHave(t *testing.T) {
+	// A skipped download (the file was already on disk) has no title to send,
+	// and sending an empty one would overwrite the title already stored.
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "segments": 1, "created": 0}`)
+	})
+
+	_, err := newClient(t, server.URL).FanOut(context.Background(), 7, queue.Probed{
+		DurationSeconds: 60, Width: 1920, Height: 1080,
+	})
+	if err != nil {
+		t.Fatalf("FanOut() returned an unexpected error: %v", err)
+	}
+
+	if _, present := (*seen)[0].body["title"]; present {
+		t.Errorf("body carried a title key with no title to put in it: %v", (*seen)[0].body)
+	}
+}
+
+func TestFanOutReportsALostLease(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error": "no job with this id is held by this worker"}`)
+	})
+
+	_, err := newClient(t, server.URL).FanOut(context.Background(), 7, queue.Probed{
+		DurationSeconds: 60, Width: 1920, Height: 1080,
+	})
+
+	// Same event as a heartbeat 404, so the same error: the reaper took the
+	// job back and this worker must stop rather than report an outcome.
+	if !errors.Is(err, queue.ErrLeaseLost) {
+		t.Fatalf("FanOut() error = %v, want ErrLeaseLost", err)
+	}
+}
+
+func TestFanOutReportsARejectedFanOutAsPermanent(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error": "invalid request"}`)
+	})
+
+	_, err := newClient(t, server.URL).FanOut(context.Background(), 7, queue.Probed{
+		DurationSeconds: 9 * 60 * 60, Width: 1920, Height: 1080,
+	})
+
+	// A video the contract will not accept — too long, or a resolution of zero
+	// — is rejected the same way on every attempt. Retried it would burn the
+	// ceiling and re-download several gigabytes each time.
+	if !errors.Is(err, queue.ErrRejected) {
+		t.Fatalf("FanOut() error = %v, want ErrRejected", err)
+	}
+	if errors.Is(err, queue.ErrLeaseLost) {
+		t.Fatalf("FanOut() error = %v, want it distinct from a lost lease", err)
+	}
+}

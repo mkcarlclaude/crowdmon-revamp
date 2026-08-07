@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -128,16 +129,18 @@ func TestRunnerCompletesAClaimedJob(t *testing.T) {
 	}
 }
 
-// Work that fails must still close the lease. A worker that just stopped
+// Work that fails terminally must close the lease. A worker that just stopped
 // would leave the row `claimed` until the reaper timed it out, and the
 // failure reason — the thing M6.1 reads to tell a deleted video from a
 // geo-block — would never be recorded at all.
-func TestRunnerReportsFailedWorkRatherThanAbandoningIt(t *testing.T) {
+func TestRunnerReportsTerminallyFailedWorkRatherThanAbandoningIt(t *testing.T) {
 	q := &fakeQueue{job: aJob()}
 	runner := worker.Runner{
 		Queue:  q,
 		Logger: quietLogger(),
-		Work:   func(context.Context, *api.Job) error { return errors.New("video unavailable") },
+		Work: func(context.Context, *api.Job) error {
+			return worker.Terminal(errors.New("video unavailable"))
+		},
 	}
 
 	found, err := runner.PollOnce(context.Background())
@@ -147,8 +150,58 @@ func TestRunnerReportsFailedWorkRatherThanAbandoningIt(t *testing.T) {
 	if !found {
 		t.Error("PollOnce() reported no work after claiming a job that then failed")
 	}
-	if q.cause == nil || q.cause.Error() != "video unavailable" {
+	if q.cause == nil || !strings.Contains(q.cause.Error(), "video unavailable") {
 		t.Errorf("completed with cause %v, want the work's own error", q.cause)
+	}
+}
+
+// The other half of the sorting M6.1 deferred to here: a failure that says
+// nothing about the video is left `claimed` for the reaper to hand back.
+//
+// Reporting it would retire the job on the first report — `complete` with a
+// cause is terminal — so one timed-out fetch would permanently burn a video
+// that has nothing wrong with it. Leaving it costs a lease window and the
+// attempt already spent on the claim, which is the same deal a crash gets.
+func TestRunnerLeavesARetryableFailureToTheReaper(t *testing.T) {
+	q := &fakeQueue{job: aJob()}
+	runner := worker.Runner{
+		Queue:  q,
+		Logger: quietLogger(),
+		Work: func(context.Context, *api.Job) error {
+			return errors.New("unable to download video data: timed out")
+		},
+	}
+
+	found, err := runner.PollOnce(context.Background())
+	if err != nil {
+		t.Fatalf("PollOnce() returned an unexpected error: %v", err)
+	}
+	if !found {
+		t.Error("PollOnce() reported no work after claiming a job that then failed")
+	}
+	if q.completed {
+		t.Errorf("the job was retired with cause %v; a retryable failure must not be terminal", q.cause)
+	}
+}
+
+// Terminality survives being wrapped on the way up: the work that decides a
+// failure is permanent is several frames below the one that reports it, and
+// every frame in between annotates the error.
+func TestRunnerSeesTerminalityThroughWrapping(t *testing.T) {
+	q := &fakeQueue{job: aJob()}
+	runner := worker.Runner{
+		Queue:  q,
+		Logger: quietLogger(),
+		Work: func(context.Context, *api.Job) error {
+			return fmt.Errorf("downloading: %w", worker.Terminal(errors.New("Private video")))
+		},
+	}
+
+	if _, err := runner.PollOnce(context.Background()); err != nil {
+		t.Fatalf("PollOnce() returned an unexpected error: %v", err)
+	}
+	if !q.completed {
+		t.Fatal("a terminal failure wrapped by its caller was not reported")
 	}
 }
 
@@ -381,9 +434,10 @@ func TestRunnerLeavesWorkInterruptedByShutdownToTheReaper(t *testing.T) {
 }
 
 // The same error shape, but nothing is shutting down: the work itself gave up.
-// That is a real failure and has to be reported, or the distinction above
-// becomes a way to swallow every cancellation the pipeline produces.
-func TestRunnerReportsACancellationThatIsNotAShutdown(t *testing.T) {
+// It is left for the reaper like any other retryable failure — a step that
+// timed out is the definition of one — and, crucially, not reported as a
+// success. Reporting `done` here would mark a video processed that never was.
+func TestRunnerDoesNotReportACancellationThatIsNotAShutdown(t *testing.T) {
 	q := &fakeQueue{job: aJob()}
 
 	runner := worker.Runner{
@@ -398,42 +452,7 @@ func TestRunnerReportsACancellationThatIsNotAShutdown(t *testing.T) {
 		t.Fatalf("PollOnce() returned an unexpected error: %v", err)
 	}
 
-	if !q.completed {
-		t.Fatal("a job that failed on its own was never reported")
-	}
-	if q.cause == nil {
-		t.Error("the job was reported as a success")
-	}
-}
-
-func TestSimulatedWorkRunsForTheConfiguredDuration(t *testing.T) {
-	work := worker.SimulatedWork(30 * time.Millisecond)
-
-	start := time.Now()
-	if err := work(context.Background(), aJob()); err != nil {
-		t.Fatalf("SimulatedWork() returned an unexpected error: %v", err)
-	}
-
-	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
-		t.Errorf("returned after %v, want at least 30ms", elapsed)
-	}
-}
-
-// The whole point of M6.4 is killing this mid-flight, so it has to stop when
-// the context does rather than hold the process open for its full duration.
-func TestSimulatedWorkStopsWhenTheContextIsCancelled(t *testing.T) {
-	work := worker.SimulatedWork(time.Hour)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	start := time.Now()
-	err := work(ctx, aJob())
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("err = %v, want context.Canceled", err)
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("took %v to notice cancellation", elapsed)
+	if q.completed {
+		t.Fatalf("the job was reported with cause %v, want it left for the reaper", q.cause)
 	}
 }

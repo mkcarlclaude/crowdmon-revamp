@@ -181,8 +181,66 @@ without distinguishing "no such job" from "not yours any more": the worker's res
 to stop, either way.
 
 Claiming a job whose video or chunk row is missing retires it as `failed` and answers
-204. Fan-out is not transactional, so a chunk job with no `chunks` row is reachable in
-production; re-queueing it would hand the same broken job out on every subsequent poll.
+204. A chunk job with no `chunks` row would be corruption; the fan-out below is what
+guarantees it cannot be produced, and re-queueing such a job would hand the same broken
+row out on every subsequent poll.
+
+## Phase one: download and fan-out
+
+A video is two phases (CONTEXT.md §Q13). The download job fetches the source with
+yt-dlp, measures the file with ffprobe, and posts what it found to
+`POST /api/jobs/{id}/fanout`, which enqueues one chunk job per 60s segment. The last
+segment stops at the duration rather than running past the end of the file, and the
+duration is rounded *up* from ffprobe's float — rounding down would leave the tail of
+the video in no chunk at all.
+
+**The enqueue is the API's, not the worker's, because it has to be one transaction.**
+Each segment is a `jobs` insert and a `chunks` insert guarded by the same
+`NOT EXISTS (video_id, segment_index)`, run in one D1 `batch()`. Two consequences worth
+keeping in view:
+
+- **The guards must match.** `last_insert_rowid()` returns the *previous* insert's id
+  when a statement inserted nothing, so a chunk insert that ran while its job insert was
+  skipped would attach itself to another segment's job.
+- **Segments are statements, so video length has a ceiling.** Six hours, enforced by the
+  request schema, which is where the answer is a 400 naming the limit rather than a
+  batch that fails halfway through.
+
+Re-running is free. A download reaped anywhere in phase one — before the fan-out, or
+after it but before the job was reported — comes back, finds its video already on disk,
+and re-fans-out to `created: 0`. The response separates `segments` (what the video has)
+from `created` (what this call inserted), so that is visible rather than inferred. The
+per-segment guards make a genuinely partial fan-out survivable too, though the single
+batch means production should never produce one; the test that seeds one exists because
+"should never" is not a mechanism.
+
+One thing the guards deliberately do *not* do: re-tile a video whose duration came back
+different. Segments are keyed on `(video_id, segment_index)` alone, so existing rows keep
+their boundaries. The source file is reused rather than re-fetched, so a second probe
+measures the same file and cannot disagree — the case only arises if somebody deletes the
+file between attempts, and the honest repair for that is to delete the video's rows.
+
+**Chunk jobs read the file from local disk, so they must run on the box that downloaded
+it.** That is free with one worker and not free with two. A chunk job checks the source
+is present before doing anything else — that check is the whole of a chunk job until M8
+adds extraction — and fails terminally if it is missing, naming the constraint. Half a
+chunk's frames are worse than none, because the rows they produce look like a complete
+segment. The check happens after the claim, not before it: a worker cannot inspect a job
+it has not been given, and the claim endpoint has no idea which box holds which file. The
+cost is one spent attempt per misplaced chunk, paid only in a two-worker world that does
+not exist yet. Source videos live in `CROWDMON_WORK_DIR` behind a named volume, and are
+pruned past `CROWDMON_SOURCE_TTL` (6h) at the start of each download: the thing that
+fills the disk pays for the cleanup.
+
+**Failures are sorted into terminal and retryable, and the default is retryable.**
+`complete` with a cause retires a row on the first report, so only failures a retry
+cannot fix are reported: deleted, private, geo-blocked, members-only and age-gated
+videos, a fan-out the contract refuses, a chunk whose source is elsewhere. Everything
+else — a timeout, a 500, a dropped fragment — is left `claimed` for the reaper, which
+costs a lease window and the attempt already spent on the claim. A wrongly retryable
+failure costs seven minutes; a wrongly terminal one burns a video permanently. One
+pattern is deliberately kept off the terminal list: `Sign in to confirm you're not a
+bot` reads exactly like the age gate and is about the box's address, not the video.
 
 ## Recovery from a crash
 
@@ -208,10 +266,11 @@ Three details are easy to get wrong and are pinned by tests:
 
 - **`attempts` counts claims, not reaps.** The reaper never increments it. If it did,
   one crash would spend two attempts and the ceiling would mean half what it says.
-- **A graceful shutdown is not a failure.** Work interrupted by SIGTERM returns
-  `context.Canceled`, and reporting that through `complete` would write `status='failed'`
-  — which is terminal, so an ordinary restart would permanently kill whatever was in
-  flight. The worker leaves the row `claimed` and lets the reaper hand it back instead.
+- **A graceful shutdown is not a failure, and neither is a timeout.** Reporting either
+  through `complete` would write `status='failed'` — which is terminal, so an ordinary
+  restart would permanently kill whatever was in flight. The worker reports only
+  outcomes: a job that finished, and a job that can never finish (M7.1). Everything else
+  is left `claimed` for the reaper to hand back.
 - **The schedule is Terraform's, the handler is wrangler's.** `infra/reaper.tf` owns the
   cron because it outlives a deploy. That is only safe while `[triggers]` is absent from
   `wrangler.toml`: wrangler skips the schedules API entirely when the table is missing,
@@ -229,14 +288,10 @@ the job returned to `pending` 2m31s later with `attempts` unchanged at 1. Two mo
 spent attempts 2 and 3, and the third retired it as `failed`. Both span names reached
 Tempo and both appear in Prometheus as `traces_spanmetrics_calls_total{span_name=...}`.
 
-**Repeating it by hand.** Set `CROWDMON_SIMULATED_WORK=5m` in `~/crowdmon/.env` on the
-home box — until M7 lands extraction there is no real work to interrupt, and a job closes
-in about 90ms. Three things will waste your afternoon if you skip them:
+**Repeating it by hand.** Submit a video and kill the worker while the download is
+running — since M7 that is a real job with a real middle, so `CROWDMON_SIMULATED_WORK`
+is gone. Two things will waste your afternoon if you skip them:
 
-- **`docker compose up -d --force-recreate`, not `restart`.** `env_file` is read when the
-  container is created, so a plain restart runs with the old environment and jobs keep
-  closing in 0s. `docker inspect crowdmon-worker --format '{{json .Config.Env}}'` is the
-  check; the startup log line `simulating work instead of running jobs` is the proof.
 - **Wait for the claim before killing.** The poll backoff reaches 120s when idle, so a
   job submitted a minute before the kill will not have been claimed — and a kill with no
   lease held leaves nothing for the reaper to find. Watch for `claimed a job` in the
@@ -247,14 +302,13 @@ in about 90ms. Three things will waste your afternoon if you skip them:
 
 Then expect: the row sits `claimed` with its heartbeat age climbing, returns to `pending`
 within about seven minutes with `attempts` one higher, and past `MAX_ATTEMPTS` lands on
-`failed` and stops being handed out. Unset the variable when you are done.
+`failed` and stops being handed out.
 
 ## The worker
 
-`worker/` is a Go binary that polls the queue and runs jobs. As of M4 it runs no jobs:
-it claims one, holds the lease, and reports it done without touching the video, which is
-enough to prove the lifecycle closes end to end. Extraction slots into `Runner.Work` in
-M7.
+`worker/` is a Go binary that polls the queue and runs jobs. Since M7 the work is real:
+`worker.Pipeline` runs a download job — fetch, probe, fan out — and checks a chunk job's
+source is on this box. Frame extraction is M8 and lands in the same place.
 
 Polling is 30s idle, doubling to a 120s cap on repeated empty polls, immediate re-poll
 after finding work — CONTEXT.md §Q20. That is ~1,000 requests a day against a

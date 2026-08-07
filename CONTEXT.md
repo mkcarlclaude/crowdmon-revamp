@@ -217,6 +217,39 @@ must run on the box that downloaded it. Free with one worker; not free if a seco
 appears. Source video stays on home disk with a TTL — uploading it to R2 would cost
 far more storage than the frames.
 
+**Amended in M7, which is where the fan-out stopped being a sketch.** Four decisions, each
+with what it rules out:
+
+*The enqueue is an API endpoint, not the worker writing rows.* `POST /api/jobs/{id}/fanout`
+takes what ffprobe measured and inserts every segment's `jobs` row and `chunks` row in one
+D1 `batch()`. A worker making one call per segment could not be transactional, and the
+claim handler (M3.4) retires a chunk job whose `chunks` row is missing as corruption — a
+half-written pair would destroy a segment permanently, because `idx_chunks_identity` then
+stops the re-run from recreating it.
+
+*Idempotency is a `NOT EXISTS` guard repeated on both statements of a pair, not an
+`ON CONFLICT`.* `ON CONFLICT DO NOTHING` on the chunk insert would leave the job row it was
+paired with already inserted — an orphan, which is the corruption above. The guards must be
+identical because `last_insert_rowid()` returns the *previous* insert's id when a statement
+inserted nothing: a chunk insert running while its job insert was skipped would attach
+itself to another segment's job.
+
+*Video length has a ceiling, and it is a schema bound.* Segments are statements, so a
+six-hour video is 721 of them in one batch. The limit is enforced by `FanOutRequest`, where
+the answer is a 400 naming it, rather than discovered as a batch that fails halfway. A test
+runs a four-hour fan-out for real, because the ceiling is worth knowing before production
+finds it.
+
+*Failures are sorted at the worker, and the default is retryable.* This is the taxonomy §Q14
+deferred from M6. `worker.Terminal` marks what a retry cannot fix — deleted, private,
+geo-blocked, members-only and age-gated videos, a fan-out the contract refuses, a chunk
+whose source is on another box — and only those are reported through `complete`, which
+retires the row on the first report. Everything else is left `claimed` for the reaper: it
+costs a lease window plus a cron tick and the attempt already spent on the claim, against a
+wrongly terminal classification burning a video permanently. `Sign in to confirm you're not
+a bot` is deliberately not on the list — it reads exactly like the age gate and is about the
+box's address, not the video.
+
 ### Job claim and recovery (Q14) — heartbeat lease
 
 Cloudflare Queues requires the Workers Paid plan, so the queue is a D1 table. Claiming
@@ -264,7 +297,8 @@ re-enters `pending`, so it is the only place the ceiling is enforced. A worker t
 the poison cases this milestone names (deleted, geo-blocked, malformed), where a retry
 cannot help. Classifying reported failures into retryable and terminal belongs to M7.1,
 which is where failures with a shape to classify first exist. Building the mechanism
-sooner would be a taxonomy with nothing in it.
+sooner would be a taxonomy with nothing in it. **M7.1 built it, and inverted the default:
+a failure is reported only if something marked it terminal — see the §Q13 amendment.**
 
 *Terraform owns the cron schedule; wrangler owns the handler.* The §3 split, applied to a
 resource that sits on the script — and it holds only because wrangler PUTs `/schedules`
@@ -284,7 +318,8 @@ explicitly instead of inheriting the default, because the provider otherwise pla
 attribute to null on every run and the API rejects that, which turns any unrelated apply
 into a failed one.
 
-**Fan-out must be transactional, which is a constraint M3.4 imposes on M7.2.** The claim
+**Fan-out must be transactional, which is a constraint M3.4 imposes on M7.2, and which
+M7.2 discharged** — see the M7 amendment under §Q13 for how. The claim
 endpoint retires a chunk job whose `chunks` row is missing as terminally `failed`, on the
 grounds that the row's absence is corruption. That is only true if the job and its chunk
 row are inserted in one `batch()`. Insert them separately and a claim landing in the gap

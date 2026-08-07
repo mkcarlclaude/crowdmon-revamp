@@ -154,6 +154,18 @@ type AdminJob struct {
 	VideoUrl string `json:"video_url"`
 }
 
+// ChunkFanOut defines model for ChunkFanOut.
+type ChunkFanOut struct {
+	// Created Example: 20
+	Created int `json:"created"`
+
+	// Segments Example: 20
+	Segments int `json:"segments"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
 // ChunkWork defines model for ChunkWork.
 type ChunkWork struct {
 	// EndSeconds Example: 60
@@ -190,6 +202,24 @@ type ErrorResponse struct {
 	// Error Example: invalid request
 	Error  string             `json:"error"`
 	Issues *[]ValidationIssue `json:"issues,omitempty"`
+}
+
+// FanOutRequest defines model for FanOutRequest.
+type FanOutRequest struct {
+	// DurationSeconds Example: 1200
+	DurationSeconds int `json:"duration_seconds"`
+
+	// Height Example: 1080
+	Height int `json:"height"`
+
+	// Title Example: Genshin Impact — Paimon
+	Title *string `json:"title,omitempty"`
+
+	// Width Example: 1920
+	Width int `json:"width"`
+
+	// WorkerId Example: carls-ubuntu-1
+	WorkerId string `json:"worker_id"`
 }
 
 // HealthResponse defines model for HealthResponse.
@@ -281,6 +311,9 @@ type ClaimJobJSONRequestBody = ClaimRequest
 
 // CompleteJobJSONRequestBody defines body for CompleteJob for application/json ContentType.
 type CompleteJobJSONRequestBody = CompleteRequest
+
+// FanOutJobJSONRequestBody defines body for FanOutJob for application/json ContentType.
+type FanOutJobJSONRequestBody = FanOutRequest
 
 // HeartbeatJobJSONRequestBody defines body for HeartbeatJob for application/json ContentType.
 type HeartbeatJobJSONRequestBody = HeartbeatRequest
@@ -422,6 +455,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/complete (the `CompleteJob` operationId).
 	CompleteJob(ctx context.Context, id int, body CompleteJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// FanOutJobWithBody Record what a download probed, and enqueue its chunk jobs
+	//
+	// Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on `(video_id, segment_index)`, so a download reaped mid-fan-out re-runs without duplicating the segments that already exist.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/fanout (the `FanOutJob` operationId).
+	FanOutJobWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// FanOutJob Record what a download probed, and enqueue its chunk jobs
+	//
+	// Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on `(video_id, segment_index)`, so a download reaped mid-fan-out re-runs without duplicating the segments that already exist.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/fanout (the `FanOutJob` operationId).
+	FanOutJob(ctx context.Context, id int, body FanOutJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HeartbeatJobWithBody Renew the lease on a held job
 	//
@@ -581,6 +632,44 @@ func (c *Client) CompleteJobWithBody(ctx context.Context, id int, contentType st
 // Corresponds with POST /api/jobs/{id}/complete (the `CompleteJob` operationId).
 func (c *Client) CompleteJob(ctx context.Context, id int, body CompleteJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCompleteJobRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// FanOutJobWithBody Record what a download probed, and enqueue its chunk jobs
+//
+// Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on `(video_id, segment_index)`, so a download reaped mid-fan-out re-runs without duplicating the segments that already exist.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/jobs/{id}/fanout (the `FanOutJob` operationId).
+func (c *Client) FanOutJobWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFanOutJobRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// FanOutJob Record what a download probed, and enqueue its chunk jobs
+//
+// Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on `(video_id, segment_index)`, so a download reaped mid-fan-out re-runs without duplicating the segments that already exist.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/jobs/{id}/fanout (the `FanOutJob` operationId).
+func (c *Client) FanOutJob(ctx context.Context, id int, body FanOutJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFanOutJobRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -864,6 +953,53 @@ func NewCompleteJobRequestWithBody(server string, id int, contentType string, bo
 	return req, nil
 }
 
+// NewFanOutJobRequest calls the generic FanOutJob builder with application/json body
+func NewFanOutJobRequest(server string, id int, body FanOutJobJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewFanOutJobRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewFanOutJobRequestWithBody constructs an http.Request for the FanOutJob method, with any body, and a specified content type
+func NewFanOutJobRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/jobs/%s/fanout", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewHeartbeatJobRequest calls the generic HeartbeatJob builder with application/json body
 func NewHeartbeatJobRequest(server string, id int, body HeartbeatJobJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -1049,6 +1185,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/complete (the `CompleteJob` operationId).
 	CompleteJobWithResponse(ctx context.Context, id int, body CompleteJobJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteJobResponse, error)
+
+	// FanOutJobWithBodyWithResponse Record what a download probed, and enqueue its chunk jobs
+	//
+	// Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on `(video_id, segment_index)`, so a download reaped mid-fan-out re-runs without duplicating the segments that already exist.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/fanout (the `FanOutJob` operationId).
+	FanOutJobWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FanOutJobResponse, error)
+
+	// FanOutJobWithResponse Record what a download probed, and enqueue its chunk jobs
+	//
+	// Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on `(video_id, segment_index)`, so a download reaped mid-fan-out re-runs without duplicating the segments that already exist.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/fanout (the `FanOutJob` operationId).
+	FanOutJobWithResponse(ctx context.Context, id int, body FanOutJobJSONRequestBody, reqEditors ...RequestEditorFn) (*FanOutJobResponse, error)
 
 	// HeartbeatJobWithBodyWithResponse Renew the lease on a held job
 	//
@@ -1379,6 +1533,61 @@ func (r CompleteJobResponse) ContentType() string {
 	return ""
 }
 
+type FanOutJobResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ChunkFanOut
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r FanOutJobResponse) GetJSON200() *ChunkFanOut {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r FanOutJobResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r FanOutJobResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r FanOutJobResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r FanOutJobResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r FanOutJobResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r FanOutJobResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type HeartbeatJobResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1582,6 +1791,36 @@ func (c *ClientWithResponses) CompleteJobWithResponse(ctx context.Context, id in
 		return nil, err
 	}
 	return ParseCompleteJobResponse(rsp)
+}
+
+// FanOutJobWithBodyWithResponse Record what a download probed, and enqueue its chunk jobs
+//
+// Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on `(video_id, segment_index)`, so a download reaped mid-fan-out re-runs without duplicating the segments that already exist.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/fanout (the `FanOutJob` operationId).
+func (c *ClientWithResponses) FanOutJobWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FanOutJobResponse, error) {
+	rsp, err := c.FanOutJobWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseFanOutJobResponse(rsp)
+}
+
+// FanOutJobWithResponse Record what a download probed, and enqueue its chunk jobs
+//
+// Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on `(video_id, segment_index)`, so a download reaped mid-fan-out re-runs without duplicating the segments that already exist.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/fanout (the `FanOutJob` operationId).
+func (c *ClientWithResponses) FanOutJobWithResponse(ctx context.Context, id int, body FanOutJobJSONRequestBody, reqEditors ...RequestEditorFn) (*FanOutJobResponse, error) {
+	rsp, err := c.FanOutJob(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseFanOutJobResponse(rsp)
 }
 
 // HeartbeatJobWithBodyWithResponse Renew the lease on a held job
@@ -1850,6 +2089,46 @@ func ParseCompleteJobResponse(rsp *http.Response) (*CompleteJobResponse, error) 
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseFanOutJobResponse parses an HTTP response from a FanOutJobWithResponse call
+func ParseFanOutJobResponse(rsp *http.Response) (*FanOutJobResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &FanOutJobResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ChunkFanOut
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ErrorResponse

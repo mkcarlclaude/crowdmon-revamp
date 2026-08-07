@@ -24,6 +24,18 @@ services:
     # Credentials and the API base URL. Not committed — see .env.example.
     env_file: .env
 
+    # Source videos (M7.1). A named volume rather than the container's own
+    # filesystem, because the chunk jobs a download enqueues read the file it
+    # left behind: an update that recreated the container would throw away
+    # videos whose chunks had not run, and every one of those chunks would then
+    # report the affinity failure (M7.4) on a box that had downloaded the video
+    # perfectly. The update timer recreates this container four times a day.
+    #
+    # The path must match CROWDMON_WORK_DIR — its default is this path, and the
+    # two disagreeing is invisible until a restart.
+    volumes:
+      - source-videos:/home/worker/videos
+
     # No ports, no inbound anything. The worker only makes outbound calls: to
     # the API over the internet, and to the collector through otlp.mkcarl.com.
     # It joins no network beyond the default one this project creates, and in
@@ -38,8 +50,17 @@ services:
         max-file: "5"
 
     # Room for one video and its frames, with the rest of the box left alone.
-    # Raised in M7 when extraction is real and the working set is known.
+    # Unchanged in M7: phase one streams a download to disk and runs ffprobe,
+    # neither of which holds a video in memory. The number to revisit is M8's,
+    # when extraction decodes frames.
     deploy:
       resources:
         limits:
           memory: 4g
+
+volumes:
+  # Survives `docker compose up` recreating the container, which is the whole
+  # reason it is not a bind mount into the host's home directory: a volume is
+  # owned by Docker and needs no uid juggling to be writable by the image's
+  # unprivileged `worker` user.
+  source-videos:

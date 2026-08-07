@@ -1,9 +1,9 @@
 // Command worker is the home-side extraction worker.
 //
 // It polls the queue, claims a job, holds the lease while it runs, and reports
-// the outcome. What it does not do is any video work: Runner.Work is nil, so a
-// claimed job is reported done immediately. Extraction lands in M7 and slots
-// in there, which is the only line of this file it should need to change.
+// the outcome. Since M7 the work is real: a download job fetches the video with
+// yt-dlp, measures it with ffprobe and asks the API to fan it out into 60s
+// chunk jobs. Frame extraction is M8 and slots into worker.Pipeline.
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/telemetry"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/video"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/worker"
 )
 
@@ -70,6 +71,8 @@ func run(ctx context.Context) error {
 		"environment", cfg.Environment,
 		"worker_id", cfg.WorkerID,
 		"api_base_url", cfg.APIBaseURL,
+		"work_dir", cfg.WorkDir,
+		"source_ttl", cfg.SourceTTL,
 		"tracing", cfg.TracingEnabled(),
 	)
 
@@ -78,26 +81,25 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	// Work is nil by default: M4.3 claims a job, holds the lease, and reports
-	// it done without touching the video. Extraction lands in M7 and slots in
-	// here.
-	//
-	// CROWDMON_SIMULATED_WORK substitutes a job that merely takes time, which
-	// M6.4 needs — killing a worker mid-job requires a job with a middle, and
-	// the real one closes in about 90ms. Nothing else reads the setting, and
-	// M7 removes it.
-	var work worker.WorkFunc
-	if cfg.SimulatedWork > 0 {
-		logger.WarnContext(ctx, "simulating work instead of running jobs",
-			"duration", cfg.SimulatedWork)
-		work = worker.SimulatedWork(cfg.SimulatedWork)
+	// One store, shared by the downloader that writes into it and the affinity
+	// guard that reads it. Two would be two chances to point at different
+	// directories, and the symptom would be every chunk job reporting that its
+	// source is not on this box (M7.4) while the file sits right there.
+	store := video.Store{Dir: cfg.WorkDir, TTL: cfg.SourceTTL}
+
+	pipeline := worker.Pipeline{
+		Store:      store,
+		Downloader: video.Downloader{Store: store},
+		Prober:     video.Prober{},
+		Queue:      jobs,
+		Logger:     logger,
 	}
 
 	runner := worker.Runner{
 		Queue:             jobs,
 		Logger:            logger,
 		HeartbeatInterval: worker.DefaultHeartbeatInterval,
-		Work:              work,
+		Work:              pipeline.Work,
 	}
 
 	loop := worker.Loop{

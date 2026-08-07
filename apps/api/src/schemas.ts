@@ -151,6 +151,63 @@ export const CompleteRequest = z
   .openapi("CompleteRequest");
 
 /**
+ * The longest video the fan-out will accept, and therefore the longest video
+ * this system can process at all.
+ *
+ * Not a taste judgement about video length: fan-out is one D1 batch
+ * (CONTEXT.md §Q13), so segments are statements, and a bound belongs here —
+ * where the answer is a 400 naming the limit — rather than in a batch that
+ * fails halfway through with whatever D1 says when a batch is too big. Six
+ * hours is 360 segments and 721 statements; a test fans out four hours (481
+ * statements) against a real D1 rather than trusting that a batch that size
+ * works, and another pins the rejection at the boundary.
+ */
+export const MAX_VIDEO_SECONDS = 6 * 60 * 60;
+
+/** Every chunk covers this many seconds, except the last one (CONTEXT.md §Q13). */
+export const SEGMENT_SECONDS = 60;
+
+/**
+ * What the download worker learned about the video: yt-dlp's title and
+ * ffprobe's duration and resolution (M7.2).
+ *
+ * `worker_id` is here for the same reason it is on heartbeat and complete —
+ * fanning out is writing on a lease, and a request that only knew a job id
+ * could enqueue work against somebody else's job.
+ */
+export const FanOutRequest = z
+  .object({
+    worker_id: workerId,
+    // Whole seconds. ffprobe reports a float and the worker rounds it up: a
+    // 150.4s video whose last segment ended at 150 would leave four tenths of
+    // a second unextracted, and the rounding belongs where the truncation is
+    // visible rather than in SQL.
+    duration_seconds: z.int().positive().max(MAX_VIDEO_SECONDS).openapi({ example: 1200 }),
+    width: z.int().positive().openapi({ example: 1920 }),
+    height: z.int().positive().openapi({ example: 1080 }),
+    // Optional because it is the one field nothing downstream depends on:
+    // yt-dlp not reporting a title should not fail a download that worked.
+    title: z.string().max(500).optional().openapi({ example: "Genshin Impact — Paimon" }),
+  })
+  .openapi("FanOutRequest");
+
+/**
+ * Named `ChunkFanOut` rather than after the operation: oapi-codegen owns the
+ * `<OperationId>Response` namespace, and the operation is `fanOutJob`.
+ *
+ * `created` is deliberately separate from `segments`. A re-run after a reap
+ * reports the same `segments` and `created: 0`, which is how M7.3's
+ * idempotency is observable from outside instead of inferred from row counts.
+ */
+export const ChunkFanOut = z
+  .object({
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    segments: z.int().nonnegative().openapi({ example: 20 }),
+    created: z.int().nonnegative().openapi({ example: 20 }),
+  })
+  .openapi("ChunkFanOut");
+
+/**
  * The `{id}` path parameter. Every path segment arrives as a string and
  * `jobs.id` is an INTEGER PRIMARY KEY, so it has to be converted somewhere.
  *

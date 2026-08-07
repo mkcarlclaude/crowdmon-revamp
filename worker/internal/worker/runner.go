@@ -91,21 +91,27 @@ func (r Runner) PollOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	// Work cut short by the process going down is not a failed job, and
-	// reporting it as one would be terminal: `complete` with status='failed'
-	// retires the row, so an ordinary restart would permanently kill whatever
-	// was in flight and burn a video that had nothing wrong with it.
+	// Only two outcomes are ever reported: a job that finished, and a job that
+	// can never finish. Everything else is left `claimed` for the reaper (M6.2)
+	// to hand back, because `complete` with a cause is terminal — one timed-out
+	// fetch reported as a failure would permanently burn a video that has
+	// nothing wrong with it.
 	//
-	// Left `claimed` instead, for the reaper (M6.2) to hand back. That costs
-	// one lease window of latency and spends an attempt the job already spent
-	// on being claimed — which is the same deal a crash gets, and a graceful
-	// shutdown should not be treated worse than a crash.
+	// The cost of leaving it is one lease window plus a cron tick, and the
+	// attempt the job already spent on being claimed. That is the same deal a
+	// crash gets, and it is what makes the ceiling (M6.1) still bite on a job
+	// that fails transiently forever.
 	//
-	// Guarded on ctx.Err() as well as the error, because work that cancels
-	// itself — an ffprobe deadline, say — returns the same error shape and is
-	// a genuine failure that must still be reported.
-	if ctx.Err() != nil && isCancellation(workErr) {
-		logger.WarnContext(ctx, "shutting down mid-job, leaving it for the reaper")
+	// Work cut short by the process going down lands here too and is only told
+	// apart for the log line: a shutdown is not a failure, and saying "will be
+	// retried" about a restart would send an operator looking for a fault.
+	if workErr != nil && !IsTerminal(workErr) {
+		if ctx.Err() != nil && isCancellation(workErr) {
+			logger.WarnContext(ctx, "shutting down mid-job, leaving it for the reaper")
+		} else {
+			logger.WarnContext(ctx, "job failed for a reason worth retrying, leaving it for the reaper",
+				"error", workErr)
+		}
 		return true, nil
 	}
 

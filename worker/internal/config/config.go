@@ -16,6 +16,21 @@ import (
 // host would split one service into several in Tempo.
 const ServiceName = "crowdmon-worker"
 
+// DefaultWorkDir is where source videos land. Under the container's home
+// directory because the image runs as an unprivileged user that owns nothing
+// else, and a path it cannot create is a worker that fails every download.
+const DefaultWorkDir = "/home/worker/videos"
+
+// DefaultSourceTTL is how long a downloaded video is kept.
+//
+// Six hours against a video that takes 10-20 minutes to drain its chunk jobs:
+// long enough that nothing is ever pruned out from under work in flight, short
+// enough that a day of submissions cannot fill the disk. The number is
+// deliberately not tuned tighter — the failure it would cause (a chunk job
+// whose source vanished) looks exactly like the affinity failure M7.4 exists
+// to report, and the two would be indistinguishable in the dashboard.
+const DefaultSourceTTL = 6 * time.Hour
+
 // Config is the worker's runtime configuration.
 type Config struct {
 	// APIBaseURL is the Workers API the worker polls for jobs. Point this at
@@ -35,19 +50,23 @@ type Config struct {
 	// gets an export past the gate in front of the collector.
 	AccessClientID     string
 	AccessClientSecret string
-	// SimulatedWork makes a claimed job take this long instead of completing
-	// immediately. Zero — the default, and the only value production should
-	// ever run with — leaves Runner.Work nil.
+	// WorkDir is where downloaded source videos live (M7.1). Chunk jobs read
+	// the file the download left there, so this directory *is* the affinity
+	// constraint (CONTEXT.md §Q13): a second worker with its own copy of this
+	// path would claim chunk jobs whose video it does not have.
 	//
-	// It exists for M6.4. Verifying that killing a worker mid-job produces a
-	// reap and a retry needs a job with a middle to be killed in, and until
-	// M7 lands extraction there is none: a job completes in about 90ms. The
-	// alternative was seeding a stale `claimed` row straight into D1, which
-	// tests the reaper but proves nothing about what a killed worker leaves
-	// behind — and what it leaves behind is the whole question.
+	// Inside the container by default, which means a video does not survive a
+	// `docker compose up` unless the path is a volume — see
+	// deploy/homebox/docker-compose.yml, where it is one.
+	WorkDir string
+	// SourceTTL is how long a downloaded video is kept. Source video is never
+	// uploaded to R2 (CONTEXT.md §Q13) and is far larger than the frames taken
+	// from it, so nothing else bounds the disk it sits on.
 	//
-	// M7 replaces this with real work and it goes away.
-	SimulatedWork time.Duration
+	// Comfortably longer than a video's chunk jobs take to drain: pruning a
+	// file out from under a pending chunk turns a working video into M7.4's
+	// clean failure for no reason.
+	SourceTTL time.Duration
 }
 
 // TracingEnabled reports whether an exporter should be built. Config answers
@@ -66,25 +85,27 @@ func Load() (Config, error) {
 		OTLPEndpoint:       os.Getenv("CROWDMON_OTLP_ENDPOINT"),
 		AccessClientID:     os.Getenv("CF_ACCESS_CLIENT_ID"),
 		AccessClientSecret: os.Getenv("CF_ACCESS_CLIENT_SECRET"),
+		WorkDir:            envOrDefault("CROWDMON_WORK_DIR", DefaultWorkDir),
+		SourceTTL:          DefaultSourceTTL,
 	}
 
 	if cfg.APIBaseURL == "" {
 		return Config{}, fmt.Errorf("CROWDMON_API_BASE_URL is required")
 	}
 
-	// Parsed rather than defaulted on error. "90" instead of "90s" would
-	// otherwise leave the worker completing jobs instantly during an M6.4
-	// verification run, and the run would report that the reaper never
-	// fired — which is the very conclusion it exists to test.
-	if raw := os.Getenv("CROWDMON_SIMULATED_WORK"); raw != "" {
-		d, err := time.ParseDuration(raw)
+	// Parsed rather than defaulted on error, for the same reason the reaper's
+	// thresholds throw: "6" instead of "6h" would otherwise silently become a
+	// TTL of six nanoseconds, and every chunk job would find its source video
+	// already deleted — M7.4's clean failure firing on a healthy box.
+	if raw := os.Getenv("CROWDMON_SOURCE_TTL"); raw != "" {
+		ttl, err := time.ParseDuration(raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("CROWDMON_SIMULATED_WORK is not a duration: %w", err)
+			return Config{}, fmt.Errorf("CROWDMON_SOURCE_TTL is not a duration: %w", err)
 		}
-		if d < 0 {
-			return Config{}, fmt.Errorf("CROWDMON_SIMULATED_WORK must not be negative, got %s", raw)
+		if ttl < 0 {
+			return Config{}, fmt.Errorf("CROWDMON_SOURCE_TTL must not be negative, got %s", raw)
 		}
-		cfg.SimulatedWork = d
+		cfg.SourceTTL = ttl
 	}
 
 	// The hostname is the right default because a container's hostname is its

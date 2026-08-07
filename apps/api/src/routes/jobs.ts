@@ -2,12 +2,15 @@ import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { Bindings } from "../bindings";
 import {
+  ChunkFanOut,
   ClaimRequest,
   CompleteRequest,
   errorResponse,
+  FanOutRequest,
   HeartbeatRequest,
   Job,
   JobIdParam,
+  SEGMENT_SECONDS,
 } from "../schemas";
 
 /**
@@ -113,6 +116,30 @@ export const completeJobRoute = createRoute({
   },
 });
 
+export const fanOutJobRoute = createRoute({
+  method: "post",
+  path: "/api/jobs/{id}/fanout",
+  operationId: "fanOutJob",
+  tags: ["jobs"],
+  summary: "Record what a download probed, and enqueue its chunk jobs",
+  description:
+    "Phase two of CONTEXT.md §Q13's two-phase fan-out. Idempotent on " +
+    "`(video_id, segment_index)`, so a download reaped mid-fan-out re-runs " +
+    "without duplicating the segments that already exist.",
+  request: {
+    params: JobIdParam,
+    body: { content: { "application/json": { schema: FanOutRequest } }, required: true },
+  },
+  responses: {
+    200: {
+      description: "The video's chunk jobs exist",
+      content: { "application/json": { schema: ChunkFanOut } },
+    },
+    400: errorResponse("Malformed job id or body, or a job that is not a download"),
+    404: errorResponse("No job with this id is held by this worker"),
+  },
+});
+
 export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bindings }> = async (
   c,
 ) => {
@@ -161,9 +188,13 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
 
   // A job whose work definition is incomplete cannot be run, and handing it
   // out anyway only moves the discovery to the worker, an hour later, after a
-  // download. Chunk fan-out is not transactional (CONTEXT.md §Q13) — it can be
-  // reaped halfway through — so a chunk job with no `chunks` row is a state
-  // the system can genuinely reach, not just a hand-edited database.
+  // download.
+  //
+  // Since M7.2 a chunk job with no `chunks` row is corruption rather than a
+  // reachable state: the fan-out below writes the pair in one `batch()`. This
+  // stays because it is the check that lets that guarantee be a guarantee — if
+  // it ever fires, something outside the fan-out wrote a job row, and retiring
+  // it is better than handing it out on every poll forever.
   if (!video) return failUnrunnable(c, job.id, "video row missing");
   if (job.kind === "chunk" && !chunk) {
     return failUnrunnable(c, job.id, "chunk row missing");
@@ -219,6 +250,86 @@ export const heartbeatHandler: RouteHandler<typeof heartbeatRoute, { Bindings: B
   return c.body(null, 204);
 };
 
+export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: Bindings }> = async (
+  c,
+) => {
+  const { id } = c.req.valid("param");
+  const { worker_id, duration_seconds, width, height, title } = c.req.valid("json");
+
+  // Read before writing, which is the one place in this file that happens.
+  // The lease cannot be carried into the batch below: the inserts are
+  // conditioned on the chunk rows, not on the job, and conditioning each of
+  // them on the lease as well would double every statement's bindings to buy
+  // very little. If the reaper takes the job back in the gap, the fan-out it
+  // was about to do happens anyway and the re-run finds the work already
+  // done — the same outcome M7.3 exists to make safe.
+  const job = await c.env.DB.prepare(`SELECT kind, video_id FROM jobs WHERE ${HELD_BY}`)
+    .bind(id, worker_id)
+    .first<{ kind: "download" | "chunk"; video_id: string }>();
+
+  if (!job) return notHeldByCaller(c);
+
+  // 400 rather than 404: the lease is genuine and the worker is who it claims
+  // to be. Answering "you do not hold this job" would send it hunting for a
+  // lost lease it still holds.
+  if (job.kind !== "download") {
+    return c.json({ error: "only a download job can be fanned out" }, 400);
+  }
+
+  const segments = segmentsFor(duration_seconds);
+  const at = now();
+
+  // One batch, and that is a constraint M3.4 imposed on this endpoint rather
+  // than a preference: the claim handler retires a chunk job whose `chunks`
+  // row is missing as corruption, which is only correct if the pair can never
+  // be observed half-written. D1 wraps a batch in a transaction.
+  //
+  // Each segment is two statements guarded by the same `NOT EXISTS`, so they
+  // insert together or not at all. `last_insert_rowid()` is why the guards
+  // have to match: it returns the previous insert's id when a statement
+  // inserted nothing, so a chunk insert that ran while its job insert was
+  // skipped would attach itself to some other job's row.
+  const statements = [
+    c.env.DB.prepare(
+      `UPDATE videos
+          SET duration_seconds = ?,
+              width            = ?,
+              height           = ?,
+              title            = COALESCE(?, title),
+              updated_at       = ?
+        WHERE id = ?`,
+    ).bind(duration_seconds, width, height, title ?? null, at, job.video_id),
+  ];
+
+  for (const segment of segments) {
+    statements.push(
+      c.env.DB.prepare(
+        `INSERT INTO jobs (kind, video_id)
+              SELECT 'chunk', ?
+               WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE video_id = ? AND segment_index = ?)`,
+      ).bind(job.video_id, job.video_id, segment.index),
+      c.env.DB.prepare(
+        `INSERT INTO chunks (job_id, video_id, segment_index, start_seconds, end_seconds)
+              SELECT last_insert_rowid(), ?, ?, ?, ?
+               WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE video_id = ? AND segment_index = ?)`,
+      ).bind(job.video_id, segment.index, segment.start, segment.end, job.video_id, segment.index),
+    );
+  }
+
+  const results = await c.env.DB.batch(statements);
+
+  // Counted from what the database did, not from what was asked for. The
+  // difference between the two is the whole of M7.3, and reporting the
+  // requested count would make a re-run indistinguishable from a first run.
+  // The chunk inserts are every second statement after the metadata update.
+  let created = 0;
+  for (let i = 2; i < results.length; i += 2) {
+    created += results[i]?.meta.changes ?? 0;
+  }
+
+  return c.json({ video_id: job.video_id, segments: segments.length, created }, 200);
+};
+
 export const completeJobHandler: RouteHandler<
   typeof completeJobRoute,
   { Bindings: Bindings }
@@ -244,3 +355,21 @@ export const completeJobHandler: RouteHandler<
 
   return c.body(null, 204);
 };
+
+/**
+ * The 60s segments covering a video of `duration` seconds.
+ *
+ * The last one is short rather than running past the end of the file: ffmpeg
+ * would simply stop early, but the row would then claim to cover time the
+ * video does not have, and the extracted frame count for it would look wrong
+ * against every other chunk.
+ */
+function segmentsFor(duration: number): { index: number; start: number; end: number }[] {
+  const segments = [];
+
+  for (let start = 0, index = 0; start < duration; start += SEGMENT_SECONDS, index++) {
+    segments.push({ index, start, end: Math.min(start + SEGMENT_SECONDS, duration) });
+  }
+
+  return segments;
+}

@@ -28,6 +28,15 @@ import (
 // somebody else now owns.
 var ErrLeaseLost = errors.New("the lease on this job is no longer held")
 
+// ErrRejected is returned when the API refuses a request as invalid rather
+// than failing to serve it — a video longer than the fan-out's ceiling, or a
+// probe that came back with a resolution of zero.
+//
+// Distinct from a transient failure for the same reason ErrLeaseLost is: the
+// answer will be identical on every attempt, so retrying costs another
+// download and another attempt to arrive at the same 400.
+var ErrRejected = errors.New("the API rejected this request")
+
 // requestTimeout bounds a single call. Every endpoint here is a handful of
 // D1 statements, so seconds is generous — and a claim that hangs past the
 // idle interval would stack polls on top of each other.
@@ -136,6 +145,67 @@ func (c *Client) Complete(ctx context.Context, jobID int, cause error) error {
 		return fmt.Errorf("completing job %d: %w", jobID, err)
 	}
 	return nil
+}
+
+// Probed is what phase one learned about a video: ffprobe's measurements of
+// the file that landed, and yt-dlp's title.
+type Probed struct {
+	DurationSeconds int
+	Width           int
+	Height          int
+	// Empty when the download was skipped because the file was already on
+	// disk. Sent as an absent field rather than an empty string, so the API's
+	// COALESCE keeps whatever title it already had.
+	Title string
+}
+
+// FanOutResult is what the API did with a Probed: how many segments the video
+// has, and how many of their jobs this call created.
+//
+// The two differ whenever a fan-out re-runs after a reap (M7.3), and keeping
+// them apart is what lets the worker log "already fanned out" rather than
+// reporting work it did not do.
+type FanOutResult struct {
+	Segments int
+	Created  int
+}
+
+// FanOut records what was probed and enqueues the video's chunk jobs.
+//
+// The enqueue is the API's to perform, not this worker's, because the job row
+// and its `chunks` row have to be written in one transaction (CONTEXT.md §Q13)
+// — which a client making one HTTP call per segment could not do.
+func (c *Client) FanOut(ctx context.Context, jobID int, probed Probed) (FanOutResult, error) {
+	body := api.FanOutJobJSONRequestBody{
+		WorkerId:        c.workerID,
+		DurationSeconds: probed.DurationSeconds,
+		Width:           probed.Width,
+		Height:          probed.Height,
+	}
+	if probed.Title != "" {
+		body.Title = &probed.Title
+	}
+
+	resp, err := c.api.FanOutJob(ctx, jobID, body)
+	if err != nil {
+		return FanOutResult{}, fmt.Errorf("fanning out job %d: %w", jobID, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var result api.ChunkFanOut
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return FanOutResult{}, fmt.Errorf("decoding the fan-out of job %d: %w", jobID, err)
+		}
+		return FanOutResult{Segments: result.Segments, Created: result.Created}, nil
+	case http.StatusNotFound:
+		return FanOutResult{}, fmt.Errorf("fanning out job %d: %w", jobID, ErrLeaseLost)
+	case http.StatusBadRequest:
+		return FanOutResult{}, fmt.Errorf("fanning out job %d: %w: %s", jobID, ErrRejected, statusError(resp))
+	default:
+		return FanOutResult{}, fmt.Errorf("fanning out job %d: %w", jobID, statusError(resp))
+	}
 }
 
 // leaseOutcome reads the two lease-bearing endpoints' answers. 404 is the

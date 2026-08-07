@@ -119,8 +119,9 @@ describe("a job that can never be run", () => {
 
     // Found on a real local run against leftover rows: without this the
     // worker is handed a chunk job with no segment to extract and discovers
-    // that only after downloading. Fan-out is not transactional, so this is
-    // reachable in production, not just in a hand-edited database.
+    // that only after downloading. M7.2's fan-out writes the pair in one
+    // `batch()`, so this is corruption rather than a reachable state — and
+    // this check is what makes that a guarantee instead of a hope.
     expect(res.status).toBe(204);
     const row = await env.DB.prepare("SELECT status, failure_reason FROM jobs WHERE id = ?")
       .bind(id)
