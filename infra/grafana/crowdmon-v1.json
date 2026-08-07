@@ -292,7 +292,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Failure rate",
-      "description": "Rate of job.failed and job.retired spans combined — every way a job in this system permanently stops being retried. job.retired (CONTEXT.md §Q14/M6 amendment) is a reaper retirement: a lease that went stale with no attempts left. job.failed (M9.3) is the other half: a worker itself reporting a terminal failure on the first attempt — deleted, private, geo-blocked, members-only or age-gated video, the taxonomy in CONTEXT.md's M7 amendment to §Q13 — via POST /api/jobs/:id/complete, which now opens a span at the point it writes status='failed' to D1 (apps/api/src/routes/jobs.ts's recordJobFailed). Before M9.3 this panel counted job.retired alone, and a reported failure — the more common path, since the reaper's ceiling exists for crashes rather than for reports the M6 amendment already separates out — was invisible here entirely; that gap is closed, not merely narrowed. A bad value is any sustained non-zero rate — every span counted here is a video permanently lost from the dataset. To tell a crash-driven retirement apart from a reported one, filter by span_name in Tempo directly; this panel intentionally shows their sum, not their split.",
+      "description": "Rate of job.failed and job.retired spans combined — every way a job in this system permanently stops being retried. job.retired (CONTEXT.md §Q14/M6 amendment) is a reaper retirement: a lease that went stale with no attempts left. job.failed (M9.1) is the other half: a worker itself reporting a terminal failure on the first attempt — deleted, private, geo-blocked, members-only or age-gated video, the taxonomy in CONTEXT.md's M7 amendment to §Q13 — via POST /api/jobs/:id/complete, which now opens a span at the point it writes status='failed' to D1 (apps/api/src/routes/jobs.ts's recordJobFailed). Before M9.1 closed it this panel counted job.retired alone, and a reported failure — the more common path, since the reaper's ceiling exists for crashes rather than for reports the M6 amendment already separates out — was invisible here entirely; that gap is closed, not merely narrowed. A bad value is any sustained non-zero rate — every span counted here is a video permanently lost from the dataset. To tell a crash-driven retirement apart from a reported one, filter by span_name in Tempo directly; this panel intentionally shows their sum, not their split.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -343,7 +343,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"crowdmon-api\", span_name=~\"job.failed|job.retired\"}[$__rate_interval]))",
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"crowdmon-api\", span_name=~\"job\\\\.failed|job\\\\.retired\"}[$__rate_interval]))",
           "legendFormat": "failed + retired/s"
         }
       ]

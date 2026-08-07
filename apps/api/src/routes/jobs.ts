@@ -661,7 +661,7 @@ export const completeJobHandler: RouteHandler<
   // `claimed_by` is cleared on the way out so a finished row cannot be
   // mistaken for a held one, and the reaper's partial index stops covering it.
   //
-  // `RETURNING` rather than the bare `.run()` this used before M9.3: the
+  // `RETURNING` rather than the bare `.run()` this used before M9.1: the
   // failure span needs the job's kind, video id and attempts, and none of
   // them were otherwise in scope here. `HELD_BY` still names exactly one row
   // by primary key, so switching to `.first()` changes nothing about how a

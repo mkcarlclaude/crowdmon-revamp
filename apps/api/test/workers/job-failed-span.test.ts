@@ -12,7 +12,7 @@ import type { JobResponse } from "../../src/schemas";
 import { seedDownloadJob } from "./seed";
 
 /**
- * `job.failed` (M9.3) lives beside the SQL that decides whether to emit it
+ * `job.failed` (M9.1) lives beside the SQL that decides whether to emit it
  * (routes/jobs.ts), unlike `job.reclaimed`/`job.retired`, whose emitter sits
  * in reclaim-spans.ts and is tested on Node because `@opentelemetry/api` was
  * believed unable to resolve under workerd's module loader — see

@@ -752,7 +752,7 @@ func TestAJobWithNoStoredTraceparentIsARootSpan(t *testing.T) {
 	}
 }
 
-// M9.3: job.claimed is the join point that puts the claim itself inside the
+// M9.2: job.claimed is the join point that puts the claim itself inside the
 // job's one trace. These tests are the honest version of that claim — they
 // prove the span lands in the adopted trace and carries what it says it
 // carries, not that it re-parents the HTTP round trip that already happened.
