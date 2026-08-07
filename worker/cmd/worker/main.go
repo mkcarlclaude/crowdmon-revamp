@@ -120,6 +120,15 @@ func run(ctx context.Context) error {
 			return err
 		}
 		metrics = frameMetrics
+
+		// queue.depth (M9.1) is registered here rather than left for the
+		// pipeline to touch, because nothing about it runs per job — its
+		// callback fires on the SDK's own export timer regardless of whether
+		// this worker is claiming anything, which is the whole point: an idle
+		// worker still has to report that the queue is idle, not go silent.
+		if err := telemetry.NewQueueDepthGauge(queueDepthCounts(jobs), logger); err != nil {
+			return err
+		}
 	}
 
 	// One store, shared by the downloader that writes into it and the affinity
@@ -142,6 +151,7 @@ func run(ctx context.Context) error {
 		Extraction: frames.Config{DedupThreshold: cfg.DedupThreshold},
 		Metrics:    metrics,
 		Logger:     logger,
+		WorkerID:   cfg.WorkerID,
 	}
 
 	runner := worker.Runner{
@@ -163,4 +173,31 @@ func run(ctx context.Context) error {
 
 	logger.InfoContext(ctx, "worker stopping")
 	return nil
+}
+
+// queueDepthCounts adapts queue.Client.Stats to the shape
+// telemetry.NewQueueDepthGauge's callback wants: eight fixed (status, kind)
+// points, always present. jobs.Stats already zero-fills every combination —
+// the API does that once, on the D1 side, rather than leaving each caller to
+// reinvent it (apps/api/src/schemas.ts's JobStats comment) — so this
+// function's only job is renaming that fixed struct into the flat slice
+// telemetry stays decoupled from queue's types by asking for.
+func queueDepthCounts(jobs *queue.Client) telemetry.QueueDepthFetcher {
+	return func(ctx context.Context) ([]telemetry.QueueCount, error) {
+		stats, err := jobs.Stats(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		return []telemetry.QueueCount{
+			{Status: "pending", Kind: "download", Count: int64(stats.Pending.Download)},
+			{Status: "pending", Kind: "chunk", Count: int64(stats.Pending.Chunk)},
+			{Status: "claimed", Kind: "download", Count: int64(stats.Claimed.Download)},
+			{Status: "claimed", Kind: "chunk", Count: int64(stats.Claimed.Chunk)},
+			{Status: "done", Kind: "download", Count: int64(stats.Done.Download)},
+			{Status: "done", Kind: "chunk", Count: int64(stats.Done.Chunk)},
+			{Status: "failed", Kind: "download", Count: int64(stats.Failed.Download)},
+			{Status: "failed", Kind: "chunk", Count: int64(stats.Failed.Chunk)},
+		}, nil
+	}
 }

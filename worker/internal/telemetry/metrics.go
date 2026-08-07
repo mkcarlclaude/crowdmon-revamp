@@ -17,9 +17,11 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -68,6 +70,20 @@ func setupMetrics(ctx context.Context, res *resource.Resource, cfg config.Config
 		// default 60s interval is the same tradeoff the batched trace and
 		// log exporters make — a network round trip per data point would be
 		// absurd against instruments that fire per frame.
+		//
+		// No WithInterval override — this is still the SDK's default 60s,
+		// left untouched deliberately now that the queue.depth gauge (M9.1)
+		// shares this same reader. That gauge's callback makes one HTTP
+		// request to the API's /api/jobs/stats per collection, whether or not
+		// anything in the queue changed, so the interval is also this
+		// worker's new request budget: 86400/60 = 1,440 requests/day, on top
+		// of the ~1,000/day idle-poll budget CONTEXT.md §Q20 already spends
+		// (Workers' free tier is 100,000/day, so the two together are still
+		// under 2.5% of it). A longer interval would buy back some of that
+		// budget at the cost of a staler queue-depth panel; 60s was kept
+		// because the frame-extraction counters already made that call and a
+		// second reader on its own interval would mean a second exporter,
+		// for a saving that does not matter yet.
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)),
 	)
 	otel.SetMeterProvider(provider)
@@ -192,4 +208,98 @@ func (m *FrameMetrics) RecordDedupRatio(ctx context.Context, ratio float64) {
 // RecordChunkDuration records how long one chunk took to extract and dedup.
 func (m *FrameMetrics) RecordChunkDuration(ctx context.Context, d time.Duration) {
 	m.chunkDuration.Record(ctx, d.Seconds())
+}
+
+// QueueCount is one (status, kind) combination's row count, as read off the
+// stats endpoint M9.1 adds (apps/api/src/routes/jobs.ts's jobStatsHandler).
+//
+// A plain struct rather than this package importing the queue package's
+// api-derived types: FrameMetrics already keeps telemetry unaware of the
+// frames package's types for the same reason (NewFrameMetrics's doc comment
+// on meterName), and the dependency belongs pointing at telemetry, not the
+// other way round. cmd/worker is where both packages are already imported,
+// so it is where the adapter from queue.Client.Stats to a []QueueCount lives.
+type QueueCount struct {
+	Status string
+	Kind   string
+	Count  int64
+}
+
+// QueueDepthFetcher is telemetry's whole view of the queue: whatever can
+// answer "how many jobs sit at each status and kind combination right now."
+// A function type rather than an interface with one method, for the same
+// reason worker.PollFunc is a function and not an interface (loop.go) — the
+// caller has nothing else to implement.
+type QueueDepthFetcher func(ctx context.Context) ([]QueueCount, error)
+
+// queueDepthCallbackTimeout bounds one collection's call to fetch,
+// independent of whatever timeout the HTTP client underneath it carries.
+// queue.Client already bounds every request it makes to 30s (queue.go's
+// requestTimeout), but that number is sized for the job lifecycle, where a
+// slow claim is still worth waiting out. This callback runs on the SDK's own
+// export timer, sharing it with the frame-extraction instruments (see
+// setupMetrics's comment on why there is only one reader), so a call left
+// free to run the full 30s would delay every other point in that same
+// collection behind a queue-depth read nobody is blocking on. Ten seconds is
+// short enough that a stalled call costs one missed point on a chart that
+// updates every 60s, not a stall the operator would ever notice as such.
+const queueDepthCallbackTimeout = 10 * time.Second
+
+// NewQueueDepthGauge registers queue.depth as an observable gauge, backed by
+// fetch — cmd/worker supplies a closure over queue.Client.Stats. Observable
+// rather than a synchronous instrument (contrast FrameMetrics's counters and
+// histograms): nothing in this process holds a running count to add to or
+// record against. The depth lives in D1, not in this worker's memory, and an
+// Int64ObservableGauge's callback is exactly the shape OTel gives for "ask
+// something external whenever the SDK is about to export."
+//
+// Two things this callback exists to get right, beyond the SDK plumbing:
+//
+//   - Telemetry must never be the reason a job fails, and this callback runs
+//     entirely off the SDK's own export timer, decoupled from PollOnce — an
+//     error here cannot block or fail a job the way a queue.Client method
+//     returning one would, because nothing in the job lifecycle is waiting on
+//     it. So a failed fetch is logged and swallowed rather than returned to
+//     the SDK: returning an error would drop every instrument sharing this
+//     collection (this gauge included) for that one interval, which is worse
+//     than the one missing point a plain log line costs. The API being
+//     unreachable becomes a gap in the queue-depth graph, never a reason the
+//     worker stops claiming jobs.
+//   - Zero must be reported as zero. fetch is expected to return all eight
+//     (status, kind) combinations every time — that is what the API's
+//     zero-fill (schemas.ts's JobStats comment) buys back here — and this
+//     function observes every element it is given without filtering zeros
+//     out. Doing otherwise would make a drained queue and a worker that
+//     stopped exporting indistinguishable in Prometheus, which is the one
+//     failure mode M9.1's queue-depth panel exists to catch.
+func NewQueueDepthGauge(fetch QueueDepthFetcher, logger *slog.Logger) error {
+	meter := otel.GetMeterProvider().Meter(meterName)
+
+	_, err := meter.Int64ObservableGauge("queue.depth",
+		metric.WithDescription("D1 job rows by status and kind, refreshed once per metrics export interval (M9.1)."),
+		metric.WithUnit("{job}"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			ctx, cancel := context.WithTimeout(ctx, queueDepthCallbackTimeout)
+			defer cancel()
+
+			counts, err := fetch(ctx)
+			if err != nil {
+				logger.WarnContext(ctx, "reading queue depth for the queue.depth gauge failed", "error", err)
+				return nil
+			}
+
+			for _, c := range counts {
+				o.Observe(c.Count, metric.WithAttributes(
+					attribute.String("status", c.Status),
+					attribute.String("kind", c.Kind),
+				))
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("building the queue.depth gauge: %w", err)
+	}
+
+	return nil
 }

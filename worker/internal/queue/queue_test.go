@@ -546,3 +546,69 @@ func TestReportImagesReportsARefusedReportAsPermanent(t *testing.T) {
 		t.Fatalf("ReportImages() error = %v, want it distinct from a lost lease", err)
 	}
 }
+
+func TestStatsDecodesEveryStatusAndKind(t *testing.T) {
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"pending": {"download": 1, "chunk": 5},
+			"claimed": {"download": 1, "chunk": 0},
+			"done":    {"download": 40, "chunk": 300},
+			"failed":  {"download": 0, "chunk": 2}
+		}`)
+	})
+
+	stats, err := newClient(t, server.URL).Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats() returned an unexpected error: %v", err)
+	}
+
+	got := (*seen)[0]
+	if got.method != http.MethodGet || got.path != "/api/jobs/stats" {
+		t.Errorf("Stats() sent %s %s, want GET /api/jobs/stats", got.method, got.path)
+	}
+
+	want := queue.Stats{
+		Pending: queue.StatusCounts{Download: 1, Chunk: 5},
+		Claimed: queue.StatusCounts{Download: 1, Chunk: 0},
+		Done:    queue.StatusCounts{Download: 40, Chunk: 300},
+		Failed:  queue.StatusCounts{Download: 0, Chunk: 2},
+	}
+	if stats != want {
+		t.Errorf("Stats() = %+v, want %+v", stats, want)
+	}
+}
+
+// An empty queue is a real answer, not an error — every status is present at
+// zero, because the API zero-fills rather than omitting combinations that
+// have no rows (schemas.ts's JobStats comment). Stats must hand that
+// straight through rather than treating an all-zero body as malformed.
+func TestStatsReportsAnEmptyQueueAsZeroesNotAnError(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"pending": {"download": 0, "chunk": 0},
+			"claimed": {"download": 0, "chunk": 0},
+			"done":    {"download": 0, "chunk": 0},
+			"failed":  {"download": 0, "chunk": 0}
+		}`)
+	})
+
+	stats, err := newClient(t, server.URL).Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats() returned an unexpected error: %v", err)
+	}
+	if stats != (queue.Stats{}) {
+		t.Errorf("Stats() = %+v, want the zero value", stats)
+	}
+}
+
+func TestStatsReportsAnAPIFailure(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	if _, err := newClient(t, server.URL).Stats(context.Background()); err == nil {
+		t.Fatal("Stats() returned no error for a 500")
+	}
+}

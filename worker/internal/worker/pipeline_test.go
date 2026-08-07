@@ -751,3 +751,108 @@ func TestAJobWithNoStoredTraceparentIsARootSpan(t *testing.T) {
 		t.Errorf("job.download has a parent %v with no stored traceparent, want a root span", span.Parent())
 	}
 }
+
+// M9.3: job.claimed is the join point that puts the claim itself inside the
+// job's one trace. These tests are the honest version of that claim — they
+// prove the span lands in the adopted trace and carries what it says it
+// carries, not that it re-parents the HTTP round trip that already happened.
+
+func TestJobClaimedCarriesTheWorkerAttemptAndQueueWait(t *testing.T) {
+	spans := recordingProvider(t)
+
+	pipeline, _, _, _ := workingPipeline()
+	pipeline.WorkerID = "carls-ubuntu-1"
+
+	job := aJob()
+	job.Attempts = 2
+	job.QueueWaitSeconds = 37
+
+	if err := pipeline.Work(t.Context(), job); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	span := endedSpan(t, spans, "job.claimed")
+
+	attributes := map[string]any{}
+	for _, attribute := range span.Attributes() {
+		attributes[string(attribute.Key)] = attribute.Value.AsInterface()
+	}
+	if attributes["crowdmon.worker.id"] != "carls-ubuntu-1" {
+		t.Errorf("crowdmon.worker.id = %v, want carls-ubuntu-1", attributes["crowdmon.worker.id"])
+	}
+	if attributes["crowdmon.job.attempts"] != int64(2) {
+		t.Errorf("crowdmon.job.attempts = %v, want 2", attributes["crowdmon.job.attempts"])
+	}
+	// The one number here that could not be reconstructed from anywhere else
+	// in the trace: how long the row sat pending before this claim, computed
+	// by the API from the same request that returned it (schemas.ts).
+	if attributes["crowdmon.job.queue_wait_seconds"] != int64(37) {
+		t.Errorf("crowdmon.job.queue_wait_seconds = %v, want 37", attributes["crowdmon.job.queue_wait_seconds"])
+	}
+}
+
+func TestJobClaimedJoinsTheStoredTraceAheadOfTheWorkSpan(t *testing.T) {
+	setStoredPropagator(t)
+	spans := recordingProvider(t)
+
+	pipeline, _, _, _ := workingPipeline()
+	job := aJob()
+	traceparent := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	job.Traceparent = &traceparent
+
+	if err := pipeline.Work(t.Context(), job); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	claimed := endedSpan(t, spans, "job.claimed")
+	if got := claimed.Parent().TraceID().String(); got != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Errorf("job.claimed's parent trace id = %s, want the stored traceparent's", got)
+	}
+	if got := claimed.Parent().SpanID().String(); got != "00f067aa0ba902b7" {
+		t.Errorf("job.claimed's parent span id = %s, want the stored traceparent's", got)
+	}
+
+	// A sibling of job.download under the trace M9.2 adopted, not a parent of
+	// it: job.claimed marks that the claim happened, it is not a wrapper
+	// around the work the claim led to. Both spans share the same parent —
+	// the stored traceparent's own span — rather than job.download nesting
+	// inside job.claimed.
+	download := endedSpan(t, spans, "job.download")
+	if got := download.Parent().SpanID().String(); got != "00f067aa0ba902b7" {
+		t.Errorf("job.download's parent span id = %s, want the stored traceparent's, same as job.claimed's",
+			got)
+	}
+	if download.Parent().SpanID() == claimed.SpanContext().SpanID() {
+		t.Error("job.download is parented on job.claimed rather than on the trace both were adopted into")
+	}
+}
+
+func TestJobClaimedIsARootSpanWithNoStoredTraceparent(t *testing.T) {
+	setStoredPropagator(t)
+	spans := recordingProvider(t)
+
+	pipeline, _, _, _ := workingPipeline()
+
+	if err := pipeline.Work(t.Context(), aJob()); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	span := endedSpan(t, spans, "job.claimed")
+	if span.Parent().IsValid() {
+		t.Errorf("job.claimed has a parent %v with no stored traceparent, want a root span", span.Parent())
+	}
+}
+
+func TestJobClaimedIsEmittedForAChunkJobToo(t *testing.T) {
+	spans := recordingProvider(t)
+
+	pipeline, _, _, _ := workingPipeline()
+
+	if err := pipeline.Work(t.Context(), aChunkJob()); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	// The claim precedes the work regardless of which kind of job it claimed;
+	// Work emits it once, ahead of the switch on job.Kind.
+	endedSpan(t, spans, "job.claimed")
+}

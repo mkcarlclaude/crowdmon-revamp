@@ -130,6 +130,56 @@ func (c *Client) Claim(ctx context.Context) (*api.Job, error) {
 	}
 }
 
+// StatusCounts is one status's row count for each job kind, mirroring
+// api.JobStatusCounts. A local type rather than the generated one reused
+// directly, for the same reason Probed and Image are: the wire shape belongs
+// to this package, and callers outside it — telemetry's queue.depth gauge,
+// in particular — should not have to import the generated api package just
+// to read a count off it.
+type StatusCounts struct {
+	Download int
+	Chunk    int
+}
+
+// Stats is what the queue looked like the moment this was read: job counts
+// by status and kind (M9.1). All four statuses are always populated — the
+// API zero-fills them (apps/api/src/schemas.ts's JobStats comment explains
+// why) — so a freshly-seeded or fully-drained queue answers with real zeros
+// here, never with a status this struct happens not to mention.
+type Stats struct {
+	Pending, Claimed, Done, Failed StatusCounts
+}
+
+// Stats reads the queue's current job counts by status and kind. Its only
+// caller is the queue.depth gauge's callback (telemetry.NewQueueDepthGauge),
+// on the SDK's own export interval rather than the poll loop — this is a
+// dashboard read, not a step in the job lifecycle, and the two are
+// deliberately decoupled so a slow or failing stats call cannot back off
+// PollOnce the way a failing Claim does.
+func (c *Client) Stats(ctx context.Context) (Stats, error) {
+	resp, err := c.api.JobStats(ctx)
+	if err != nil {
+		return Stats{}, fmt.Errorf("reading job stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return Stats{}, fmt.Errorf("reading job stats: %w", statusError(resp))
+	}
+
+	var stats api.JobStats
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return Stats{}, fmt.Errorf("decoding job stats: %w", err)
+	}
+
+	return Stats{
+		Pending: StatusCounts{Download: stats.Pending.Download, Chunk: stats.Pending.Chunk},
+		Claimed: StatusCounts{Download: stats.Claimed.Download, Chunk: stats.Claimed.Chunk},
+		Done:    StatusCounts{Download: stats.Done.Download, Chunk: stats.Done.Chunk},
+		Failed:  StatusCounts{Download: stats.Failed.Download, Chunk: stats.Failed.Chunk},
+	}, nil
+}
+
 // Heartbeat renews the lease on a held job.
 func (c *Client) Heartbeat(ctx context.Context, jobID int) error {
 	resp, err := c.api.HeartbeatJob(ctx, jobID, api.HeartbeatJobJSONRequestBody{WorkerId: c.workerID})
