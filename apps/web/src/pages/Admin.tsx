@@ -1,4 +1,5 @@
 import { useJobs } from "../api/queries";
+import { GrafanaLink } from "../components/GrafanaLink";
 import { JobList } from "../components/JobList";
 import { SessionExpiredBanner } from "../components/SessionExpiredBanner";
 import { SubmitForm } from "../components/SubmitForm";
@@ -10,7 +11,10 @@ export function Admin() {
 
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-8 p-8">
-      <h1 className="text-2xl font-semibold">Admin</h1>
+      <div className="flex items-baseline justify-between">
+        <h1 className="text-2xl font-semibold">Admin</h1>
+        <GrafanaLink />
+      </div>
       <SessionExpiredBanner error={error} />
       <section>
         <h2 className="mb-2 text-sm uppercase tracking-wide text-[var(--color-text-muted)]">
