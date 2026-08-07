@@ -313,7 +313,8 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
       // so a job whose row carries no context (or one that fails to parse)
       // falls back to the root span it would have started anyway (M9.2).
       traceparent: job.traceparent,
-      // `claimedAt` is this isolate's `Date.now()`; `created_at` was stamped
+      // `claimedAt` came from this isolate's clock (`now()`, above);
+      // `created_at` was stamped
       // by D1's own `strftime('%s','now')` at insert time, on a different
       // clock than this Worker's. The two are close enough in practice that
       // this is worth reporting, but not provably monotonic against each

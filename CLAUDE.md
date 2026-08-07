@@ -43,10 +43,6 @@ with `! ` rather than trying to route around it.
 
 ## Checks
 
-```sh
-pnpm install
-pnpm typecheck && pnpm lint && pnpm test    # TypeScript
-cd worker && go vet ./... && go test ./...  # Go
-```
-
-CI runs exactly these.
+The commands CI runs are in [`README.md`](README.md) under "Working on it", and
+that is the only copy — a second one here would be a second thing to remember to
+update the day CI changes.

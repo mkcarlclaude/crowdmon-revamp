@@ -11,10 +11,15 @@ import { defineConfig } from "vitest/config";
  * distinguishes "renewed a lease" from "that job is not yours". Neither
  * survives a fake.
  *
- * `test/node` runs on plain Node, for the two things workerd cannot do: the
- * spec drift check reads the committed file off disk with `node:fs`, and
- * @opentelemetry/api's ESM build does not resolve under workerd's module
- * loader. Both test code that has no bindings in it anyway.
+ * `test/node` runs on plain Node for the one thing workerd cannot do: the spec
+ * drift check reads the committed file off disk with `node:fs`. The tracing
+ * tests here for the same reason are there by history rather than necessity —
+ * this comment used to claim @opentelemetry/api's ESM build does not resolve
+ * under workerd's module loader, which M9 disproved: `test/workers/
+ * job-failed-span.test.ts` builds a `BasicTracerProvider`, records spans and
+ * asserts on them inside real workerd. Whatever broke that once is fixed, so
+ * "it must live in test/node" is no longer a reason for anything; left where
+ * they are because moving working tests buys nothing.
  *
  * Storage isolation between files is the pool's own default in 0.20 — there is
  * no longer an `isolatedStorage` option to set.

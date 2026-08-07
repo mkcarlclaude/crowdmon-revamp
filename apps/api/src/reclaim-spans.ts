@@ -18,8 +18,14 @@ import type { ReapedJob, ReapResult } from "./reaper";
  * produce two things that are indistinguishable in Grafana.
  *
  * Kept apart from reaper.ts so the SQL can be tested inside workerd and this
- * can be tested on Node — @opentelemetry/api's ESM build does not resolve under
- * workerd's module loader.
+ * can be tested on Node. **The reason given here was that
+ * @opentelemetry/api's ESM build does not resolve under workerd's module
+ * loader, and M9 disproved it** — `routes/jobs.ts` now emits `job.failed` from
+ * a handler that runs inside workerd, and `test/workers/job-failed-span.test.ts`
+ * records those spans there. The split survives on the weaker argument it
+ * always also had: these are two different things to test, and a module that
+ * emits spans has no D1 in it. Anything new like this can go beside the SQL
+ * that decides to call it.
  */
 
 /** A lease that went stale and whose job is available again. */
