@@ -57,7 +57,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "Queue depth",
-      "description": "D1 job-table rows by status and kind, from the Go worker's `queue.depth` OTel gauge (queue_depth{status,kind} in Prometheus). Landed alongside this dashboard — see infra/grafana/README.md if this panel is empty, that is expected until the exporting change ships. A bad value is `pending` climbing while `claimed` stays flat: work is arriving faster than the one worker claims it, or the worker is down. `claimed` climbing without `done`/`failed` following is a stuck lease — the reaper (5-minute cron, CONTEXT.md §Q14) should be pulling those back to `pending` within roughly 7 minutes; if `claimed` keeps growing past that, the reaper itself is the thing that's broken.",
+      "description": "D1 job-table rows by status and kind, from the Go worker's `queue.depth` OTel gauge (queue_depth{status,kind} in Prometheus). Landed alongside this dashboard — see infra/grafana/README.md if this panel is empty, that is expected until the exporting change ships. A bad value is `pending` climbing while `claimed` stays flat: work is arriving faster than the one worker claims it, or the worker is down. `claimed` climbing without `done`/`failed` following is a stuck lease — the reaper (5-minute cron, CONTEXT.md §Q14) should be pulling those back to `pending` within roughly 7 minutes; if `claimed` keeps growing past that, the reaper itself is the thing that's broken. Scoped to `exported_job=\"crowdmon-worker\"` like every other panel here: this Prometheus is shared with unrelated projects (infra/grafana/README.md), and `queue_depth` is a generic enough name that leaving it unscoped is one collision away from plotting somebody else's queue. Note the label is `exported_job`, not `job` — Prometheus relabels the OTel resource attribute out of the way of its own scrape-target labels, and a naive `job=\"crowdmon-worker\"` filter silently matches nothing.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -106,7 +106,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (status, kind) (queue_depth)",
+          "expr": "sum by (status, kind) (queue_depth{exported_job=\"crowdmon-worker\"})",
           "legendFormat": "{{status}} / {{kind}}"
         }
       ]
@@ -114,15 +114,15 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Chunk duration (job duration)",
-      "description": "p50 and p95 wall time to extract and dedup one 60s chunk, from the Go worker's chunk.duration histogram (chunk_duration_seconds_bucket). Percentiles rather than an average: M8's chunk-granularity design (CONTEXT.md §4) means most chunks are fast and a minority — a fast-motion scene, a contended box — run long, and an average would hide exactly the tail an operator needs to see. A bad value is p95 pulling away from p50: that is chunks intermittently stalling rather than the whole fleet slowing down together, which points at contention (the reaper competing with a live worker for the same box's 2 cores, per CONTEXT.md's \"parallelism argument is weak\" note) rather than a systemic regression.",
+      "title": "Chunk duration",
+      "description": "p50 and p95 wall time to extract and dedup one 60s chunk — phase two of CONTEXT.md §Q13's two-phase fan-out; phase one has its own panel beside this one, from the Go worker's chunk.duration histogram (chunk_duration_seconds_bucket). Percentiles rather than an average: M8's chunk-granularity design (CONTEXT.md §4) means most chunks are fast and a minority — a fast-motion scene, a contended box — run long, and an average would hide exactly the tail an operator needs to see. A bad value is p95 pulling away from p50: that is chunks intermittently stalling rather than the whole fleet slowing down together, which points at contention (the reaper competing with a live worker for the same box's 2 cores, per CONTEXT.md's \"parallelism argument is weak\" note) rather than a systemic regression.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 8
       },
@@ -176,6 +176,70 @@
       ]
     },
     {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Download duration",
+      "description": "p50 and p95 wall time for a whole `download` job — fetch, ffprobe and fan-out, phase one of CONTEXT.md §Q13's two-phase split, which that section itself sizes at the bulk of a video's 10-20 minutes of work.\n\nIssue #46 asks for \"job duration\", and a chunk is only one of the two job kinds. This half has no OTel instrument behind it: the Go worker meters frames and chunks (telemetry/metrics.go) because those are the numbers M8 needed, and nothing counts a download. What it does have is a span — `job.download`, opened in pipeline.go — so the duration comes from Tempo's metrics-generator rather than from an instrument, exactly the way reclaim and failure rate do on the API side. Adding a histogram to the worker would have been the other option and buys nothing here: the span already exists, and a second source for the same number is a second thing that can disagree.\n\nA bad value is p95 climbing while chunk duration holds steady — that is yt-dlp or the residential uplink degrading, not extraction. Both are wall time, so a p95 far above p50 on a single-worker box usually means one long video rather than a slow one.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "seconds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "last",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"crowdmon-worker\", span_name=\"job.download\"}[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"crowdmon-worker\", span_name=\"job.download\"}[$__rate_interval])))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
       "id": 3,
       "type": "timeseries",
       "title": "Dedup ratio",
@@ -186,8 +250,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 16,
         "y": 8
       },
       "fieldConfig": {
