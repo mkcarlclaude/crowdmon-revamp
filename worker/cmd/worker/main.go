@@ -74,6 +74,7 @@ func run(ctx context.Context) error {
 		"work_dir", cfg.WorkDir,
 		"source_ttl", cfg.SourceTTL,
 		"tracing", cfg.TracingEnabled(),
+		"logs_export", cfg.LogsEnabled(),
 	)
 
 	jobs, err := queue.New(cfg.APIBaseURL, cfg.WorkerID)

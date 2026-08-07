@@ -10,6 +10,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.opentelemetry.io/otel"
@@ -23,8 +24,8 @@ import (
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
 )
 
-// Setup installs the global tracer provider and propagator, and returns the
-// shutdown that flushes whatever is still buffered.
+// Setup installs the global tracer provider, logger provider and propagator,
+// and returns the shutdown that flushes whatever is still buffered in either.
 //
 // The returned shutdown is always non-nil, including on the disabled path and
 // on error, so callers can defer it unconditionally instead of guarding every
@@ -47,11 +48,32 @@ func Setup(ctx context.Context, cfg config.Config) (func(context.Context) error,
 	}
 
 	// Set even when tracing is disabled. Spans are still created and still
-	// carry ids, so the log correlation below works with no collector in
-	// reach — the ids just never leave the process.
+	// carry ids, so the log correlation in NewHandler works with no collector
+	// in reach — the ids just never leave the process.
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{}, propagation.Baggage{},
 	))
+
+	shutdownTracing, err := setupTracing(ctx, res, cfg)
+	if err != nil {
+		return noop, err
+	}
+
+	shutdownLogs, err := setupLogs(ctx, res, cfg)
+	if err != nil {
+		return shutdownTracing, err
+	}
+
+	// Both flushed on the way out. A worker that exports both signals must
+	// not lose one because the other's Shutdown errored first — collecting
+	// rather than short-circuiting is what makes that true.
+	return func(ctx context.Context) error {
+		return errors.Join(shutdownTracing(ctx), shutdownLogs(ctx))
+	}, nil
+}
+
+func setupTracing(ctx context.Context, res *resource.Resource, cfg config.Config) (func(context.Context) error, error) {
+	noop := func(context.Context) error { return nil }
 
 	if !cfg.TracingEnabled() {
 		otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithResource(res)))
@@ -71,7 +93,7 @@ func Setup(ctx context.Context, cfg config.Config) (func(context.Context) error,
 		}),
 	)
 	if err != nil {
-		return noop, fmt.Errorf("building the OTLP exporter: %w", err)
+		return noop, fmt.Errorf("building the OTLP trace exporter: %w", err)
 	}
 
 	provider := sdktrace.NewTracerProvider(

@@ -97,6 +97,54 @@ func TestLoadCarriesTheAccessCredentials(t *testing.T) {
 	}
 }
 
+// Logs mirror tracing exactly: optional, and off by default so a dev run has
+// nothing to configure.
+func TestLoadTreatsLogsAsOptional(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_OTLP_LOGS_ENDPOINT", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+
+	if cfg.LogsEnabled() {
+		t.Error("LogsEnabled() = true with no OTLP logs endpoint configured")
+	}
+}
+
+func TestLoadRejectsAnOTLPLogsEndpointWithNoAccessCredentials(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_OTLP_LOGS_ENDPOINT", "https://otlp.example.com/v1/logs")
+	t.Setenv("CF_ACCESS_CLIENT_ID", "")
+	t.Setenv("CF_ACCESS_CLIENT_SECRET", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error when an OTLP logs endpoint is set without Access credentials")
+	}
+}
+
+// Traces and logs share one token (CONTEXT.md §6), so either one configured
+// alone is enough to require it — not just both together.
+func TestLoadRequiresAccessCredentialsForLogsEvenWithTracingDisabled(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_OTLP_ENDPOINT", "")
+	t.Setenv("CROWDMON_OTLP_LOGS_ENDPOINT", "https://otlp.example.com/v1/logs")
+	t.Setenv("CF_ACCESS_CLIENT_ID", "id.access")
+	t.Setenv("CF_ACCESS_CLIENT_SECRET", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+	if !cfg.LogsEnabled() {
+		t.Error("LogsEnabled() = false with an OTLP logs endpoint configured")
+	}
+	if cfg.TracingEnabled() {
+		t.Error("TracingEnabled() = true with no OTLP traces endpoint configured")
+	}
+}
+
 func TestLoadDefaultsEnvironment(t *testing.T) {
 	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
 	t.Setenv("CROWDMON_ENV", "")

@@ -15,8 +15,10 @@ here could never be the way to change anything there. Ownership follows the
 blast radius, the same argument §6 makes for the tunnel.
 
 Nothing is lost by the separation: the worker makes only outbound calls, so
-it needs no shared network. Its spans go to `otlp.mkcarl.com` over the public
-internet through Access, exactly as the Cloudflare Worker's do.
+it needs no shared network. Its spans and logs go to `otlp.mkcarl.com` over
+the public internet through Access, exactly as the Cloudflare Worker's spans
+do — the collector's own `logs → loki` pipeline is what turns the log half
+into Loki data, and nothing about that pipeline lives in this repo.
 
 ## Install
 
@@ -63,8 +65,10 @@ journalctl --user -u crowdmon-update.service
 ```
 
 Logs are JSON, one line per record, carrying the `trace_id` of the span each
-was emitted under — `docker compose logs | jq` is the intended reading, and
-the trace itself is in Tempo.
+was emitted under — `docker compose logs | jq` is the intended local reading.
+The same records also reach Loki over OTLP when `CROWDMON_OTLP_LOGS_ENDPOINT`
+is set, so `{service_name="crowdmon-worker"}` in Grafana's Explore is the
+intended remote one, and the trace itself is in Tempo either way.
 
 ## Reboots
 
