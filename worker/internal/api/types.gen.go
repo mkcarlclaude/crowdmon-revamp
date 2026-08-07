@@ -273,6 +273,9 @@ type Job struct {
 	Id   int     `json:"id"`
 	Kind JobKind `json:"kind"`
 
+	// QueueWaitSeconds Example: 42
+	QueueWaitSeconds int `json:"queue_wait_seconds"`
+
 	// Traceparent Example: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
 	Traceparent *string `json:"traceparent"`
 
@@ -294,8 +297,25 @@ type JobList struct {
 	Now int `json:"now"`
 }
 
+// JobStats defines model for JobStats.
+type JobStats struct {
+	Claimed JobStatusCounts `json:"claimed"`
+	Done    JobStatusCounts `json:"done"`
+	Failed  JobStatusCounts `json:"failed"`
+	Pending JobStatusCounts `json:"pending"`
+}
+
 // JobStatus defines model for JobStatus.
 type JobStatus string
+
+// JobStatusCounts defines model for JobStatusCounts.
+type JobStatusCounts struct {
+	// Chunk Example: 14
+	Chunk int `json:"chunk"`
+
+	// Download Example: 1
+	Download int `json:"download"`
+}
 
 // ReportImagesRequest defines model for ReportImagesRequest.
 type ReportImagesRequest struct {
@@ -488,6 +508,13 @@ type ClientInterface interface {
 	// Corresponds with POST /api/jobs/claim (the `ClaimJob` operationId).
 	ClaimJob(ctx context.Context, body ClaimJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// JobStats Job counts by status and kind
+	//
+	// The only place queue depth can be read from (CONTEXT.md §6: Workers export traces only, and Prometheus cannot scrape a Worker). The Go worker polls this once per metrics export interval and republishes it as the `queue_depth{status,kind}` gauge Prometheus actually scrapes (worker/internal/telemetry/metrics.go) — the dashboard's queue-depth panel reads that gauge, never this endpoint directly. Sits beside claim, heartbeat and complete rather than under `/api/admin/*`: same trust boundary as the rest of `/api/jobs/*`, which carries no Access assertion and no worker-id credential today, and this endpoint is read-only besides — a stray caller learns nothing here it could not already infer by polling claim until it stopped returning 200.
+	//
+	// Corresponds with GET /api/jobs/stats (the `JobStats` operationId).
+	JobStats(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CompleteJobWithBody Report a held job as done or failed
 	//
 	// Takes any type of body and a specified content type.
@@ -662,6 +689,23 @@ func (c *Client) ClaimJobWithBody(ctx context.Context, contentType string, body 
 // Corresponds with POST /api/jobs/claim (the `ClaimJob` operationId).
 func (c *Client) ClaimJob(ctx context.Context, body ClaimJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimJobRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// JobStats Job counts by status and kind
+//
+// The only place queue depth can be read from (CONTEXT.md §6: Workers export traces only, and Prometheus cannot scrape a Worker). The Go worker polls this once per metrics export interval and republishes it as the `queue_depth{status,kind}` gauge Prometheus actually scrapes (worker/internal/telemetry/metrics.go) — the dashboard's queue-depth panel reads that gauge, never this endpoint directly. Sits beside claim, heartbeat and complete rather than under `/api/admin/*`: same trust boundary as the rest of `/api/jobs/*`, which carries no Access assertion and no worker-id credential today, and this endpoint is read-only besides — a stray caller learns nothing here it could not already infer by polling claim until it stopped returning 200.
+//
+// Corresponds with GET /api/jobs/stats (the `JobStats` operationId).
+func (c *Client) JobStats(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewJobStatsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -1008,6 +1052,33 @@ func NewClaimJobRequestWithBody(server string, contentType string, body io.Reade
 	return req, nil
 }
 
+// NewJobStatsRequest constructs an http.Request for the JobStats method
+func NewJobStatsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/jobs/stats")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCompleteJobRequest calls the generic CompleteJob builder with application/json body
 func NewCompleteJobRequest(server string, id int, body CompleteJobJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -1320,6 +1391,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/jobs/claim (the `ClaimJob` operationId).
 	ClaimJobWithResponse(ctx context.Context, body ClaimJobJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimJobResponse, error)
+
+	// JobStatsWithResponse Job counts by status and kind
+	//
+	// The only place queue depth can be read from (CONTEXT.md §6: Workers export traces only, and Prometheus cannot scrape a Worker). The Go worker polls this once per metrics export interval and republishes it as the `queue_depth{status,kind}` gauge Prometheus actually scrapes (worker/internal/telemetry/metrics.go) — the dashboard's queue-depth panel reads that gauge, never this endpoint directly. Sits beside claim, heartbeat and complete rather than under `/api/admin/*`: same trust boundary as the rest of `/api/jobs/*`, which carries no Access assertion and no worker-id credential today, and this endpoint is read-only besides — a stray caller learns nothing here it could not already infer by polling claim until it stopped returning 200.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/jobs/stats (the `JobStats` operationId).
+	JobStatsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JobStatsResponse, error)
 
 	// CompleteJobWithBodyWithResponse Report a held job as done or failed
 	//
@@ -1646,6 +1726,47 @@ func (r ClaimJobResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ClaimJobResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type JobStatsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *JobStats
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r JobStatsResponse) GetJSON200() *JobStats {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r JobStatsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r JobStatsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r JobStatsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r JobStatsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1989,6 +2110,21 @@ func (c *ClientWithResponses) ClaimJobWithResponse(ctx context.Context, body Cla
 	return ParseClaimJobResponse(rsp)
 }
 
+// JobStatsWithResponse Job counts by status and kind
+//
+// The only place queue depth can be read from (CONTEXT.md §6: Workers export traces only, and Prometheus cannot scrape a Worker). The Go worker polls this once per metrics export interval and republishes it as the `queue_depth{status,kind}` gauge Prometheus actually scrapes (worker/internal/telemetry/metrics.go) — the dashboard's queue-depth panel reads that gauge, never this endpoint directly. Sits beside claim, heartbeat and complete rather than under `/api/admin/*`: same trust boundary as the rest of `/api/jobs/*`, which carries no Access assertion and no worker-id credential today, and this endpoint is read-only besides — a stray caller learns nothing here it could not already infer by polling claim until it stopped returning 200.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/jobs/stats (the `JobStats` operationId).
+func (c *ClientWithResponses) JobStatsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JobStatsResponse, error) {
+	rsp, err := c.JobStats(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseJobStatsResponse(rsp)
+}
+
 // CompleteJobWithBodyWithResponse Report a held job as done or failed
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -2319,6 +2455,32 @@ func ParseClaimJobResponse(rsp *http.Response) (*ClaimJobResponse, error) {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseJobStatsResponse parses an HTTP response from a JobStatsWithResponse call
+func ParseJobStatsResponse(rsp *http.Response) (*JobStatsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &JobStatsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JobStats
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
