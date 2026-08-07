@@ -37,9 +37,17 @@ services:
       - source-videos:/home/worker/videos
 
     # No ports, no inbound anything. The worker only makes outbound calls: to
-    # the API over the internet, and to the collector through otlp.mkcarl.com.
-    # It joins no network beyond the default one this project creates, and in
-    # particular not the monitoring stack's — nothing needs to reach it.
+    # the API over the internet, to the collector through otlp.mkcarl.com, and
+    # since M8.3 to R2's S3-compatible endpoint directly — frame bytes never
+    # transit the Workers API (CONTEXT.md §2). It joins no network beyond the
+    # default one this project creates, and in particular not the monitoring
+    # stack's — nothing needs to reach it.
+
+    # R2 and dedup settings (M8.3) flow through env_file above with everything
+    # else — no separate `environment:` list here, and none should be added
+    # for them. A list that named some keys and left the rest to env_file
+    # would make it look like the named ones are special; they aren't, and the
+    # right place to see what's configured is .env.example.
 
     # Stdout is the log, and the box's journal is where it lands. Capped so a
     # worker in a failure loop cannot fill the disk the video work will need.

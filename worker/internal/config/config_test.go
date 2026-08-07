@@ -213,3 +213,121 @@ func TestLoadRejectsAnUnparseableSourceTTL(t *testing.T) {
 		t.Fatal("expected an error for a duration with no unit")
 	}
 }
+
+// R2Bucket defaults to the bucket infra/main.tf actually creates, and
+// DedupThreshold defaults to zero — "let frames.Config decide" — rather than
+// a number restated here (M8.3).
+func TestLoadDefaultsR2BucketAndDedupThreshold(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_R2_BUCKET", "")
+	t.Setenv("CROWDMON_DEDUP_THRESHOLD", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+
+	if cfg.R2Bucket != DefaultR2Bucket {
+		t.Errorf("R2Bucket = %q, want %q", cfg.R2Bucket, DefaultR2Bucket)
+	}
+	if cfg.DedupThreshold != 0 {
+		t.Errorf("DedupThreshold = %d, want 0 (frames.Config decides)", cfg.DedupThreshold)
+	}
+	if cfg.UploadsEnabled() {
+		t.Error("UploadsEnabled() = true with no R2 credentials configured")
+	}
+}
+
+// A malformed threshold has to fail loudly. Falling back to the zero value on
+// a parse error would look identical to "unconfigured," and the two mean
+// different things downstream once frames.Config.Threshold() is in the
+// picture: this is a mistake to report now, not a dataset in a silently
+// different dedup regime for M8.4 to puzzle over later.
+func TestLoadRejectsAnUnparseableDedupThreshold(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_DEDUP_THRESHOLD", "not-a-number")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a non-integer CROWDMON_DEDUP_THRESHOLD")
+	}
+}
+
+// Negative is rejected too: frames.Config.Threshold() treats <=0 as "use the
+// default," so a negative value would silently collapse to the same default a
+// typo'd zero would, and the operator would have no way to tell the two apart.
+func TestLoadRejectsANegativeDedupThreshold(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_DEDUP_THRESHOLD", "-1")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a negative CROWDMON_DEDUP_THRESHOLD")
+	}
+}
+
+func TestLoadReadsAPositiveDedupThreshold(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_DEDUP_THRESHOLD", "14")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+	if cfg.DedupThreshold != 14 {
+		t.Errorf("DedupThreshold = %d, want 14", cfg.DedupThreshold)
+	}
+}
+
+// R2 is fail-closed on partial configuration (M8.3): a chunk job that
+// silently skipped its upload because one of three required values was
+// missing would report success while writing nothing to R2.
+func TestLoadRejectsPartialR2Credentials(t *testing.T) {
+	cases := []struct {
+		name            string
+		accountID       string
+		accessKeyID     string
+		secretAccessKey string
+	}{
+		{"only account id", "acct", "", ""},
+		{"only access key", "", "key", ""},
+		{"only secret", "", "", "secret"},
+		{"missing secret", "acct", "key", ""},
+		{"missing access key", "acct", "", "secret"},
+		{"missing account id", "", "key", "secret"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+			t.Setenv("CROWDMON_R2_ACCOUNT_ID", tc.accountID)
+			t.Setenv("CROWDMON_R2_ACCESS_KEY_ID", tc.accessKeyID)
+			t.Setenv("CROWDMON_R2_SECRET_ACCESS_KEY", tc.secretAccessKey)
+
+			if _, err := Load(); err == nil {
+				t.Fatalf("expected an error for partial R2 credentials (%s)", tc.name)
+			}
+		})
+	}
+}
+
+func TestLoadCarriesCompleteR2Credentials(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_R2_ACCOUNT_ID", "acct")
+	t.Setenv("CROWDMON_R2_ACCESS_KEY_ID", "key")
+	t.Setenv("CROWDMON_R2_SECRET_ACCESS_KEY", "secret")
+	t.Setenv("CROWDMON_R2_BUCKET", "crowdmon-frames-test")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+
+	if !cfg.UploadsEnabled() {
+		t.Error("UploadsEnabled() = false with complete R2 credentials configured")
+	}
+	if cfg.R2AccountID != "acct" || cfg.R2AccessKeyID != "key" || cfg.R2SecretAccessKey != "secret" {
+		t.Errorf("R2 credentials = %q/%q/%q, want acct/key/secret", cfg.R2AccountID, cfg.R2AccessKeyID, cfg.R2SecretAccessKey)
+	}
+	if cfg.R2Bucket != "crowdmon-frames-test" {
+		t.Errorf("R2Bucket = %q, want crowdmon-frames-test", cfg.R2Bucket)
+	}
+}

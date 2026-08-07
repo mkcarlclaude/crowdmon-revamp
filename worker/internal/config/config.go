@@ -7,6 +7,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -30,6 +32,12 @@ const DefaultWorkDir = "/home/worker/videos"
 // whose source vanished) looks exactly like the affinity failure M7.4 exists
 // to report, and the two would be indistinguishable in the dashboard.
 const DefaultSourceTTL = 6 * time.Hour
+
+// DefaultR2Bucket matches `${var.project_name}-frames` in infra/main.tf. The
+// bucket name is the resource's identity there (infra/README.md: it survives
+// a destroy/re-apply where the D1 database id does not), so it is safe to
+// bake in as a default rather than force every deployment to restate it.
+const DefaultR2Bucket = "crowdmon-frames"
 
 // Config is the worker's runtime configuration.
 type Config struct {
@@ -76,6 +84,34 @@ type Config struct {
 	// file out from under a pending chunk turns a working video into M7.4's
 	// clean failure for no reason.
 	SourceTTL time.Duration
+	// R2AccountID selects the R2 S3-compatible endpoint: `https://<id>.r2.
+	// cloudflarestorage.com` (M8.3). R2 has no region concept the way S3
+	// does, so this — not a region string — is what actually routes an
+	// upload to the right account.
+	R2AccountID string
+	// R2Bucket is the frames bucket (infra/main.tf's `cloudflare_r2_bucket.
+	// frames`). Defaulted rather than required: every deployment names the
+	// same bucket, and requiring it restated would just be one more place for
+	// a typo to silently create a second bucket if it were ever mistyped as a
+	// Terraform variable, R2 not rejecting an unknown name the way D1 would
+	// reject an unknown database id.
+	R2Bucket string
+	// R2AccessKeyID and R2SecretAccessKey are the S3-compatible API token
+	// minted by hand from the R2 dashboard (infra/README.md), scoped to
+	// R2Bucket only. Not a Terraform resource, for the same reason the
+	// state-bucket token isn't: Terraform would have to hold the secret that
+	// authenticates it to itself.
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	// DedupThreshold is passed straight through to frames.Config.
+	// DedupThreshold. Zero means "let the frames package decide"
+	// (frames.DefaultDedupThreshold) rather than a number restated here:
+	// config deliberately does not import frames (that would risk a cycle
+	// once frames needs anything from config), so the only way to avoid two
+	// packages agreeing on 10 today and disagreeing after one of them is
+	// edited tomorrow is to have exactly one of them own the number. This
+	// package owns the environment variable name; frames owns the value.
+	DedupThreshold int
 }
 
 // TracingEnabled reports whether an exporter should be built. Config answers
@@ -86,6 +122,13 @@ func (c Config) TracingEnabled() bool { return c.OTLPEndpoint != "" }
 // LogsEnabled reports whether the OTLP log exporter should be built. Mirrors
 // TracingEnabled exactly, for the same reason.
 func (c Config) LogsEnabled() bool { return c.OTLPLogsEndpoint != "" }
+
+// UploadsEnabled reports whether a frames.Uploader should be built. Checking
+// only R2AccountID, like TracingEnabled checks only its one endpoint, is
+// enough: Load fails closed on a partially set R2 credential (below), so by
+// the time a Config exists R2AccountID is either empty alongside the other
+// two or set alongside them.
+func (c Config) UploadsEnabled() bool { return c.R2AccountID != "" }
 
 // Load reads configuration from the environment, applying defaults where a
 // missing value is not an error. It returns an error rather than exiting so
@@ -101,6 +144,10 @@ func Load() (Config, error) {
 		AccessClientSecret: os.Getenv("CF_ACCESS_CLIENT_SECRET"),
 		WorkDir:            envOrDefault("CROWDMON_WORK_DIR", DefaultWorkDir),
 		SourceTTL:          DefaultSourceTTL,
+		R2AccountID:        os.Getenv("CROWDMON_R2_ACCOUNT_ID"),
+		R2Bucket:           envOrDefault("CROWDMON_R2_BUCKET", DefaultR2Bucket),
+		R2AccessKeyID:      os.Getenv("CROWDMON_R2_ACCESS_KEY_ID"),
+		R2SecretAccessKey:  os.Getenv("CROWDMON_R2_SECRET_ACCESS_KEY"),
 	}
 
 	if cfg.APIBaseURL == "" {
@@ -120,6 +167,49 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("CROWDMON_SOURCE_TTL must not be negative, got %s", raw)
 		}
 		cfg.SourceTTL = ttl
+	}
+
+	// Parsed and range-checked rather than defaulted on error, for the same
+	// reason CROWDMON_SOURCE_TTL is. It would be tempting to let a parse
+	// failure fall back to the zero value here, since zero already means
+	// "use frames.DefaultDedupThreshold" — but that makes CROWDMON_
+	// DEDUP_THRESHOLD=banana behave identically to leaving it unset, and an
+	// operator who set it to something never gets told their something was
+	// wrong. A negative value is rejected for the mirror-image reason:
+	// frames.Config.Threshold() treats <=0 as "use the default", so letting a
+	// negative number through would make it collapse to the same default an
+	// absent value produces, and the two mean different things — one is "I
+	// didn't configure this," the other is "I configured this incorrectly."
+	if raw := os.Getenv("CROWDMON_DEDUP_THRESHOLD"); raw != "" {
+		threshold, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("CROWDMON_DEDUP_THRESHOLD is not an integer: %w", err)
+		}
+		if threshold < 0 {
+			return Config{}, fmt.Errorf("CROWDMON_DEDUP_THRESHOLD must not be negative, got %d", threshold)
+		}
+		cfg.DedupThreshold = threshold
+	}
+
+	// R2 is fail-closed on partial configuration, the same argument as the
+	// Access credentials below: a chunk job that silently skipped its upload
+	// because one of three required values was missing would report success
+	// while writing nothing to R2, and that gap is invisible until someone
+	// notices the bucket is short frames a job claimed to have produced.
+	if cfg.R2AccountID != "" || cfg.R2AccessKeyID != "" || cfg.R2SecretAccessKey != "" {
+		var missing []string
+		if cfg.R2AccountID == "" {
+			missing = append(missing, "CROWDMON_R2_ACCOUNT_ID")
+		}
+		if cfg.R2AccessKeyID == "" {
+			missing = append(missing, "CROWDMON_R2_ACCESS_KEY_ID")
+		}
+		if cfg.R2SecretAccessKey == "" {
+			missing = append(missing, "CROWDMON_R2_SECRET_ACCESS_KEY")
+		}
+		if len(missing) > 0 {
+			return Config{}, fmt.Errorf("R2 is partially configured: missing %s", strings.Join(missing, ", "))
+		}
 	}
 
 	// The hostname is the right default because a container's hostname is its
