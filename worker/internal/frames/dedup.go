@@ -118,7 +118,7 @@ func (d Deduper) Dedup(frames []Frame, threshold int) (DedupResult, error) {
 	return result, nil
 }
 
-// hashAll computes hash(f.Path) for every frame, bounded to runtime.NumCPU()
+// hashAll computes hash(f.hashSource()) for every frame, bounded to runtime.NumCPU()
 // concurrent hashes.
 //
 // Unbounded concurrency (one goroutine per frame with no limit) would be fine
@@ -159,9 +159,9 @@ func hashAll(frames []Frame, hash hashFunc) ([]Hash, error) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			h, err := hash(f.Path)
+			h, err := hash(f.hashSource())
 			if err != nil {
-				errs[i] = fmt.Errorf("hashing %s: %w", f.Path, err)
+				errs[i] = fmt.Errorf("hashing %s: %w", f.hashSource(), err)
 				return
 			}
 			hashes[i] = h
