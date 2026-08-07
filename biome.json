@@ -6,7 +6,13 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/worker-configuration.d.ts", "!apps/api/openapi.json", "!.claude"]
+    "includes": [
+      "**",
+      "!**/worker-configuration.d.ts",
+      "!apps/api/openapi.json",
+      "!infra/grafana/*.json",
+      "!.claude"
+    ]
   },
   "css": {
     "parser": {
