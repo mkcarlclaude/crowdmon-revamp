@@ -208,6 +208,100 @@ func (c *Client) FanOut(ctx context.Context, jobID int, probed Probed) (FanOutRe
 	}
 }
 
+// Image is one deduplicated frame that reached R2, as the API records it.
+//
+// Deliberately primitives rather than a frames.Kept: this package is the wire,
+// and importing the extraction package here would make the queue client depend
+// on how frames happen to be produced. The mapping costs a loop at the one call
+// site that has both types in hand.
+type Image struct {
+	// Key is the R2 object key the bytes were written to, and it is
+	// deterministic in (video id, timestamp) — see frames.Key. The API stores
+	// it verbatim.
+	Key string
+	// TimestampSeconds is the offset into the source video, which together with
+	// the video id is the row's identity: a re-run after a reap updates that
+	// row rather than adding a second one.
+	TimestampSeconds float64
+	// PHash is the 16-character hex rendering of the perceptual hash. The API
+	// rejects anything else, so that the phash index means one thing.
+	PHash string
+}
+
+// Extraction is everything a finished chunk has to report: the counts the
+// dedup ratio is computed from, the rows themselves, and the provenance that
+// makes both interpretable later.
+type Extraction struct {
+	Extracted int
+	Kept      int
+	// DedupThreshold is the threshold *in force for this run*, stamped onto
+	// every row it produced (M8.4). Changing it later does not re-deduplicate
+	// old videos, so a dataset without this recorded per row is an unrecorded
+	// mixture of regimes and no dedup ratio drawn from it means anything.
+	DedupThreshold int
+	// ConfigVersion describes every setting that shaped this output, and lands
+	// on the job rather than the rows — one job, one configuration.
+	ConfigVersion string
+	Images        []Image
+}
+
+// ReportImages records a chunk's output: the image rows, the frame counts on
+// the `chunks` row, and the configuration that produced them.
+//
+// One call carrying everything rather than one per image, for the reason
+// fan-out is one call: the API writes it as a single D1 batch, and rows that
+// landed without the threshold that produced them are precisely the provenance
+// gap M8.4 exists to close.
+//
+// Called before Complete, deliberately. Reporting on a lease this worker still
+// holds is what makes the 404 meaningful — a chunk marked done and then found
+// to have no rows would be indistinguishable from one that extracted nothing.
+func (c *Client) ReportImages(ctx context.Context, jobID int, extraction Extraction) error {
+	images := make([]api.ImageFrame, len(extraction.Images))
+	for i, image := range extraction.Images {
+		images[i] = api.ImageFrame{
+			R2Key: image.Key,
+			// float32 on the wire because the contract says `number` and
+			// oapi-codegen renders that as the narrower type. Harmless here and
+			// worth knowing why it is not: extraction is 1fps, so every
+			// timestamp is a whole number of seconds well inside float32's
+			// exactly-representable integer range, and the six-hour ceiling on
+			// video length (schemas.ts) keeps it there.
+			TimestampSeconds: float32(image.TimestampSeconds),
+			Phash:            image.PHash,
+		}
+	}
+
+	resp, err := c.api.ReportImages(ctx, jobID, api.ReportImagesJSONRequestBody{
+		WorkerId:        c.workerID,
+		FramesExtracted: extraction.Extracted,
+		FramesKept:      extraction.Kept,
+		DedupThreshold:  extraction.DedupThreshold,
+		ConfigVersion:   extraction.ConfigVersion,
+		Images:          images,
+	})
+	if err != nil {
+		return fmt.Errorf("reporting the images for job %d: %w", jobID, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusNotFound:
+		return fmt.Errorf("reporting the images for job %d: %w", jobID, ErrLeaseLost)
+	case http.StatusBadRequest:
+		// The contract refused the report — a phash that is not 16 hex
+		// characters, counts that disagree, a timestamp outside the chunk's
+		// window. Every one of those is this worker's bug and will be identical
+		// on the next attempt, so it is classified alongside the fan-out's 400
+		// rather than left for the reaper.
+		return fmt.Errorf("reporting the images for job %d: %w: %s", jobID, ErrRejected, statusError(resp))
+	default:
+		return fmt.Errorf("reporting the images for job %d: %w", jobID, statusError(resp))
+	}
+}
+
 // leaseOutcome reads the two lease-bearing endpoints' answers. 404 is the
 // API's single answer for "no job with this id is held by this worker",
 // deliberately not distinguishing a missing job from a reaped one — the

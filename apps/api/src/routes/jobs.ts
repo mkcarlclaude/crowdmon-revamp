@@ -465,13 +465,23 @@ export const reportImagesHandler: RouteHandler<
               dedup_threshold = excluded.dedup_threshold`,
       ).bind(image.r2_key, job.video_id, image.timestamp_seconds, image.phash, dedup_threshold),
     ),
+    // Both updates carry the lease in their `WHERE`, for the reason heartbeat
+    // and complete do: the `SELECT` above proved the lease at one instant, and
+    // the reaper can take the job back in the gap before the batch runs. The
+    // image rows deliberately do not — they are the same deterministic keys
+    // and the same bytes whoever holds the lease, so writing them late is
+    // harmless, while stamping this run's `config_version` onto a job somebody
+    // else is now re-running would describe the wrong regime.
     c.env.DB.prepare(
-      "UPDATE chunks SET frames_extracted = ?, frames_kept = ? WHERE job_id = ?",
-    ).bind(frames_extracted, frames_kept, id),
-    c.env.DB.prepare("UPDATE jobs SET config_version = ?, updated_at = ? WHERE id = ?").bind(
+      `UPDATE chunks SET frames_extracted = ?, frames_kept = ?
+        WHERE job_id = ?
+          AND EXISTS (SELECT 1 FROM jobs WHERE ${HELD_BY})`,
+    ).bind(frames_extracted, frames_kept, id, id, worker_id),
+    c.env.DB.prepare(`UPDATE jobs SET config_version = ?, updated_at = ? WHERE ${HELD_BY}`).bind(
       config_version,
       at,
       id,
+      worker_id,
     ),
   ];
 

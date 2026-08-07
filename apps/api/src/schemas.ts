@@ -294,8 +294,18 @@ export const JobList = z
  */
 const ImageFrame = z
   .object({
-    r2_key: z.string().min(1).openapi({ example: "dQw4w9WgXcQ/0042.500.jpg" }),
-    timestamp_seconds: z.number().nonnegative().openapi({ example: 42.5 }),
+    // The example is the real format, produced by `frames.Key` in the Go
+    // worker: a fixed prefix, the video id, and the timestamp zero-padded to
+    // three decimals so keys sort in frame order. Deliberately not validated
+    // by a pattern here — the key's shape is the worker's to own (it has to
+    // match the object it actually wrote), and a regex in the contract would
+    // be a second definition of it that could drift.
+    r2_key: z.string().min(1).openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    // A number rather than an integer, matching the column. Extraction is
+    // 1fps today so every value is whole, and the column was not narrowed
+    // because a future rate that is not 1fps would otherwise be a migration
+    // rather than a setting.
+    timestamp_seconds: z.number().nonnegative().openapi({ example: 42 }),
     phash: z
       .string()
       .regex(/^[0-9a-f]{16}$/)

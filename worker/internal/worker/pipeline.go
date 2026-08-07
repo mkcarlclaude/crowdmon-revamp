@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/api"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/frames"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/video"
 )
@@ -41,17 +43,66 @@ type SourceStore interface {
 	Prune() (int, error)
 }
 
+// FrameExtractor turns a segment of a source video into JPEGs on disk (M8.1).
+type FrameExtractor interface {
+	Extract(ctx context.Context, sourcePath string, seg frames.Segment, dir string) ([]frames.Frame, error)
+}
+
+// FrameDeduper drops the near-duplicates (M8.2).
+type FrameDeduper interface {
+	Dedup(extracted []frames.Frame, threshold int) (frames.DedupResult, error)
+}
+
+// FrameUploader writes the survivors to R2 (M8.3).
+type FrameUploader interface {
+	Upload(ctx context.Context, videoID string, kept []frames.Kept) ([]string, error)
+}
+
+// ImageReporter records the rows and the provenance behind them (M8.4).
+//
+// Separate from FanOuter although one *queue.Client satisfies both, because
+// they belong to different job kinds: a download job never reports images and a
+// chunk job never fans out, so a test for either path would otherwise have to
+// stub a method it will never call.
+type ImageReporter interface {
+	ReportImages(ctx context.Context, jobID int, extraction queue.Extraction) error
+}
+
+// Metrics is the chunk pipeline's view of telemetry.FrameMetrics: the four
+// measurements M8.2 asks for.
+//
+// An interface rather than the concrete type so this package does not import
+// telemetry, and so a nil Metrics is a legitimate configuration — see
+// Pipeline.metrics.
+type Metrics interface {
+	RecordExtracted(ctx context.Context, n int64)
+	RecordKept(ctx context.Context, n int64)
+	RecordDedupRatio(ctx context.Context, ratio float64)
+	RecordChunkDuration(ctx context.Context, d time.Duration)
+}
+
 // Pipeline is the work a claimed job asks for.
 //
-// Phase one only (M7): a download job fetches the video, probes it and fans it
-// out into 60s chunk jobs. A chunk job checks that the video it names is on
-// this box and stops there — extraction is M8, and this is where it lands.
+// Both phases of CONTEXT.md §Q13 now live here. A download job fetches the
+// video, probes it and fans it out into 60s chunk jobs (M7). A chunk job checks
+// that the video is on this box, then extracts its segment at 1fps, drops the
+// near-duplicates, uploads what survives to R2 and reports the rows (M8).
 type Pipeline struct {
 	Store      SourceStore
 	Downloader Downloader
 	Prober     Prober
 	Queue      FanOuter
-	Logger     *slog.Logger
+	Extractor  FrameExtractor
+	Deduper    FrameDeduper
+	Uploader   FrameUploader
+	Images     ImageReporter
+	// Extraction is the settings in force, and therefore what gets stamped
+	// onto the rows this pipeline produces (M8.4).
+	Extraction frames.Config
+	// Metrics may be nil, which is a worker with no metrics endpoint
+	// configured rather than a mistake.
+	Metrics Metrics
+	Logger  *slog.Logger
 }
 
 // Work runs the job, whichever kind it is. It satisfies WorkFunc.
@@ -190,29 +241,36 @@ func (p Pipeline) fanOut(
 	return nil
 }
 
-// chunk is the affinity guard (M7.4), and for now it is the whole of a chunk
-// job.
+// chunk is phase two of CONTEXT.md §Q13: extract, hash, dedup, upload, record.
 //
-// Chunk work reads the file the download left on this box's disk (CONTEXT.md
-// §Q13), so a chunk job that reaches a worker without it cannot run — today
-// because one worker holds every file, and permanently if a second worker ever
-// exists. Checked once, up front, rather than discovered by ffmpeg partway
-// through: half a chunk's frames are worse than none, because the rows they
-// produce look like a complete segment.
+// It opens with the affinity guard (M7.4). Chunk work reads the file the
+// download left on this box's disk, so a chunk job that reaches a worker
+// without it cannot run — today because one worker holds every file, and
+// permanently if a second worker ever exists. Checked once, up front, rather
+// than discovered by ffmpeg partway through: half a chunk's frames are worse
+// than none, because the rows they produce look like a complete segment.
 func (p Pipeline) chunk(ctx context.Context, job *api.Job) error {
-	_, span := tracer().Start(ctx, "job.chunk", trace.WithAttributes(
+	ctx, span := tracer().Start(ctx, "job.chunk", trace.WithAttributes(
 		attribute.Int("crowdmon.job.id", job.Id),
 		attribute.String("crowdmon.video.id", job.VideoId),
 	))
 	defer span.End()
 
-	if job.Chunk != nil {
-		span.SetAttributes(
-			attribute.Int("crowdmon.chunk.segment_index", job.Chunk.SegmentIndex),
-			attribute.Int("crowdmon.chunk.start_seconds", job.Chunk.StartSeconds),
-			attribute.Int("crowdmon.chunk.end_seconds", job.Chunk.EndSeconds),
-		)
+	if job.Chunk == nil {
+		// The claim handler (M3.4) already retires a chunk job whose `chunks`
+		// row is missing, so this is unreachable rather than merely unlikely.
+		// Terminal anyway, and stated: the alternative is extracting a segment
+		// this job never defined, which would write rows under timestamps
+		// belonging to some other part of the video.
+		return recordErr(span, Terminal(fmt.Errorf(
+			"chunk job %d arrived without a segment to work on", job.Id)))
 	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.chunk.segment_index", job.Chunk.SegmentIndex),
+		attribute.Int("crowdmon.chunk.start_seconds", job.Chunk.StartSeconds),
+		attribute.Int("crowdmon.chunk.end_seconds", job.Chunk.EndSeconds),
+	)
 
 	path, err := p.Store.Path(job.VideoId)
 	if err != nil {
@@ -228,11 +286,178 @@ func (p Pipeline) chunk(ctx context.Context, job *api.Job) error {
 		return recordErr(span, err)
 	}
 
-	// Extraction is M8.1. Said out loud in the log rather than left as a
-	// silent success, so a chunk job marked `done` with no images behind it is
-	// explicable while that is still true.
-	p.log().InfoContext(ctx, "chunk source present; extraction lands in M8",
-		"video_id", job.VideoId, "path", path)
+	started := time.Now()
+
+	// Frames go to the system temp directory, not to WorkDir beside the source
+	// videos. They are small (a minute of 1fps JPEGs against a whole video),
+	// they live for the length of one job, and nothing may ever read them
+	// again: giving them the volume that exists specifically so source videos
+	// survive a container recreate would be claiming a property they must not
+	// have. Removed on every path out, including the failing ones — a chunk
+	// that errors halfway is exactly the one that would otherwise leak.
+	dir, err := os.MkdirTemp("", fmt.Sprintf("crowdmon-chunk-%d-", job.Id))
+	if err != nil {
+		return recordErr(span, fmt.Errorf("making a working directory for job %d: %w", job.Id, err))
+	}
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			p.log().WarnContext(ctx, "could not clear the chunk's working directory",
+				"dir", dir, "error", err)
+		}
+	}()
+
+	extracted, err := p.extract(ctx, path, job.Chunk, dir)
+	if err != nil {
+		return recordErr(span, err)
+	}
+
+	deduped, err := p.dedup(ctx, extracted)
+	if err != nil {
+		return recordErr(span, err)
+	}
+
+	keys, err := p.upload(ctx, job.VideoId, deduped.Kept)
+	if err != nil {
+		return recordErr(span, err)
+	}
+
+	if err := p.report(ctx, job, deduped, keys); err != nil {
+		return recordErr(span, err)
+	}
+
+	elapsed := time.Since(started)
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.frames.extracted", deduped.Extracted),
+		attribute.Int("crowdmon.frames.kept", len(deduped.Kept)),
+		attribute.Float64("crowdmon.frames.dedup_ratio", deduped.Ratio),
+	)
+
+	// The metrics M8.2 asks for. Emitted here rather than inside each step so
+	// that a chunk which failed partway records nothing at all: a dedup ratio
+	// from a chunk whose upload then failed describes work that was thrown
+	// away, and averaged into the dashboard it is simply wrong.
+	if m := p.Metrics; m != nil {
+		m.RecordExtracted(ctx, int64(deduped.Extracted))
+		m.RecordKept(ctx, int64(len(deduped.Kept)))
+		m.RecordDedupRatio(ctx, deduped.Ratio)
+		m.RecordChunkDuration(ctx, elapsed)
+	}
+
+	p.log().InfoContext(ctx, "chunk extracted",
+		"video_id", job.VideoId, "segment_index", job.Chunk.SegmentIndex,
+		"extracted", deduped.Extracted, "kept", len(deduped.Kept),
+		"dedup_ratio", deduped.Ratio, "duration_ms", elapsed.Milliseconds())
+
+	return nil
+}
+
+func (p Pipeline) extract(
+	ctx context.Context, sourcePath string, work *api.ChunkWork, dir string,
+) ([]frames.Frame, error) {
+	ctx, span := tracer().Start(ctx, "frames.extract")
+	defer span.End()
+
+	start := time.Now()
+	extracted, err := p.Extractor.Extract(ctx, sourcePath, frames.Segment{
+		StartSeconds: work.StartSeconds,
+		EndSeconds:   work.EndSeconds,
+	}, dir)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		return nil, recordErr(span, err)
+	}
+
+	// M8.1 asks for both. The span's duration already covers the wall clock,
+	// and the attribute survives this function growing a second step — the same
+	// argument the download span makes for carrying its own duration.
+	span.SetAttributes(
+		attribute.Int("crowdmon.frames.extracted", len(extracted)),
+		attribute.Int64("crowdmon.extract.duration_ms", elapsed.Milliseconds()),
+	)
+
+	return extracted, nil
+}
+
+func (p Pipeline) dedup(ctx context.Context, extracted []frames.Frame) (frames.DedupResult, error) {
+	_, span := tracer().Start(ctx, "frames.dedup")
+	defer span.End()
+
+	threshold := p.Extraction.Threshold()
+
+	result, err := p.Deduper.Dedup(extracted, threshold)
+	if err != nil {
+		return frames.DedupResult{}, recordErr(span, err)
+	}
+
+	// The threshold is on the span as well as on every row it produced, for
+	// two different readers: the row answers "which regime is this image
+	// from" a year later, the span answers "what was this worker doing" while
+	// somebody is watching a ratio move.
+	span.SetAttributes(
+		attribute.Int("crowdmon.dedup.threshold", threshold),
+		attribute.Int("crowdmon.frames.kept", len(result.Kept)),
+		attribute.Float64("crowdmon.frames.dedup_ratio", result.Ratio),
+	)
+
+	return result, nil
+}
+
+func (p Pipeline) upload(ctx context.Context, videoID string, kept []frames.Kept) ([]string, error) {
+	ctx, span := tracer().Start(ctx, "frames.upload")
+	defer span.End()
+
+	keys, err := p.Uploader.Upload(ctx, videoID, kept)
+	if err != nil {
+		// Not terminal, and worth saying why: a failed upload is R2 or the
+		// network, both of which a retry fixes, and the re-run overwrites
+		// whatever the failed attempt managed to write because the keys are
+		// deterministic (M8.3). There is nothing to clean up first.
+		return nil, recordErr(span, err)
+	}
+
+	span.SetAttributes(attribute.Int("crowdmon.upload.objects", len(keys)))
+
+	return keys, nil
+}
+
+// report is the last step, and the order matters: the rows are written while
+// this worker still holds the lease, so a lost lease is reported as a lost
+// lease rather than discovered as a chunk marked done with nothing behind it.
+func (p Pipeline) report(
+	ctx context.Context, job *api.Job, deduped frames.DedupResult, keys []string,
+) error {
+	ctx, span := tracer().Start(ctx, "images.report")
+	defer span.End()
+
+	images := make([]queue.Image, len(deduped.Kept))
+	for i, kept := range deduped.Kept {
+		images[i] = queue.Image{
+			Key:              keys[i],
+			TimestampSeconds: kept.TimestampSeconds,
+			PHash:            kept.PHash.Hex(),
+		}
+	}
+
+	err := p.Images.ReportImages(ctx, job.Id, queue.Extraction{
+		Extracted:      deduped.Extracted,
+		Kept:           len(deduped.Kept),
+		DedupThreshold: p.Extraction.Threshold(),
+		ConfigVersion:  p.Extraction.ConfigVersion(),
+		Images:         images,
+	})
+	if err != nil {
+		// A report the contract refuses will be refused identically on every
+		// attempt, so it is retired rather than left for the reaper — the same
+		// classification the fan-out's 400 gets.
+		if errors.Is(err, queue.ErrRejected) {
+			err = Terminal(err)
+		}
+		return recordErr(span, err)
+	}
+
+	span.SetAttributes(attribute.Int("crowdmon.images.rows", len(images)))
 
 	return nil
 }

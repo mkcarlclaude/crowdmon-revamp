@@ -492,12 +492,12 @@
           "r2_key": {
             "type": "string",
             "minLength": 1,
-            "example": "dQw4w9WgXcQ/0042.500.jpg"
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
           },
           "timestamp_seconds": {
             "type": "number",
             "minimum": 0,
-            "example": 42.5
+            "example": 42
           },
           "phash": {
             "type": "string",

@@ -247,10 +247,10 @@ type ImageFrame struct {
 	// Phash Example: af3c9e1b2d4f7a80
 	Phash string `json:"phash"`
 
-	// R2Key Example: dQw4w9WgXcQ/0042.500.jpg
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
 	R2Key string `json:"r2_key"`
 
-	// TimestampSeconds Example: 42.5
+	// TimestampSeconds Example: 42
 	TimestampSeconds float32 `json:"timestamp_seconds"`
 }
 
