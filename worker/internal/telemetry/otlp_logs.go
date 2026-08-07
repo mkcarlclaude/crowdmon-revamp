@@ -7,8 +7,8 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/log/noop"
-	"go.opentelemetry.io/otel/sdk/resource"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/resource"
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
 )
@@ -47,4 +47,3 @@ func setupLogs(ctx context.Context, res *resource.Resource, cfg config.Config) (
 
 	return provider.Shutdown, nil
 }
-
