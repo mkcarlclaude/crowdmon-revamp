@@ -37,9 +37,11 @@ services:
       - source-videos:/home/worker/videos
 
     # No ports, no inbound anything. The worker only makes outbound calls: to
-    # the API over the internet, and to the collector through otlp.mkcarl.com.
-    # It joins no network beyond the default one this project creates, and in
-    # particular not the monitoring stack's — nothing needs to reach it.
+    # the API over the internet, and to the collector through otlp.mkcarl.com
+    # — traces, logs, and as of M8.2, frame-extraction metrics, all the same
+    # host and gate. It joins no network beyond the default one this project
+    # creates, and in particular not the monitoring stack's — nothing needs to
+    # reach it.
 
     # Stdout is the log, and the box's journal is where it lands. Capped so a
     # worker in a failure loop cannot fill the disk the video work will need.

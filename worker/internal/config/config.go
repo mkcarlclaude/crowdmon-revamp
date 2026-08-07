@@ -54,6 +54,20 @@ type Config struct {
 	// today, but nothing requires that, and a struct field is cheaper to keep
 	// correct than a string-surgery assumption.
 	OTLPLogsEndpoint string
+	// OTLPMetricsEndpoint is the collector's OTLP *HTTP* metrics URL, path
+	// included. Empty disables metric export (M8.2). Same collector, same
+	// host, its own path and its own field for the reason OTLPLogsEndpoint
+	// is its own field and not OTLPEndpoint-plus-suffix: nothing requires the
+	// three signals to stay co-located, and a struct field costs nothing to
+	// keep correct if they diverge.
+	//
+	// TODO(M8.2 merge): this field and MetricsEnabled() below were added by
+	// the metrics-export worktree while another agent owned this file for
+	// frame-extraction config. Fold them in during merge; the fail-closed
+	// check a few lines down should grow an `|| cfg.MetricsEnabled()` arm to
+	// match, which this worktree deliberately left untouched to avoid
+	// colliding on that line.
+	OTLPMetricsEndpoint string
 	// AccessClientID and AccessClientSecret are the Access service token that
 	// gets an export past the gate in front of the collector. Shared by
 	// traces and logs — one token, one Access application, per CONTEXT.md §6.
@@ -86,6 +100,10 @@ func (c Config) TracingEnabled() bool { return c.OTLPEndpoint != "" }
 // LogsEnabled reports whether the OTLP log exporter should be built. Mirrors
 // TracingEnabled exactly, for the same reason.
 func (c Config) LogsEnabled() bool { return c.OTLPLogsEndpoint != "" }
+
+// MetricsEnabled reports whether the OTLP metric exporter should be built.
+// Mirrors TracingEnabled and LogsEnabled exactly, for the same reason (M8.2).
+func (c Config) MetricsEnabled() bool { return c.OTLPMetricsEndpoint != "" }
 
 // Load reads configuration from the environment, applying defaults where a
 // missing value is not an error. It returns an error rather than exiting so
