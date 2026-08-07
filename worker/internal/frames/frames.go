@@ -25,27 +25,6 @@ import (
 type Frame struct {
 	Path             string
 	TimestampSeconds float64
-	// HashPath is a 32x32 greyscale copy of the same frame, emitted by the same
-	// ffmpeg pass that wrote Path (M8.1). The hash reads this instead of Path.
-	//
-	// It exists because the alternative measured badly: hashing decoded the
-	// full-resolution JPEG again purely to average it down to 32x32, which is
-	// work ffmpeg had already done once — it had every frame in memory before
-	// it encoded them. Emitting the thumbnail from the same decode turned a
-	// 3.5s dedup step into a rounding error.
-	//
-	// Empty means "hash Path itself", which is what a caller constructing
-	// Frames by hand (the tests) gets. Nothing downstream uploads or records
-	// this file; it dies with the chunk's working directory.
-	HashPath string
-}
-
-// hashSource is the file the perceptual hash should read for this frame.
-func (f Frame) hashSource() string {
-	if f.HashPath != "" {
-		return f.HashPath
-	}
-	return f.Path
 }
 
 // Kept is a frame that survived dedup, carrying the hash that decided it.
@@ -159,13 +138,6 @@ func (c Config) Threshold() int {
 // in that answer; anything that changes the output and is not here makes the
 // dataset an unrecorded mixture, which is the exact failure M8.4 exists to
 // prevent.
-// The token names the *whole* hash pipeline, not just the transform, because
-// the downscale in front of the DCT is part of what decides a bit. It changed
-// once already: `dct64` hashed a Go box-filter downscale of the full-size JPEG,
-// `dct64-va32` hashes ffmpeg's `scale=32:32:flags=area` output from the same
-// decode. The two do not agree bit for bit, so rows produced under each are
-// different regimes and have to say so — which is the entire reason this string
-// is stamped per job rather than assumed constant.
 func (c Config) ConfigVersion() string {
-	return fmt.Sprintf("extract=ffmpeg-fps%d;phash=dct64-va32;threshold=%d", FPS, c.Threshold())
+	return fmt.Sprintf("extract=ffmpeg-fps%d;phash=dct64;threshold=%d", FPS, c.Threshold())
 }
