@@ -45,7 +45,7 @@
       }
     ]
   },
-  "description": "Job-pipeline health for crowdmon's v1 flywheel: queue depth, chunk-extraction duration, dedup ratio, and reaper-driven reclaim/failure rates. Business data (annotations, dataset counts, model versions) lives in D1 and is shown in /admin, not here — see CONTEXT.md §7's \"Do not rebuild Grafana inside /admin.\"",
+  "description": "Job-pipeline health for crowdmon's v1 flywheel: queue depth, download and chunk duration, dedup ratio, reclaim rate, and every way a job permanently fails. Business data (annotations, dataset counts, model versions) lives in D1 and is shown in /admin, not here — see CONTEXT.md §7's \"Do not rebuild Grafana inside /admin.\"",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -57,7 +57,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "Queue depth",
-      "description": "D1 job-table rows by status and kind, from the Go worker's `queue.depth` OTel gauge (queue_depth{status,kind} in Prometheus). Landed alongside this dashboard — see infra/grafana/README.md if this panel is empty, that is expected until the exporting change ships. A bad value is `pending` climbing while `claimed` stays flat: work is arriving faster than the one worker claims it, or the worker is down. `claimed` climbing without `done`/`failed` following is a stuck lease — the reaper (5-minute cron, CONTEXT.md §Q14) should be pulling those back to `pending` within roughly 7 minutes; if `claimed` keeps growing past that, the reaper itself is the thing that's broken. Scoped to `exported_job=\"crowdmon-worker\"` like every other panel here: this Prometheus is shared with unrelated projects (infra/grafana/README.md), and `queue_depth` is a generic enough name that leaving it unscoped is one collision away from plotting somebody else's queue. Note the label is `exported_job`, not `job` — Prometheus relabels the OTel resource attribute out of the way of its own scrape-target labels, and a naive `job=\"crowdmon-worker\"` filter silently matches nothing.",
+      "description": "D1 job-table rows by status and kind, from the Go worker's `queue.depth` OTel gauge (queue_depth{status,kind} in Prometheus). The worker reads /api/jobs/stats once per metrics export interval and republishes it here; an empty panel means the worker is not exporting, which is itself the signal. A bad value is `pending` climbing while `claimed` stays flat: work is arriving faster than the one worker claims it, or the worker is down. `claimed` climbing without `done`/`failed` following is a stuck lease — the reaper (5-minute cron, CONTEXT.md §Q14) should be pulling those back to `pending` within roughly 7 minutes; if `claimed` keeps growing past that, the reaper itself is the thing that's broken. Scoped to `exported_job=\"crowdmon-worker\"` like every other panel here: this Prometheus is shared with unrelated projects (infra/grafana/README.md), and `queue_depth` is a generic enough name that leaving it unscoped is one collision away from plotting somebody else's queue. Note the label is `exported_job`, not `job` — Prometheus relabels the OTel resource attribute out of the way of its own scrape-target labels, and a naive `job=\"crowdmon-worker\"` filter silently matches nothing.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
