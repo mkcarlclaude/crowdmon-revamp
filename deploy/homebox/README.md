@@ -98,3 +98,20 @@ signal the process instead:
 docker exec crowdmon-worker sh -c 'kill -TERM 1'
 docker inspect crowdmon-worker --format '{{.RestartCount}}'   # should increment
 ```
+
+**`kill -9` in place of `kill -TERM` there does nothing at all,** silently — no
+error, no exit, `RestartCount` unmoved, the worker carrying on with its job.
+This cost an M9 acceptance run twenty minutes of confusion, so: the worker is
+PID 1 in the container's PID namespace, and the kernel refuses to deliver a
+signal to namespace-PID-1 from inside that namespace *unless the process has a
+handler registered for it*. SIGKILL can never have a handler, so it is dropped.
+SIGTERM arrives because the Go runtime catches it — `/proc/1/status`'s `SigCgt`
+mask is where you can see the difference.
+
+The protection is the kernel's, not Docker's, and it is why the graceful path
+is the only one reachable from inside. A signal that genuinely cannot be caught
+would have to come from the host, which needs root here and is not worth it:
+the worker's own shutdown already leaves an in-flight job's lease to go stale,
+which is the case being tested. Confirmed on 2026-08-08 — the shutdown logged
+`shutting down mid-job, leaving it for the reaper`, and the reaper took the
+lease back with `attempts` going to 2.

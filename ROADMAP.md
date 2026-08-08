@@ -668,25 +668,70 @@ the directory visibly exists. Verified the right way round: the volume came up
 *Depends on: M8.*
 
 ### M9.1 — Grafana dashboard
-- [ ] Queue depth, job duration, dedup ratio, reclaim rate, failure rate
-- [ ] Dashboard JSON committed to the repo
-- [ ] Reachable from the admin dashboard by link, not rebuilt inside it
+- [x] Queue depth, job duration, dedup ratio, reclaim rate, failure rate — six panels,
+      because "job duration" is two job kinds and chunk duration alone would have
+      answered for the phase that is *not* most of a video's wall time
+- [x] Dashboard JSON committed to the repo, with `${DS_PROMETHEUS}` as an import input
+      rather than a datasource UID this repo does not own and cannot predict
+- [x] Reachable from the admin dashboard by link, not rebuilt inside it
+
+      **Two panels had no data source and had to grow one.** Queue depth exists only in
+      D1, Prometheus cannot scrape a Worker, and adding a scrape target would mean
+      editing a monitoring stack shared with unrelated projects — so `/api/jobs/stats`
+      returns all eight status×kind counts and the Go worker republishes them as a
+      gauge. Zero-filled by the API, because `GROUP BY` omits empty buckets and a
+      drained queue would otherwise be indistinguishable from a worker that stopped
+      reporting, which is the one thing the panel exists to show.
+
+      Failure rate counted only reaper retirements, because `complete` wrote
+      `status='failed'` to D1 without touching its span — so at the span-metrics layer a
+      *reported* terminal failure looked exactly like a success. `job.failed` closes
+      that, in the same one-span-per-job, distinct-name idiom §Q14's M6 amendment
+      argues for.
 
 ### M9.2 — End-to-end trace
-- [ ] Single trace spanning submit → claim → download → fan-out → chunk completion
-- [ ] `traceparent` propagated across the Workers-to-Go boundary
-- [ ] Screenshot or recording captured for the writeup
+- [x] Single trace spanning submit → claim → download → fan-out → chunk completion
+- [x] `traceparent` propagated across the Workers-to-Go boundary
+- [x] Captured for the writeup — as the trace's own span census rather than a
+      screenshot, which is the thing a reader can check against Tempo themselves:
+      3,961 spans under one trace id, one `POST /api/admin/videos` at the root
+
+      **The join could not be a header.** A submit and the claim that runs it are
+      minutes or hours apart with no synchronous call between them, so the job row is
+      the only thing that survives the gap — migration 0002 adds a nullable
+      `traceparent`, submit stamps it, fan-out forwards the incoming one so every chunk
+      inherits the same trace id, and the worker extracts it with the propagator it
+      already installs. Null or malformed falls back to a root span: telemetry never
+      fails a job.
+
+      **Honest about one edge.** `job.claimed` is a marker inside the adopted trace, not
+      the claim request wearing a new parent. The response has to arrive before anything
+      knows which trace to join, so there is no request left to re-parent by then.
 
 ### M9.3 — Deadman check
-- [ ] External ping (e.g. healthchecks.io) alerting on collector silence
-- [ ] Closes the open item — the collector is the thing that reports failures, so
-      nothing currently reports its own death
-- [ ] Alert verified by stopping the collector
+- [ ] **Dropped from v1 deliberately** on 2026-08-08, not forgotten and not failed.
+      Issue #48 stays open and `CONTEXT.md` §9's open item stays open with it: nothing
+      still reports the collector's own death, and v1 closes with that written down
+      rather than quietly dropped from the done-bar
 
 ### M9.4 — Acceptance run and writeup
-- [ ] Full run from a clean queue against a real video
-- [ ] All eight success criteria in `PRD.md` §5 verified
-- [ ] README updated with architecture summary and the v1 demo path
+- [x] Full run from a clean queue against a real video — "Archon quest chapter 4 Act 2
+      (part 2)", 5,812s, 97 segments, submitted through the dashboard on 2026-08-08
+- [x] All eight success criteria in `PRD.md` §5 verified — the table is in the README so
+      it sits next to the claim it proves
+- [x] README updated with architecture summary and the v1 demo path
+
+      5,812 frames extracted, 2,685 kept, 2,685 `images` rows against 2,685 distinct R2
+      keys. The dedup ratio agrees between two independent paths — 0.540 from
+      Prometheus, 0.538 computed from the rows — which is the check worth having, since
+      a metric and a table disagreeing is exactly how a dashboard starts lying.
+
+      **What the run cost that the plan did not predict:** `kill -9` on the container's
+      PID 1 does nothing at all, silently. The kernel will not deliver a signal to
+      namespace-PID-1 from inside that namespace unless the process has a handler
+      registered, and SIGKILL can never have one. SIGTERM works because the Go runtime
+      catches it. Written up in `deploy/homebox/README.md` where the next person will
+      be standing.
 
 ---
 
