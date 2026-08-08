@@ -59,7 +59,7 @@ topology, self-managed auth and the Go worker all remain primary.
 | Home server | `carls-ubuntu`, Ubuntu 26.04, i5-7200U (2c/4t), 12GB RAM, 413GB free, GeForce 940MX 2GB (unusable for training), always-on, AC powered |
 | Tailnet | Tailscale mesh, `tailscaled` running (address kept out of this repo) |
 | Laptop | MacBook Air M4, 16GB, arm64 — **dev/coding only**, explicitly not a training box |
-| Training | Kaggle free GPU (30h/wk, T4/P100 16GB) primary, Colab fallback |
+| Training | Kaggle free GPU (30h/wk, T4/P100 16GB) primary, Colab fallback. **Amended for v2 (§12):** training moves onto the home box in v4/v5 — CPU-only, days per run, and acceptable because nothing waits on it |
 | Cloud | Cloudflare — Workers, Pages, D1, R2, Access, cloudflared |
 | Domain | `mkcarl.com` (Grafana already at `grafana.mkcarl.com`) |
 
@@ -131,7 +131,13 @@ private admin plane, not a data path.
   second app in the monorepo sharing components with the admin panel, not a
   framework migration of the admin panel itself.
 - **Auth:** Google OAuth implemented on Workers (`arctic` + `oslo/jose`), HttpOnly
-  session cookie, sessions in D1.
+  session cookie, sessions in D1. **Amended in v2 (§12): not built.** v2 has two tiers —
+  admin behind the Cloudflare Access gate that already exists, and anonymous. There is no
+  annotator tier in between, so there is nothing for OAuth to authenticate. This decision
+  was made when the public surface became a verification page anyone may try: open
+  sign-up is now the *anonymous* path by design, which retires Q7's objection to Access
+  for user auth rather than answering it. `annotator_id` stays on every verdict row
+  regardless, so swapping the identity source later touches no annotation data.
 
 ### Repo and delivery (Q18, Q22, Q23)
 
@@ -394,6 +400,16 @@ Worker CPU, and signed-URL issuance is real infra work rather than a checkbox.
 The handful of sample images on the public demo page are a fixed small set — bundle
 them with the SPA or serve from a separate public path.
 
+**Amended in v2 (§12): the public path serves R2 images too, and is bounded to make that
+safe.** The public surface is no longer a detector demo over bundled samples; it is the
+verification UI, which needs real frames. Three bounds keep §7's "no republishing at
+scale" literally true rather than rhetorically: images are drawn only from a hand-curated
+`public_sample` flag rather than from the bucket, they are issued **one short-lived
+signed URL per request with no enumeration** — the batched-N form stays on the
+authenticated path where throughput matters — and the public endpoints are rate limited
+with the pages carrying `noindex`. The difference between the sample and the dataset is
+then a schema flag, not a paragraph explaining why this gallery is a different gallery.
+
 ---
 
 ## 5. The flywheel
@@ -413,6 +429,32 @@ pool-goes-empty objection is void, because the same person runs both batches.
 
 Payoff: every annotation in the database is a human verdict on a model prediction, so
 accept / adjust / reject rates per model version fall out of the schema for free.
+
+**Amended in v2 (§12) in four ways, none of which change the gate itself.**
+
+- **Bootstrap is not manual and not on Kaggle.** Pre-labelling is a fourth job kind on
+  the existing queue, running on the home box behind extraction with no human trigger.
+  The gap this section worried about — image exists, image is not yet verifiable — closes
+  by itself, and the new work inherits claiming, leases, the reaper, the attempt ceiling
+  and every Grafana panel rather than being a second mechanism.
+- **A bounded sample, not every frame.** Default 200 images per video, drawn randomly
+  across the timeline, budget stamped on the rows in the same idiom as
+  `images.dedup_threshold`. Pool size is governed by what a human can verify, not by what
+  ffmpeg can produce: pre-labelling every kept frame from five videos queues years of
+  backlog and makes the dashboard look busy while the pool anyone actually works through
+  is the first two hundred rows. Unsampled frames keep their rows and wait.
+- **The gate's cost is now named.** Verify-only can never add a box the model did not
+  propose, so a character the detector misses is never shown, never corrected, and in the
+  table is indistinguishable from a character that was absent. False positives get
+  rejected; false negatives are invisible. The escape hatch is an admin-only
+  missing-object report, stored as its own row type rather than as a verdict on a
+  prediction that does not exist, and it stays out of a snapshot until somebody draws the
+  box. Its rate per class is the number that says whether a prompt is good enough.
+- **The classes are data.** Name, appearance prompt, active flag — a table, because
+  open-vocabulary detectors match described appearance rather than proper nouns, so
+  "which five characters" is an empirical question answered by running a prompt against
+  about fifty frames and looking. The prompt in force is stamped onto the predictions it
+  produced, or rewording one silently creates two regimes inside a single class.
 
 ### Image selection (Q16) — weighted mix
 
@@ -434,6 +476,19 @@ is the measurement instrument, not a nicety.
 
 Requires that the pre-label record persists **confidence**, not just box coordinates.
 
+**Amended in v2 (§12): the column ships, the weighting does not.** Every image records a
+`selection_reason`, and the random slice is excluded from training by the snapshot's split
+manifest — but v2 selects randomly only, and the 70/20/10 mix lands in v4 with the
+training it exists to serve. Uncertainty sampling has no job while a zero-shot model
+pre-labels uniformly and nothing is being measured.
+
+The asymmetry is what makes this the right cut. Skipping the *weighting* costs nothing
+that cannot be added later. Skipping the *flag* is permanent: every image labelled before
+a frozen pool exists was chosen by some biased rule, so it can never be retro-declared an
+unbiased sample, and the comparison this section exists to protect becomes unavailable
+for good. Confidence is persisted from the first prediction row for the same reason — it
+is what a later band selector needs and cannot reconstruct.
+
 ### Model registry (Q17)
 
 Models land at versioned R2 paths (`models/v{n}/`). A `model_versions` table records
@@ -447,6 +502,12 @@ given training is manual and batch.
 
 Recording dataset size beside mAP keeps the story honest: a reviewer can see whether
 gains came from better labels or simply more of them.
+
+**Not in v2 (§12).** Nothing trains, so there is no version to register. What v2 owes
+this section is the thing it cannot supply retroactively: snapshots carry a stable
+identifier and record the inclusion policy they were built under, so the `model_versions`
+row that eventually points at one is referencing a dataset that can be reconstructed
+rather than asserted.
 
 R2 has zero egress fees, so serving 6–12MB of weights to every demo visitor is free.
 
@@ -467,6 +528,24 @@ completion it uploads the model through a presigned PUT.
 Ultralytics tutorial does its own random train/val split; doing that here silently
 mixes the frozen evaluation pool into training and replaces the honest metric with a
 leaky one.
+
+**Amended in v2 (§12): the handoff is to the home box, not to Kaggle.** Training runs on
+`carls-ubuntu` from v4, CPU-only and measured in days, which is affordable precisely
+because nothing waits on it. Half of this section's reasoning retires with the notebook —
+the box holds R2 credentials already, so "no standing credentials in an ephemeral
+environment" no longer applies. The other half survives on its own merits and is what v2
+builds: one snapshot artifact rather than thousands of GETs, a stable snapshot id so
+recorded training-set size is verifiable, and the split manifest, which matters *more*
+here than it did on Kaggle. A training script on a machine that also holds the images can
+trivially glob the directory and never read the manifest at all, and that mistake would
+look like nothing going wrong.
+
+**The trap this creates, banked now because it will be discovered at hour forty.** A
+training job on the box will be another job kind on the same queue, which is the point —
+but the deploy timer pulls a new image and restarts the container, killing a multi-day run
+silently and handing it to the reaper to burn attempts 2 and 3 against `MAX_ATTEMPTS`. The
+fix is checkpoint-and-resume, or pausing the update timer while a training job is held.
+Nothing to build before v4.
 
 ---
 
@@ -609,6 +688,24 @@ Sharing with friends is desired; traction is a bonus, not a current focus.
 
 Verify-not-draw makes N=1 genuinely viable in a way it was not in 2023.
 
+**Amended in v2 (§12): two tiers, admin and anonymous, with nothing in between.** The
+public verification page means the median contributor is now a stranger, and this
+section's refusal to build consensus resolution, agreement scoring and trust weighting
+holds only while contributors are trusted. Rather than acquire all three, v2 keeps
+untrusted input out of the dataset: an anonymous verdict is recorded with `source =
+'anon'` and an opaque session id, shown back to the visitor immediately so the page is
+not theatre, and excluded at snapshot time by the recorded inclusion policy. Admitting
+those verdicts as labels is the single decision that would force every subsystem this
+section rejects, which is why it was considered and dropped.
+
+Two properties make that reversible rather than final. Verdicts are **append-only rows
+referencing an immutable prediction** — an `adjust` writes new coordinates onto the
+verdict, never over the model's output — so excluding any annotator later is a `WHERE`
+clause instead of an unrecoverable loss. And accept/adjust/reject rates are computed
+**per source**, or anonymous clicking pollutes the one metric a later flywheel claim
+depends on: a troll rejecting everything is otherwise indistinguishable from a model that
+got worse.
+
 ### Public surface (Q11) — thin
 
 Public and unauthenticated: landing page, about, and the **live in-browser detector
@@ -627,6 +724,25 @@ traffic that is not coming.
 A public browsable gallery of labelled crops was considered and set aside — it would
 mean republishing frames from copyrighted game footage at scale, which is a licensing
 problem with no upside for a portfolio piece.
+
+**Amended in v2 (§12): the public surface is the verification page, not the detector
+demo.** The live in-browser detector moves out with the training that would produce a
+model to run — v4 or later. What lands instead is the thing this project is actually
+about: a stranger gets one frame with a proposed box and rules on it, without an account.
+
+That is close enough to the rejected gallery that the distinction has to be structural,
+and §Q25's three bounds are what make it so — a hand-curated `public_sample` pool rather
+than the bucket, one short-lived signed URL per request with no enumeration, rate limiting
+plus `noindex`. What is exposed is a sample somebody chose, and no ingestion run grows it.
+
+The public pool is kept **separate from the frozen evaluation pool**, which is worth
+stating because reusing one flag is tempting — eval-pool images are excluded from training
+anyway, so untrusted clicks on them could contaminate nothing. The two have opposite
+selection criteria and that is what decides it. The eval pool must be *random*, which
+means it is full of menus, loading screens and black frames; the public pool must be
+*legible*, or a visitor's first impression is a black rectangle and a broken product.
+Reusing one pool gives one of them the wrong images, and it would attach untrusted
+verdicts to the one set whose labels must stay unimpeachable.
 
 ### Admin dashboard (Q19)
 
@@ -726,8 +842,11 @@ Recorded so they are not re-litigated.
    `worker/internal/api`. Kept in place rather than deleted so the numbering of the
    items below does not shift under anything that cites them.
 2. **v1 scope cut and build order.** Not yet discussed.
-3. **Promotion trigger for semantic spans.** "First verify pass on real data" is
-   concrete; "when I get to it" is how it dies.
+3. ~~**Promotion trigger for semantic spans.**~~ **Resolved by v2's shape (§12).** "First
+   verify pass on real data" was the concrete version of this, and v2 supplies it: the
+   `prelabel` job is the first work with a middle worth naming — sample, detect per class,
+   persist predictions — so the spans land with it rather than being retrofitted. The
+   trigger is a milestone, not a mood.
 4. **Sampling posture.** Must be decided before any global sampler is configured.
 5. ~~**Deadman check.**~~ **Not an open item — an accepted risk, decided 2026-08-08.**
    Nothing tells you the collector died, and nothing will. Issue #48 closed as not
@@ -806,9 +925,11 @@ hardcoded `Asia/Kuala_Lumpur` in SQL.
 
 Full breakdown in `ROADMAP.md`; scope statement in `PRD.md`.
 
-### v1 done-claim
+### v1 done-claim — met 2026-08-08
 
 > A YouTube URL goes in, extraction is visibly running, OTel has data, and images land in R2.
+
+v2's claim and build plan are §12.
 
 ### Strategy (Q26)
 
@@ -862,3 +983,127 @@ unaffected. Secrets live in wrangler secrets and GitHub Actions secrets; Terrafo
 state is in R2, not the repo. Tunnel hostnames become public knowledge, which is
 acceptable only because Access gates them — the policy has to be correct, not merely
 present.
+
+---
+
+## 12. v2 design
+
+Scope statement in `PRD.md` §9; tracked as
+[issue #89](https://github.com/mkcarlclaude/crowdmon-revamp/issues/89). Decisions here
+amend the sections they touch, and each of those sections carries a back-reference.
+
+### v2 done-claim
+
+> A submitted video becomes pre-labelled frames with no human trigger, verified through
+> this platform's own UI — public to anyone, authoritative for an admin — and exported as
+> a dataset snapshot with a split manifest.
+
+**One sentence, no criteria list.** v1 ran both, with the sentence cutting scope and eight
+criteria doing the proving. v2 drops the list, which puts the whole completion test on the
+sentence and is why it is worded as tightly as it is — `PRD.md` §9 tabulates the
+observation that falsifies each clause.
+
+### What the deliverable is (and is not)
+
+**The platform is the product; detector accuracy is an afterthought.** No part of the
+claim mentions model quality, and that is not modesty — it is the correct target. A
+bootstrap model that pre-labels badly produces *more* work for the verification UI, which
+is the thing being built. The characters the zero-shot model fumbles are the ones that
+justify a human-verification platform existing at all.
+
+**The word "flywheel" stays out of v2.** One lap demonstrates a loop that closes;
+acceleration is only visible on a second lap, when verification of batch two is measurably
+faster or higher-accept than batch one. The compounding quantity was never accuracy — it
+is labelling throughput, with a better model as the mechanism rather than the payoff.
+Claiming it on one lap would be claiming a trend from a single point. Two columns keep the
+door open at no cost now: every verdict timestamped, and every verdict attributable to the
+prompt and model version that produced the box it judged.
+
+### Where the work runs (amends §Q15, §Q21)
+
+**Pre-labelling is a fourth job kind, not a subsystem.** `jobs.kind` gains `prelabel`
+beside `download` and `chunk`; the Go pipeline dispatches on kind in one place and gains a
+third branch. Everything v1 built applies unchanged — claiming, heartbeat leases, the
+reaper, the attempt ceiling, terminal-versus-retryable classification, span naming, every
+Grafana panel. This is the load-bearing architectural decision of v2, and it is the
+strongest argument for the home box over a notebook: Kaggle is a manual step outside every
+mechanism this project has, and a queue job is inside all of them.
+
+**One `prelabel` job per video, not per chunk.** The sample must be drawn across the whole
+timeline, and a per-chunk job cannot see outside its own sixty seconds.
+
+**Detection sits behind a one-method interface** — image path plus prompts in, boxes with
+confidences out. Production runs an ONNX open-vocabulary model on the box's CPU; tests
+substitute a table of known boxes, so no test needs a model file, an ONNX runtime or a GPU.
+Same shape as `frames.Deduper`'s injectable hash, and the same payoff: the model is a
+one-file swap, which matters because it must run on an i5-7200U and the right choice is
+not yet known.
+
+**The hardware makes bounded sampling non-optional.** Open-vocabulary detection on that
+CPU is seconds per image; 200 frames is minutes per video, while every kept frame from a
+97-minute video would be most of a night. The 940MX marked unusable for *training* is
+worth re-measuring for *inference* before being written off — `dcgm_exporter` is already
+on the box, so the answer would arrive in Grafana.
+
+### Data model
+
+Five new tables and two columns, and one property runs through all of them: **nothing is
+overwritten.**
+
+- `classes` — name, appearance prompt, active flag, prompt version.
+- `predictions` — image, class, box, confidence, prompt version, model identifier.
+  Immutable after insert.
+- `verdicts` — prediction reference, `accept` / `adjust` / `reject`, adjusted coordinates
+  when adjusting, source, annotator identity or session id. Append-only; several verdicts
+  on one prediction is a legal state.
+- `missing_reports` — image, optional class, reporter. Admin-only.
+- `snapshots` — id, R2 key, counts, the inclusion policy in force.
+- `images` gains `public_sample` and `selection_reason`.
+
+**An `adjust` that mutated the prediction would be the one irreversible act in the
+system.** The model's original output is what makes "every annotation is a human verdict
+on a model prediction" checkable rather than asserted, and it is what any later exclusion
+of an annotator has to fall back to. Writing adjusted coordinates onto the verdict row
+costs nothing and keeps that recoverable forever.
+
+**Provenance is stamped, not inferred** — the sample budget, the dedup threshold, the
+prompt version, the snapshot's inclusion policy. §7's "thresholds are dataset provenance,
+not just settings" generalises: any setting that shaped a row and can change later must be
+recorded on the rows it shaped, or the dataset becomes an unrecorded mixture of regimes
+and every number computed over it gains a confounder nobody can name.
+
+### Strategy
+
+Same as §Q26 — thin vertical slice, each piece landing with its migration, its contract
+change and its instrumentation. The one addition is that v2's slice is *narrower than it
+looks*: five of the six milestones below are ordinary CRUD-and-UI work over the queue that
+already exists, and only pre-labelling introduces genuinely new failure modes.
+
+### What v2 excludes
+
+Training on any machine · model registry · distilled detector · in-browser inference ·
+public detector demo · Google OAuth, sessions, any annotator tier · consensus resolution,
+agreement scoring, trust weighting · leaderboards · 70/20/10 weighted selection · a public
+statistics surface · more than five active classes · any measurement of accuracy.
+
+The operational debt in §9 stays debt, including yt-dlp freshness. It was considered for
+inclusion — a starved ingest is the one failure that stops the flywheel rather than
+degrading it — and left out to keep v2's sentence honest.
+
+### Milestone order
+
+1. **Schema and contract** — the five tables, the two columns, endpoints declared and
+   generated, nothing rendering yet
+2. **Pre-label job** — fourth job kind, detector interface, bounded sampling, semantic
+   spans landing with the first work that has a middle worth naming
+3. **Classes as data** — table, prompt validation against ~50 frames, activation
+4. **Admin verification UI** — verify-only, missing-object reports, behind the existing
+   Access gate
+5. **Public verification** — same component, curated pool, signed URLs, rate limiting
+6. **Snapshot and split manifest** — the export the claim ends at
+
+Schema first, against §Q26's own warning about infra-first, because every later milestone
+writes to these tables and a migration reversed after the UI exists is the expensive
+version of this ordering. Pre-labelling second for the same reason observability was
+second in v1: it is the highest-uncertainty work, and everything after it is easier to
+debug against a pool that already has predictions in it.
