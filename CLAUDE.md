@@ -46,3 +46,29 @@ with `! ` rather than trying to route around it.
 The commands CI runs are in [`README.md`](README.md) under "Working on it", and
 that is the only copy — a second one here would be a second thing to remember to
 update the day CI changes.
+
+### Container builds: run them locally first, and run the artifact
+
+`pnpm test` and `go test` do not cover the image builds. When a change touches a
+`Dockerfile`, a `requirements*.txt`, or anything a build step *produces*, build it
+locally before pushing rather than discovering each failure one CI run at a time.
+
+```sh
+docker build --target export -t detector-export:local deploy/detector
+docker build -t detector:local deploy/detector
+```
+
+**Exit code 0 is not verification when the artifact has a shape.** M11.2's detector
+shipped a build that passed and would have failed every request: `torch.onnx.export`
+in torch 2.13 defaults to the dynamo exporter, which honours `dynamic_axes` for
+inputs, silently drops it for outputs, and overrides `opset_version`. The graph came
+out with the prompt count baked in at one. The obvious fix for the error that
+preceded it — installing the missing `onnxscript` — *selects* the broken exporter,
+so it turns CI green and makes the bug permanent. What caught it was loading the
+exported graph and running inference at more than one prompt count; a single-prompt
+test passes on the broken graph.
+
+So: assert on what the build emitted, exercise it at more than the one case the
+build itself used, and be suspicious of a fix whose whole effect is to make an
+error message go away. The HuggingFace checkpoint is cached inside the detector's
+export stage, so re-exports are offline and quick.
