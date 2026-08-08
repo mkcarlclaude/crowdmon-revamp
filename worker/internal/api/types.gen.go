@@ -68,6 +68,7 @@ func (e HealthResponseStatus) Valid() bool {
 const (
 	Chunk    JobKind = "chunk"
 	Download JobKind = "download"
+	Dryrun   JobKind = "dryrun"
 	Prelabel JobKind = "prelabel"
 )
 
@@ -77,6 +78,8 @@ func (e JobKind) Valid() bool {
 	case Chunk:
 		return true
 	case Download:
+		return true
+	case Dryrun:
 		return true
 	case Prelabel:
 		return true
@@ -191,6 +194,26 @@ type AdminJob struct {
 	VideoUrl string `json:"video_url"`
 }
 
+// AdminVideo defines model for AdminVideo.
+type AdminVideo struct {
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// Id Example: dQw4w9WgXcQ
+	Id string `json:"id"`
+
+	// ImageCount Example: 2685
+	ImageCount int `json:"image_count"`
+
+	// Title Example: Genshin Impact — Archon quest
+	Title *string `json:"title"`
+}
+
+// AdminVideoList defines model for AdminVideoList.
+type AdminVideoList struct {
+	Videos []AdminVideo `json:"videos"`
+}
+
 // ChunkFanOut defines model for ChunkFanOut.
 type ChunkFanOut struct {
 	// Created Example: 20
@@ -241,6 +264,104 @@ type CreateClassRequest struct {
 
 	// Name Example: Nahida
 	Name string `json:"name"`
+}
+
+// CreateDryRunRequest defines model for CreateDryRunRequest.
+type CreateDryRunRequest struct {
+	// AppearancePrompt Example: a tiny white-haired floating companion with a dark crown
+	AppearancePrompt string `json:"appearance_prompt"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
+// DryRun defines model for DryRun.
+type DryRun struct {
+	// AppearancePrompt Example: a tiny white-haired floating companion with a dark crown
+	AppearancePrompt string       `json:"appearance_prompt"`
+	Boxes            *[]DryRunBox `json:"boxes"`
+
+	// ClassId Example: 1
+	ClassId int `json:"class_id"`
+
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// FailureReason Example: the detector sidecar is down
+	FailureReason *string `json:"failure_reason"`
+
+	// Id Example: 1
+	Id int `json:"id"`
+
+	// JobId Example: 42
+	JobId int `json:"job_id"`
+
+	// ModelId Example: owlvit-base-patch32.onnx
+	ModelId *string `json:"model_id"`
+
+	// ReportedAt Example: 1754099400
+	ReportedAt *int `json:"reported_at"`
+
+	// RequestedBy Example: admin@example.com
+	RequestedBy string `json:"requested_by"`
+
+	// SampleSize Example: 50
+	SampleSize  int       `json:"sample_size"`
+	SampledKeys *[]string `json:"sampled_keys"`
+	Status      JobStatus `json:"status"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
+// DryRunBox defines model for DryRunBox.
+type DryRunBox struct {
+	// Confidence Example: 0.41
+	Confidence float32 `json:"confidence"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
+}
+
+// DryRunList defines model for DryRunList.
+type DryRunList struct {
+	Dryruns []DryRun `json:"dryruns"`
+}
+
+// DryRunReport defines model for DryRunReport.
+type DryRunReport struct {
+	// Boxes Example: 7
+	Boxes int `json:"boxes"`
+
+	// DryrunId Example: 1
+	DryrunId int `json:"dryrun_id"`
+}
+
+// DryRunWork defines model for DryRunWork.
+type DryRunWork struct {
+	// AppearancePrompt Example: a tiny white-haired floating companion with a dark crown
+	AppearancePrompt string `json:"appearance_prompt"`
+
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// SampleSize Example: 50
+	SampleSize int `json:"sample_size"`
 }
 
 // ErrorResponse defines model for ErrorResponse.
@@ -312,8 +433,9 @@ type ImageReport struct {
 // Job defines model for Job.
 type Job struct {
 	// Attempts Example: 1
-	Attempts int        `json:"attempts"`
-	Chunk    *ChunkWork `json:"chunk,omitempty"`
+	Attempts int         `json:"attempts"`
+	Chunk    *ChunkWork  `json:"chunk,omitempty"`
+	Dryrun   *DryRunWork `json:"dryrun,omitempty"`
 
 	// Id Example: 1
 	Id   int     `json:"id"`
@@ -361,6 +483,9 @@ type JobStatusCounts struct {
 
 	// Download Example: 1
 	Download int `json:"download"`
+
+	// Dryrun Example: 0
+	Dryrun int `json:"dryrun"`
 
 	// Prelabel Example: 1
 	Prelabel int `json:"prelabel"`
@@ -412,6 +537,18 @@ type PrelabelClass struct {
 
 	// PromptVersion Example: 2026-08-08-a
 	PromptVersion string `json:"prompt_version"`
+}
+
+// ReportDryRunRequest defines model for ReportDryRunRequest.
+type ReportDryRunRequest struct {
+	Boxes []DryRunBox `json:"boxes"`
+
+	// ModelId Example: owlvit-base-patch32.onnx
+	ModelId       string   `json:"model_id"`
+	SampledImages []string `json:"sampled_images"`
+
+	// WorkerId Example: carls-ubuntu-1
+	WorkerId string `json:"worker_id"`
 }
 
 // ReportImagesRequest defines model for ReportImagesRequest.
@@ -494,6 +631,11 @@ type VideoSubmission struct {
 	VideoId string `json:"video_id"`
 }
 
+// GetImageParams defines parameters for GetImage.
+type GetImageParams struct {
+	Key string `form:"key" json:"key"`
+}
+
 // ListJobsParams defines parameters for ListJobs.
 type ListJobsParams struct {
 	Status *JobStatus `form:"status,omitempty" json:"status,omitempty"`
@@ -511,6 +653,9 @@ type CreateClassJSONRequestBody = CreateClassRequest
 // UpdateClassJSONRequestBody defines body for UpdateClass for application/json ContentType.
 type UpdateClassJSONRequestBody = UpdateClassRequest
 
+// CreateDryRunJSONRequestBody defines body for CreateDryRun for application/json ContentType.
+type CreateDryRunJSONRequestBody = CreateDryRunRequest
+
 // SubmitVideoJSONRequestBody defines body for SubmitVideo for application/json ContentType.
 type SubmitVideoJSONRequestBody = SubmitVideoRequest
 
@@ -519,6 +664,9 @@ type ClaimJobJSONRequestBody = ClaimRequest
 
 // CompleteJobJSONRequestBody defines body for CompleteJob for application/json ContentType.
 type CompleteJobJSONRequestBody = CompleteRequest
+
+// ReportDryRunJSONRequestBody defines body for ReportDryRun for application/json ContentType.
+type ReportDryRunJSONRequestBody = ReportDryRunRequest
 
 // FanOutJobJSONRequestBody defines body for FanOutJob for application/json ContentType.
 type FanOutJobJSONRequestBody = FanOutRequest
@@ -649,6 +797,38 @@ type ClientInterface interface {
 	// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
 	UpdateClass(ctx context.Context, id int, body UpdateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateDryRunWithBody Try a candidate prompt against a sample of one video's frames
+	//
+	// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
+	CreateDryRunWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDryRun Try a candidate prompt against a sample of one video's frames
+	//
+	// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
+	CreateDryRun(ctx context.Context, id int, body CreateDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListDryRuns This class's recent dry-runs, newest first
+	//
+	// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
+	ListDryRuns(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetImage One frame's bytes, by R2 key
+	//
+	// Streams an object out of the frames bucket for an admin screen to render. Requires a Cloudflare Access assertion — the bucket stays private and there is no way to enumerate it through this route.
+	//
+	// Corresponds with GET /api/admin/image (the `GetImage` operationId).
+	GetImage(ctx context.Context, params *GetImageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListJobs List jobs with their lease and failure state
 	//
 	// The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -662,6 +842,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListVideos Submitted videos and how many frames each has
+	//
+	// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
+	ListVideos(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SubmitVideoWithBody Submit a YouTube URL for processing
 	//
@@ -726,6 +913,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/complete (the `CompleteJob` operationId).
 	CompleteJob(ctx context.Context, id int, body CompleteJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportDryRunWithBody Report what a candidate prompt found (M12.2)
+	//
+	// One call per dry-run job, the shape `reportImages` and `reportPredictions` established. **Writes nothing to `predictions`**: the boxes land on the dry-run's own row as JSON and are never label data (migration 0007). A re-run after a reap overwrites the row rather than appending, which is safe precisely because nothing downstream references it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/dryrun (the `ReportDryRun` operationId).
+	ReportDryRunWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportDryRun Report what a candidate prompt found (M12.2)
+	//
+	// One call per dry-run job, the shape `reportImages` and `reportPredictions` established. **Writes nothing to `predictions`**: the boxes land on the dry-run's own row as JSON and are never label data (migration 0007). A re-run after a reap overwrites the row rather than appending, which is safe precisely because nothing downstream references it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/dryrun (the `ReportDryRun` operationId).
+	ReportDryRun(ctx context.Context, id int, body ReportDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// FanOutJobWithBody Record what a download probed, and enqueue its chunk jobs
 	//
@@ -905,6 +1110,78 @@ func (c *Client) UpdateClass(ctx context.Context, id int, body UpdateClassJSONRe
 	return c.Client.Do(req)
 }
 
+// CreateDryRunWithBody Try a candidate prompt against a sample of one video's frames
+//
+// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
+func (c *Client) CreateDryRunWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDryRunRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDryRun Try a candidate prompt against a sample of one video's frames
+//
+// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
+func (c *Client) CreateDryRun(ctx context.Context, id int, body CreateDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDryRunRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListDryRuns This class's recent dry-runs, newest first
+//
+// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
+func (c *Client) ListDryRuns(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDryRunsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetImage One frame's bytes, by R2 key
+//
+// Streams an object out of the frames bucket for an admin screen to render. Requires a Cloudflare Access assertion — the bucket stays private and there is no way to enumerate it through this route.
+//
+// Corresponds with GET /api/admin/image (the `GetImage` operationId).
+func (c *Client) GetImage(ctx context.Context, params *GetImageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetImageRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListJobs List jobs with their lease and failure state
 //
 // The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -929,6 +1206,23 @@ func (c *Client) ListJobs(ctx context.Context, params *ListJobsParams, reqEditor
 // Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 func (c *Client) AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminLoginRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListVideos Submitted videos and how many frames each has
+//
+// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
+func (c *Client) ListVideos(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVideosRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -1073,6 +1367,44 @@ func (c *Client) CompleteJobWithBody(ctx context.Context, id int, contentType st
 // Corresponds with POST /api/jobs/{id}/complete (the `CompleteJob` operationId).
 func (c *Client) CompleteJob(ctx context.Context, id int, body CompleteJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCompleteJobRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportDryRunWithBody Report what a candidate prompt found (M12.2)
+//
+// One call per dry-run job, the shape `reportImages` and `reportPredictions` established. **Writes nothing to `predictions`**: the boxes land on the dry-run's own row as JSON and are never label data (migration 0007). A re-run after a reap overwrites the row rather than appending, which is safe precisely because nothing downstream references it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/jobs/{id}/dryrun (the `ReportDryRun` operationId).
+func (c *Client) ReportDryRunWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportDryRunRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportDryRun Report what a candidate prompt found (M12.2)
+//
+// One call per dry-run job, the shape `reportImages` and `reportPredictions` established. **Writes nothing to `predictions`**: the boxes land on the dry-run's own row as JSON and are never label data (migration 0007). A re-run after a reap overwrites the row rather than appending, which is safe precisely because nothing downstream references it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/jobs/{id}/dryrun (the `ReportDryRun` operationId).
+func (c *Client) ReportDryRun(ctx context.Context, id int, body ReportDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportDryRunRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1381,6 +1713,137 @@ func NewUpdateClassRequestWithBody(server string, id int, contentType string, bo
 	return req, nil
 }
 
+// NewCreateDryRunRequest calls the generic CreateDryRun builder with application/json body
+func NewCreateDryRunRequest(server string, id int, body CreateDryRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateDryRunRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateDryRunRequestWithBody constructs an http.Request for the CreateDryRun method, with any body, and a specified content type
+func NewCreateDryRunRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/classes/%s/dryrun", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListDryRunsRequest constructs an http.Request for the ListDryRuns method
+func NewListDryRunsRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/classes/%s/dryruns", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetImageRequest constructs an http.Request for the GetImage method
+func NewGetImageRequest(server string, params *GetImageParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/image")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "key", params.Key, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListJobsRequest constructs an http.Request for the ListJobs method
 func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, error) {
 	var err error
@@ -1457,6 +1920,33 @@ func NewAdminLoginRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/api/admin/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListVideosRequest constructs an http.Request for the ListVideos method
+func NewListVideosRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/videos")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1636,6 +2126,53 @@ func NewCompleteJobRequestWithBody(server string, id int, contentType string, bo
 	}
 
 	operationPath := fmt.Sprintf("/api/jobs/%s/complete", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReportDryRunRequest calls the generic ReportDryRun builder with application/json body
+func NewReportDryRunRequest(server string, id int, body ReportDryRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReportDryRunRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewReportDryRunRequestWithBody constructs an http.Request for the ReportDryRun method, with any body, and a specified content type
+func NewReportDryRunRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/jobs/%s/dryrun", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2016,6 +2553,42 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
 	UpdateClassWithResponse(ctx context.Context, id int, body UpdateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateClassResponse, error)
 
+	// CreateDryRunWithBodyWithResponse Try a candidate prompt against a sample of one video's frames
+	//
+	// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
+	CreateDryRunWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDryRunResponse, error)
+
+	// CreateDryRunWithResponse Try a candidate prompt against a sample of one video's frames
+	//
+	// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
+	CreateDryRunWithResponse(ctx context.Context, id int, body CreateDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDryRunResponse, error)
+
+	// ListDryRunsWithResponse This class's recent dry-runs, newest first
+	//
+	// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
+	ListDryRunsWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListDryRunsResponse, error)
+
+	// GetImageWithResponse One frame's bytes, by R2 key
+	//
+	// Streams an object out of the frames bucket for an admin screen to render. Requires a Cloudflare Access assertion — the bucket stays private and there is no way to enumerate it through this route.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/image (the `GetImage` operationId).
+	GetImageWithResponse(ctx context.Context, params *GetImageParams, reqEditors ...RequestEditorFn) (*GetImageResponse, error)
+
 	// ListJobsWithResponse List jobs with their lease and failure state
 	//
 	// The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -2033,6 +2606,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminLoginResponse, error)
+
+	// ListVideosWithResponse Submitted videos and how many frames each has
+	//
+	// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
+	ListVideosWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVideosResponse, error)
 
 	// SubmitVideoWithBodyWithResponse Submit a YouTube URL for processing
 	//
@@ -2101,6 +2683,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/complete (the `CompleteJob` operationId).
 	CompleteJobWithResponse(ctx context.Context, id int, body CompleteJobJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteJobResponse, error)
+
+	// ReportDryRunWithBodyWithResponse Report what a candidate prompt found (M12.2)
+	//
+	// One call per dry-run job, the shape `reportImages` and `reportPredictions` established. **Writes nothing to `predictions`**: the boxes land on the dry-run's own row as JSON and are never label data (migration 0007). A re-run after a reap overwrites the row rather than appending, which is safe precisely because nothing downstream references it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/dryrun (the `ReportDryRun` operationId).
+	ReportDryRunWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportDryRunResponse, error)
+
+	// ReportDryRunWithResponse Report what a candidate prompt found (M12.2)
+	//
+	// One call per dry-run job, the shape `reportImages` and `reportPredictions` established. **Writes nothing to `predictions`**: the boxes land on the dry-run's own row as JSON and are never label data (migration 0007). A re-run after a reap overwrites the row rather than appending, which is safe precisely because nothing downstream references it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/dryrun (the `ReportDryRun` operationId).
+	ReportDryRunWithResponse(ctx context.Context, id int, body ReportDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportDryRunResponse, error)
 
 	// FanOutJobWithBodyWithResponse Record what a download probed, and enqueue its chunk jobs
 	//
@@ -2412,6 +3012,213 @@ func (r UpdateClassResponse) ContentType() string {
 	return ""
 }
 
+type CreateDryRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *DryRun
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateDryRunResponse) GetJSON201() *DryRun {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateDryRunResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateDryRunResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateDryRunResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateDryRunResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateDryRunResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateDryRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateDryRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateDryRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateDryRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListDryRunsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DryRunList
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListDryRunsResponse) GetJSON200() *DryRunList {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListDryRunsResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListDryRunsResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListDryRunsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListDryRunsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDryRunsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDryRunsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListDryRunsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetImageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetImageResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetImageResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetImageResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetImageResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetImageResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetImageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetImageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetImageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetImageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListJobsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2537,6 +3344,68 @@ func (r AdminLoginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AdminLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListVideosResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminVideoList
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListVideosResponse) GetJSON200() *AdminVideoList {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListVideosResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListVideosResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListVideosResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListVideosResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListVideosResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListVideosResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListVideosResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2791,6 +3660,61 @@ func (r CompleteJobResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CompleteJobResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReportDryRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DryRunReport
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReportDryRunResponse) GetJSON200() *DryRunReport {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReportDryRunResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReportDryRunResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ReportDryRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportDryRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportDryRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReportDryRunResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3181,6 +4105,66 @@ func (c *ClientWithResponses) UpdateClassWithResponse(ctx context.Context, id in
 	return ParseUpdateClassResponse(rsp)
 }
 
+// CreateDryRunWithBodyWithResponse Try a candidate prompt against a sample of one video's frames
+//
+// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
+func (c *ClientWithResponses) CreateDryRunWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDryRunResponse, error) {
+	rsp, err := c.CreateDryRunWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDryRunResponse(rsp)
+}
+
+// CreateDryRunWithResponse Try a candidate prompt against a sample of one video's frames
+//
+// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
+func (c *ClientWithResponses) CreateDryRunWithResponse(ctx context.Context, id int, body CreateDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDryRunResponse, error) {
+	rsp, err := c.CreateDryRun(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDryRunResponse(rsp)
+}
+
+// ListDryRunsWithResponse This class's recent dry-runs, newest first
+//
+// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
+func (c *ClientWithResponses) ListDryRunsWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListDryRunsResponse, error) {
+	rsp, err := c.ListDryRuns(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDryRunsResponse(rsp)
+}
+
+// GetImageWithResponse One frame's bytes, by R2 key
+//
+// Streams an object out of the frames bucket for an admin screen to render. Requires a Cloudflare Access assertion — the bucket stays private and there is no way to enumerate it through this route.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/image (the `GetImage` operationId).
+func (c *ClientWithResponses) GetImageWithResponse(ctx context.Context, params *GetImageParams, reqEditors ...RequestEditorFn) (*GetImageResponse, error) {
+	rsp, err := c.GetImage(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetImageResponse(rsp)
+}
+
 // ListJobsWithResponse List jobs with their lease and failure state
 //
 // The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -3209,6 +4193,21 @@ func (c *ClientWithResponses) AdminLoginWithResponse(ctx context.Context, reqEdi
 		return nil, err
 	}
 	return ParseAdminLoginResponse(rsp)
+}
+
+// ListVideosWithResponse Submitted videos and how many frames each has
+//
+// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
+func (c *ClientWithResponses) ListVideosWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVideosResponse, error) {
+	rsp, err := c.ListVideos(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVideosResponse(rsp)
 }
 
 // SubmitVideoWithBodyWithResponse Submit a YouTube URL for processing
@@ -3325,6 +4324,36 @@ func (c *ClientWithResponses) CompleteJobWithResponse(ctx context.Context, id in
 		return nil, err
 	}
 	return ParseCompleteJobResponse(rsp)
+}
+
+// ReportDryRunWithBodyWithResponse Report what a candidate prompt found (M12.2)
+//
+// One call per dry-run job, the shape `reportImages` and `reportPredictions` established. **Writes nothing to `predictions`**: the boxes land on the dry-run's own row as JSON and are never label data (migration 0007). A re-run after a reap overwrites the row rather than appending, which is safe precisely because nothing downstream references it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/dryrun (the `ReportDryRun` operationId).
+func (c *ClientWithResponses) ReportDryRunWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportDryRunResponse, error) {
+	rsp, err := c.ReportDryRunWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportDryRunResponse(rsp)
+}
+
+// ReportDryRunWithResponse Report what a candidate prompt found (M12.2)
+//
+// One call per dry-run job, the shape `reportImages` and `reportPredictions` established. **Writes nothing to `predictions`**: the boxes land on the dry-run's own row as JSON and are never label data (migration 0007). A re-run after a reap overwrites the row rather than appending, which is safe precisely because nothing downstream references it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/dryrun (the `ReportDryRun` operationId).
+func (c *ClientWithResponses) ReportDryRunWithResponse(ctx context.Context, id int, body ReportDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportDryRunResponse, error) {
+	rsp, err := c.ReportDryRun(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportDryRunResponse(rsp)
 }
 
 // FanOutJobWithBodyWithResponse Record what a download probed, and enqueue its chunk jobs
@@ -3651,6 +4680,168 @@ func ParseUpdateClassResponse(rsp *http.Response) (*UpdateClassResponse, error) 
 	return response, nil
 }
 
+// ParseCreateDryRunResponse parses an HTTP response from a CreateDryRunWithResponse call
+func ParseCreateDryRunResponse(rsp *http.Response) (*CreateDryRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateDryRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DryRun
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListDryRunsResponse parses an HTTP response from a ListDryRunsWithResponse call
+func ParseListDryRunsResponse(rsp *http.Response) (*ListDryRunsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDryRunsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DryRunList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetImageResponse parses an HTTP response from a GetImageWithResponse call
+func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetImageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListJobsResponse parses an HTTP response from a ListJobsWithResponse call
 func ParseListJobsResponse(rsp *http.Response) (*ListJobsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3756,6 +4947,53 @@ func ParseAdminLoginResponse(rsp *http.Response) (*AdminLoginResponse, error) {
 			headers.Location = &value
 		}
 		response.Headers302 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListVideosResponse parses an HTTP response from a ListVideosWithResponse call
+func ParseListVideosResponse(rsp *http.Response) (*ListVideosResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListVideosResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminVideoList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -3926,6 +5164,46 @@ func ParseCompleteJobResponse(rsp *http.Response) (*CompleteJobResponse, error) 
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportDryRunResponse parses an HTTP response from a ReportDryRunWithResponse call
+func ParseReportDryRunResponse(rsp *http.Response) (*ReportDryRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportDryRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DryRunReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ErrorResponse

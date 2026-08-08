@@ -89,12 +89,39 @@ func (s Sampler) budget() int {
 // draws the identical set, and the stamp it writes is a no-op restamping of
 // what the first attempt would have written had it finished.
 func (s Sampler) Sample(ctx context.Context, videoID string) ([]worker.SampledImage, error) {
+	return s.SampleN(ctx, videoID, s.budget())
+}
+
+// SampleN is Sample with the budget named by the caller rather than by this
+// Sampler's configuration, and it implements worker.BoundedImageSampler.
+//
+// It exists for M12.2's dry-run, whose budget is not the worker's to choose:
+// the API stamps `dryruns.sample_size` on the row and hands it back on the
+// claim, so that an operator raising the number later cannot make an old
+// dry-run's box count read as a different result than it was (the same
+// argument `images.dedup_threshold` makes for extraction). A worker that
+// re-derived the budget from its own environment would be free to disagree
+// with the row it is about to report against.
+//
+// Everything Sample's own comment says about determinism applies here
+// unchanged — nothing in this package is random, so the same (video, budget)
+// always draws the same frames.
+func (s Sampler) SampleN(
+	ctx context.Context, videoID string, budget int,
+) ([]worker.SampledImage, error) {
 	candidates, err := s.Images.Images(ctx, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("listing the candidate pool for %s: %w", videoID, err)
 	}
 
-	budget := s.budget()
+	// A caller that asks for nothing (or for a negative sample) gets this
+	// Sampler's configured budget, not an empty draw: zero here is the same
+	// "the package decides" signal the Budget field itself uses, and an empty
+	// sample would be reported as a prompt that matched nothing.
+	if budget <= 0 {
+		budget = s.budget()
+	}
+
 	if len(candidates) <= budget {
 		// Fewer images than the budget: return all of them, not an error and
 		// not a short sample padded with nothing. A short video is a

@@ -1,6 +1,12 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
-import type { Bindings } from "../bindings";
-import { errorResponse, SubmitVideoRequest, VideoSubmission } from "../schemas";
+import type { AppEnv } from "../bindings";
+import {
+  AdminVideoList,
+  errorResponse,
+  SubmitVideoRequest,
+  VIDEO_PICKER_LIMIT,
+  VideoSubmission,
+} from "../schemas";
 import { currentTraceparent } from "../tracing";
 import { youtubeVideoId } from "../youtube";
 
@@ -41,10 +47,7 @@ export const submitVideoRoute = createRoute({
   },
 });
 
-export const submitVideoHandler: RouteHandler<
-  typeof submitVideoRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const submitVideoHandler: RouteHandler<typeof submitVideoRoute, AppEnv> = async (c) => {
   const { url } = c.req.valid("json");
 
   const videoId = youtubeVideoId(url);
@@ -83,4 +86,46 @@ export const submitVideoHandler: RouteHandler<
   }
 
   return c.json({ video_id: videoId, job_id: job.id }, 201);
+};
+
+export const listVideosRoute = createRoute({
+  method: "get",
+  path: "/api/admin/videos",
+  operationId: "listVideos",
+  tags: ["admin"],
+  summary: "Submitted videos and how many frames each has",
+  description:
+    "What the dry-run form picks from (M12.2). `image_count` rather than a boolean, " +
+    "because a video still being extracted has some frames and will have more, and how " +
+    "many there are decides how meaningful a 50-frame sample off it is. Requires a " +
+    "Cloudflare Access assertion.",
+  responses: {
+    200: {
+      description: "Videos, newest first",
+      content: { "application/json": { schema: AdminVideoList } },
+    },
+    401: errorResponse("Missing or invalid Access assertion"),
+    403: errorResponse("A verified identity that is not an administrator"),
+    503: errorResponse("Admin access is not configured on this deployment"),
+  },
+});
+
+export const listVideosHandler: RouteHandler<typeof listVideosRoute, AppEnv> = async (c) => {
+  // A LEFT JOIN with a GROUP BY rather than a count per video: the picker is
+  // one request and the alternative is one round trip per row. LEFT, not
+  // inner, so a video whose extraction has not started yet is listed at zero
+  // rather than missing — the form has to be able to say why it cannot be
+  // dry-run against.
+  const { results } = await c.env.DB.prepare(
+    `SELECT v.id, v.title, v.created_at, COUNT(i.id) AS image_count
+       FROM videos v
+       LEFT JOIN images i ON i.video_id = v.id
+      GROUP BY v.id
+      ORDER BY v.created_at DESC, v.id DESC
+      LIMIT ?`,
+  )
+    .bind(VIDEO_PICKER_LIMIT)
+    .all<{ id: string; title: string | null; created_at: number; image_count: number }>();
+
+  return c.json({ videos: results }, 200);
 };

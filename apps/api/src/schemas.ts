@@ -80,8 +80,11 @@ export const VideoSubmission = z
   })
   .openapi("VideoSubmission");
 
-/** Mirrors the `kind` CHECK constraint, widened by migration 0005 (M11.1). */
-export const JobKind = z.enum(["download", "chunk", "prelabel"]).openapi("JobKind");
+/**
+ * Mirrors the `kind` CHECK constraint, widened by migration 0005 (M11.1) and
+ * again by 0007 (M12.2's `dryrun`).
+ */
+export const JobKind = z.enum(["download", "chunk", "prelabel", "dryrun"]).openapi("JobKind");
 
 /**
  * Identifies the caller holding a lease.
@@ -148,6 +151,26 @@ export const Job = z
       })
       .optional()
       .openapi("ChunkWork"),
+    // Present only for `dryrun` jobs (M12.2), in `chunk`'s idiom above: one
+    // queue, one job type on the wire, and oapi-codegen renders this as a
+    // nil-able pointer the worker branches on.
+    //
+    // The candidate wording travels *with the job* rather than being fetched
+    // the way `/api/classes/active` is fetched for a prelabel job. The two
+    // reads are not the same shape: every prelabel job wants the identical
+    // current answer, whereas a dry-run is defined by the one wording it was
+    // created to try — text that is deliberately not what the class says, and
+    // that a later edit to the class must not silently replace mid-job.
+    dryrun: z
+      .object({
+        class_name: z.string().min(1).openapi({ example: "Paimon" }),
+        appearance_prompt: z.string().min(1).openapi({
+          example: "a tiny white-haired floating companion with a dark crown",
+        }),
+        sample_size: z.int().positive().openapi({ example: 50 }),
+      })
+      .optional()
+      .openapi("DryRunWork"),
   })
   .openapi("Job");
 
@@ -393,6 +416,13 @@ const JobStatusCounts = z
     // to read a prelabel count off, not just whatever keys happened to come
     // back.
     prelabel: z.int().nonnegative().openapi({ example: 1 }),
+    // M12.2's fourth kind, added here for `prelabel`'s reason: the Go worker's
+    // gauge callback reads named fields off a generated struct, and a kind
+    // with no field is a kind Prometheus never hears about. A dry-run is
+    // ordinary queue work — it competes for the same single worker as every
+    // prelabel job — so a backlog of them is exactly the thing `queue_depth`
+    // exists to make visible.
+    dryrun: z.int().nonnegative().openapi({ example: 0 }),
   })
   .openapi("JobStatusCounts");
 
@@ -405,15 +435,15 @@ const JobStatusCounts = z
  * (worker/internal/telemetry/metrics.go) — this endpoint exists for that
  * poll and has no other caller.
  *
- * Fixed shape — twelve named fields, four statuses times three kinds (M11.1
- * added `prelabel` alongside `download` and `chunk`) — rather than the array
+ * Fixed shape — sixteen named fields, four statuses times four kinds (M11.1
+ * added `prelabel`, M12.2 `dryrun`, alongside `download` and `chunk`) — rather than the array
  * of rows `SELECT status, kind, COUNT(*) ... GROUP BY status, kind` naturally
  * produces. That query returns only combinations with at least one row, so a
  * drained `pending` bucket is *absent* from the result set, not present at
  * zero. Handing that straight to the Go worker would make an empty queue and
  * a worker that stopped reporting look identical in Prometheus — the one
  * distinction the dashboard's queue-depth panel exists to show. The
- * zero-fill happens here, in the one place that already knows all twelve
+ * zero-fill happens here, in the one place that already knows all sixteen
  * combinations exist, so the gauge callback on the other end of the wire
  * never has to guess which ones it did not hear about.
  */
@@ -802,6 +832,207 @@ export const ClassIdParam = z.object({
     .transform(Number)
     .refine((id) => id > 0)
     .openapi({ param: { name: "id", in: "path" }, type: "integer", example: 1 }),
+});
+
+/**
+ * How many frames one dry-run runs the candidate wording over (M12.2's
+ * "~50 frames").
+ *
+ * Fixed here rather than accepted from the caller, and that is a cost
+ * decision as much as a contract one: detection is CPU-only on the box's two
+ * cores at seconds per image (CONTEXT.md §12), so a caller-chosen 2,000 would
+ * be hours of the same queue every real job runs through. Fifty is enough
+ * frames to see whether a prompt grounds at all, which is the question a
+ * dry-run exists to answer — it is not a measurement of precision, and
+ * anything that tried to be would need the eval pool M12 does not have.
+ *
+ * Stamped onto `dryruns.sample_size` rather than only lived here, in
+ * `images.dedup_threshold`'s idiom: raising it later must not make an old
+ * dry-run's box count read as a different result than it was.
+ */
+export const DRYRUN_SAMPLE_SIZE = 50;
+
+/**
+ * The bound on `ReportDryRunRequest.boxes`.
+ *
+ * One class, `DRYRUN_SAMPLE_SIZE` frames, so 20 boxes on a single frame is
+ * already far past anything a usable prompt produces — this is sized to reject
+ * a detector that has started emitting garbage rather than to accommodate a
+ * plausible run, the same posture `MAX_PREDICTIONS_PER_JOB` takes.
+ */
+export const MAX_DRYRUN_BOXES = DRYRUN_SAMPLE_SIZE * 20;
+
+/**
+ * One box a dry-run proposed.
+ *
+ * No `class_name` and no `prompt_version`, unlike `PredictionBox`: a dry-run
+ * runs exactly one candidate wording for exactly one class, both of which the
+ * `dryruns` row already records, so repeating them per box would be repeating
+ * the request back. Nothing stamps these onto a row anywhere — see
+ * `dryruns.boxes` in migration 0007 for why a dry-run's output is deliberately
+ * not label data.
+ */
+const DryRunBox = z
+  .object({
+    r2_key: z.string().min(1).openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    x_min: z.number().min(0).max(1).openapi({ example: 0.12 }),
+    y_min: z.number().min(0).max(1).openapi({ example: 0.2 }),
+    x_max: z.number().min(0).max(1).openapi({ example: 0.5 }),
+    y_max: z.number().min(0).max(1).openapi({ example: 0.6 }),
+    confidence: z.number().min(0).max(1).openapi({ example: 0.41 }),
+  })
+  .superRefine((box, ctx) => {
+    if (box.x_max < box.x_min) {
+      ctx.addIssue({ code: "custom", message: "x_max must be >= x_min", path: ["x_max"] });
+    }
+    if (box.y_max < box.y_min) {
+      ctx.addIssue({ code: "custom", message: "y_max must be >= y_min", path: ["y_max"] });
+    }
+  })
+  .openapi("DryRunBox");
+
+/**
+ * What starting a dry-run takes (M12.2).
+ *
+ * `video_id` is the caller's, not the server's pick. Which footage a prompt is
+ * tried against is the judgement being made — a character who appears in one
+ * video and not another is the difference between a prompt that looks broken
+ * and one that looks fine — so choosing it silently would hide the variable
+ * that matters most in reading the result.
+ *
+ * No `sample_size`: see `DRYRUN_SAMPLE_SIZE`.
+ */
+export const CreateDryRunRequest = z
+  .object({
+    video_id: z.string().min(1).openapi({ example: "dQw4w9WgXcQ" }),
+    appearance_prompt: z
+      .string()
+      .min(1)
+      .max(MAX_APPEARANCE_PROMPT)
+      .openapi({ example: "a tiny white-haired floating companion with a dark crown" }),
+  })
+  .openapi("CreateDryRunRequest");
+
+/**
+ * A dry-run as the admin screen reads it: the request, and the result once
+ * there is one.
+ *
+ * `status` is `jobs.status`, joined rather than duplicated onto the `dryruns`
+ * row. A second status column would be a second thing to keep true, and the
+ * reaper — which knows nothing about dry-runs — already moves the one in
+ * `jobs` when a lease goes stale.
+ *
+ * `boxes` and `sampled_keys` are `.nullable()` rather than defaulted to empty
+ * arrays, and the distinction is the whole reading of the screen: a run that
+ * has not reported yet has *no* result, while a run that reported an empty
+ * `boxes` over 50 `sampled_keys` has a very definite one — the wording matched
+ * nothing. Collapsing those two into `[]` would make "still running" and "this
+ * prompt is useless" render identically.
+ */
+export const DryRun = z
+  .object({
+    id: z.int().positive().openapi({ example: 1 }),
+    job_id: z.int().positive().openapi({ example: 42 }),
+    class_id: z.int().positive().openapi({ example: 1 }),
+    class_name: z.string().openapi({ example: "Paimon" }),
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    appearance_prompt: z.string().openapi({
+      example: "a tiny white-haired floating companion with a dark crown",
+    }),
+    sample_size: z.int().positive().openapi({ example: 50 }),
+    status: JobStatus,
+    failure_reason: z.string().nullable().openapi({ example: "the detector sidecar is down" }),
+    model_id: z.string().nullable().openapi({ example: "owlvit-base-patch32.onnx" }),
+    boxes: z.array(DryRunBox).nullable(),
+    sampled_keys: z.array(z.string()).nullable(),
+    requested_by: z.string().openapi({ example: "admin@example.com" }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+    reported_at: z.int().nullable().openapi({ example: 1_754_099_400 }),
+  })
+  .openapi("DryRun");
+
+export type DryRunRow = z.infer<typeof DryRun>;
+
+/**
+ * Named `DryRunList`, not after the operation (`listDryRuns`) — oapi-codegen
+ * owns the `<OperationId>Response` namespace.
+ */
+export const DryRunList = z.object({ dryruns: z.array(DryRun) }).openapi("DryRunList");
+
+/**
+ * How many of a class's dry-runs the list route returns.
+ *
+ * Small on purpose. Boxes travel inline (see `DryRun`), so this is the one
+ * response in the API whose size scales with how much work somebody has done,
+ * and the screen it feeds shows one run at a time anyway. Three is enough to
+ * compare a wording against the two before it, which is the actual activity.
+ */
+export const DRYRUN_HISTORY = 3;
+
+/**
+ * What a dry-run worker reports back (M12.2).
+ *
+ * `worker_id` is here for the reason it is on every other write in this file:
+ * this is a write on a lease, and a request that only knew a job id could
+ * overwrite somebody else's dry-run result.
+ *
+ * `sampled_images` is required rather than optional-and-defaulted, exactly as
+ * `ReportPredictionsRequest.sampled_images` is: a run that cannot say what it
+ * looked at cannot be told apart from a prompt that matched nothing.
+ */
+export const ReportDryRunRequest = z
+  .object({
+    worker_id: workerId,
+    model_id: z.string().min(1).max(200).openapi({ example: "owlvit-base-patch32.onnx" }),
+    boxes: z.array(DryRunBox).max(MAX_DRYRUN_BOXES),
+    sampled_images: z.array(z.string().min(1)).max(DRYRUN_SAMPLE_SIZE),
+  })
+  .openapi("ReportDryRunRequest");
+
+/** Named `DryRunReport`, not after the `reportDryRun` operation. */
+export const DryRunReport = z
+  .object({
+    dryrun_id: z.int().positive().openapi({ example: 1 }),
+    boxes: z.int().nonnegative().openapi({ example: 7 }),
+  })
+  .openapi("DryRunReport");
+
+/**
+ * One video as the dry-run form needs to see it: what to call it, and whether
+ * it has any frames to sample.
+ *
+ * `image_count` rather than a boolean: a video whose extraction is still
+ * running has some frames and will have more, and an admin choosing between
+ * "12 frames so far" and "2,685" is making a real choice about how meaningful
+ * a 50-frame sample off it will be.
+ */
+const AdminVideo = z
+  .object({
+    id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    title: z.string().nullable().openapi({ example: "Genshin Impact — Archon quest" }),
+    image_count: z.int().nonnegative().openapi({ example: 2685 }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+  })
+  .openapi("AdminVideo");
+
+/** Named `AdminVideoList`, not after the `listVideos` operation. */
+export const AdminVideoList = z.object({ videos: z.array(AdminVideo) }).openapi("AdminVideoList");
+
+/** How many videos the picker lists — newest first, and nobody scrolls past this. */
+export const VIDEO_PICKER_LIMIT = 50;
+
+/**
+ * The frame an admin screen wants the bytes of, by R2 key.
+ *
+ * A query parameter rather than a path segment, because the key contains
+ * slashes (`frames/dQw4w9WgXcQ/00042.000.jpg`) and a path that had to swallow
+ * them would be a wildcard route this spec could not describe honestly.
+ */
+export const ImageQuery = z.object({
+  key: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: "key", in: "query" }, example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
 });
 
 export const JobListQuery = z.object({

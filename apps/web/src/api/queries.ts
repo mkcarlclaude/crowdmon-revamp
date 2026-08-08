@@ -1,7 +1,11 @@
 import {
   AdminClass,
   AdminClassList,
+  AdminVideoList,
   type CreateClassRequest,
+  type CreateDryRunRequest,
+  DryRun,
+  DryRunList,
   JobList,
   type SubmitVideoRequest,
   type UpdateClassRequest,
@@ -96,5 +100,66 @@ export function useUpdateClass() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: classesKey }),
+  });
+}
+
+export const videosKey = ["videos"] as const;
+
+/**
+ * The videos a dry-run can be run against (M12.2).
+ *
+ * No interval, like `useClasses` and unlike `useJobs`: a video appears here
+ * when somebody on this page submits one, and `image_count` grows as
+ * extraction runs — but a dry-run form does not need that number live to the
+ * second, and polling it would be a `GROUP BY` over every image row per tab
+ * per interval.
+ */
+export function useVideos() {
+  return useQuery({
+    queryKey: videosKey,
+    queryFn: () => apiFetch("/api/admin/videos", AdminVideoList),
+  });
+}
+
+export const dryRunsKey = (classId: number) => ["dryruns", classId] as const;
+
+/**
+ * One class's recent dry-runs.
+ *
+ * Polls only while something is actually running. A dry-run is minutes of the
+ * box's two cores, so the screen has to move on its own when the result lands
+ * — but a class whose newest run finished has nothing left to poll for, and
+ * the interval turns itself off rather than reading D1 forever behind an open
+ * tab. Enabled only for a real class id, so the hook can be called
+ * unconditionally by a component that may not have one yet.
+ */
+export function useDryRuns(classId: number) {
+  return useQuery({
+    queryKey: dryRunsKey(classId),
+    queryFn: () => apiFetch(`/api/admin/classes/${classId}/dryruns`, DryRunList),
+    refetchInterval: (query) => {
+      const newest = query.state.data?.dryruns[0];
+      if (!newest) return false;
+      return newest.status === "pending" || newest.status === "claimed" ? 3_000 : false;
+    },
+  });
+}
+
+export function useCreateDryRun(classId: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: z.infer<typeof CreateDryRunRequest>) =>
+      apiFetch(`/api/admin/classes/${classId}/dryrun`, DryRun, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      // Both, and for different reasons: the dry-run list is what this screen
+      // renders, and the queue is where the job it just enqueued shows up.
+      queryClient.invalidateQueries({ queryKey: dryRunsKey(classId) });
+      queryClient.invalidateQueries({ queryKey: jobsKey });
+    },
   });
 }

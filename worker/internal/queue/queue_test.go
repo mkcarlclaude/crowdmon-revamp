@@ -749,3 +749,85 @@ func TestStatsReportsAnAPIFailure(t *testing.T) {
 		t.Fatal("Stats() returned no error for a 500")
 	}
 }
+
+func TestReportDryRunSendsTheBoxesAndTheSample(t *testing.T) {
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"dryrun_id": 3, "boxes": 1}`)
+	})
+
+	result := queue.DryRunResult{
+		ModelID: "owlvit-base-patch32.onnx",
+		Boxes: []queue.DryRunBox{
+			{Key: "frames/dQw4w9WgXcQ/00000.000.jpg", XMax: 0.5, YMax: 0.5, Confidence: 0.41},
+		},
+		SampledKeys: []string{
+			"frames/dQw4w9WgXcQ/00000.000.jpg",
+			"frames/dQw4w9WgXcQ/00600.000.jpg",
+		},
+	}
+
+	if err := newClient(t, server.URL).ReportDryRun(context.Background(), 11, result); err != nil {
+		t.Fatalf("ReportDryRun() returned an unexpected error: %v", err)
+	}
+
+	got := (*seen)[0]
+	if got.path != "/api/jobs/11/dryrun" {
+		t.Errorf("posted to %s, want the dry-run report path", got.path)
+	}
+	boxes, ok := got.body["boxes"].([]any)
+	if !ok || len(boxes) != 1 {
+		t.Fatalf("body carried boxes %v, want one", got.body["boxes"])
+	}
+	// No class_name and no prompt_version on a dry-run's boxes: one run is one
+	// wording for one class, both already on the row this reports against.
+	box, ok := boxes[0].(map[string]any)
+	if !ok {
+		t.Fatalf("box was %T, want an object", boxes[0])
+	}
+	if _, present := box["class_name"]; present {
+		t.Errorf("box carried class_name %v, want none", box["class_name"])
+	}
+	if _, present := box["prompt_version"]; present {
+		t.Errorf("box carried prompt_version %v, want none", box["prompt_version"])
+	}
+	sampled, ok := got.body["sampled_images"].([]any)
+	if !ok || len(sampled) != 2 {
+		t.Fatalf("body carried sampled_images %v, want 2 keys", got.body["sampled_images"])
+	}
+}
+
+func TestReportDryRunTreatsA404AsALostLease(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error": "no job with this id is held by this worker"}`)
+	})
+
+	err := newClient(t, server.URL).ReportDryRun(context.Background(), 11, queue.DryRunResult{
+		ModelID: "owlvit-base-patch32.onnx",
+	})
+
+	if !errors.Is(err, queue.ErrLeaseLost) {
+		t.Errorf("ReportDryRun() = %v, want ErrLeaseLost", err)
+	}
+}
+
+func TestReportDryRunTreatsA400AsRejected(t *testing.T) {
+	// A box outside [0, 1], a batch past the bound, or a job that is not a
+	// dry-run: this worker's bug, identical on the next attempt, so the
+	// pipeline retires it rather than leaving it for the reaper.
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error": "only a dry-run job can report a dry-run result"}`)
+	})
+
+	err := newClient(t, server.URL).ReportDryRun(context.Background(), 11, queue.DryRunResult{
+		ModelID: "owlvit-base-patch32.onnx",
+	})
+
+	if !errors.Is(err, queue.ErrRejected) {
+		t.Errorf("ReportDryRun() = %v, want ErrRejected", err)
+	}
+}

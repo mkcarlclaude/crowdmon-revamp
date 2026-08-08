@@ -206,7 +206,8 @@
         "enum": [
           "download",
           "chunk",
-          "prelabel"
+          "prelabel",
+          "dryrun"
         ]
       },
       "JobStatus": {
@@ -282,6 +283,9 @@
           },
           "chunk": {
             "$ref": "#/components/schemas/ChunkWork"
+          },
+          "dryrun": {
+            "$ref": "#/components/schemas/DryRunWork"
           }
         },
         "required": [
@@ -318,6 +322,32 @@
           "segment_index",
           "start_seconds",
           "end_seconds"
+        ]
+      },
+      "DryRunWork": {
+        "type": "object",
+        "properties": {
+          "class_name": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Paimon"
+          },
+          "appearance_prompt": {
+            "type": "string",
+            "minLength": 1,
+            "example": "a tiny white-haired floating companion with a dark crown"
+          },
+          "sample_size": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 50
+          }
+        },
+        "required": [
+          "class_name",
+          "appearance_prompt",
+          "sample_size"
         ]
       },
       "ClaimRequest": {
@@ -718,12 +748,18 @@
             "type": "integer",
             "minimum": 0,
             "example": 1
+          },
+          "dryrun": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
           }
         },
         "required": [
           "download",
           "chunk",
-          "prelabel"
+          "prelabel",
+          "dryrun"
         ]
       },
       "ActiveClasses": {
@@ -859,6 +895,286 @@
             "example": true
           }
         }
+      },
+      "AdminVideoList": {
+        "type": "object",
+        "properties": {
+          "videos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminVideo"
+            }
+          }
+        },
+        "required": [
+          "videos"
+        ]
+      },
+      "AdminVideo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "example": "Genshin Impact — Archon quest"
+          },
+          "image_count": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 2685
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "image_count",
+          "created_at"
+        ]
+      },
+      "DryRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "job_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 42
+          },
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "class_name": {
+            "type": "string",
+            "example": "Paimon"
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "appearance_prompt": {
+            "type": "string",
+            "example": "a tiny white-haired floating companion with a dark crown"
+          },
+          "sample_size": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 50
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "failure_reason": {
+            "type": "string",
+            "nullable": true,
+            "example": "the detector sidecar is down"
+          },
+          "model_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "owlvit-base-patch32.onnx"
+          },
+          "boxes": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/DryRunBox"
+            }
+          },
+          "sampled_keys": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "requested_by": {
+            "type": "string",
+            "example": "admin@example.com"
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          },
+          "reported_at": {
+            "type": "integer",
+            "nullable": true,
+            "example": 1754099400
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "class_id",
+          "class_name",
+          "video_id",
+          "appearance_prompt",
+          "sample_size",
+          "status",
+          "failure_reason",
+          "model_id",
+          "boxes",
+          "sampled_keys",
+          "requested_by",
+          "created_at",
+          "reported_at"
+        ]
+      },
+      "DryRunBox": {
+        "type": "object",
+        "properties": {
+          "r2_key": {
+            "type": "string",
+            "minLength": 1,
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "x_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.12
+          },
+          "y_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.2
+          },
+          "x_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.5
+          },
+          "y_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.6
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.41
+          }
+        },
+        "required": [
+          "r2_key",
+          "x_min",
+          "y_min",
+          "x_max",
+          "y_max",
+          "confidence"
+        ]
+      },
+      "CreateDryRunRequest": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "dQw4w9WgXcQ"
+          },
+          "appearance_prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "example": "a tiny white-haired floating companion with a dark crown"
+          }
+        },
+        "required": [
+          "video_id",
+          "appearance_prompt"
+        ]
+      },
+      "DryRunList": {
+        "type": "object",
+        "properties": {
+          "dryruns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DryRun"
+            }
+          }
+        },
+        "required": [
+          "dryruns"
+        ]
+      },
+      "DryRunReport": {
+        "type": "object",
+        "properties": {
+          "dryrun_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "boxes": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 7
+          }
+        },
+        "required": [
+          "dryrun_id",
+          "boxes"
+        ]
+      },
+      "ReportDryRunRequest": {
+        "type": "object",
+        "properties": {
+          "worker_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "carls-ubuntu-1"
+          },
+          "model_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "owlvit-base-patch32.onnx"
+          },
+          "boxes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DryRunBox"
+            },
+            "maxItems": 1000
+          },
+          "sampled_images": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxItems": 50
+          }
+        },
+        "required": [
+          "worker_id",
+          "model_id",
+          "boxes",
+          "sampled_images"
+        ]
       }
     },
     "parameters": {}
@@ -946,6 +1262,56 @@
           },
           "409": {
             "description": "This video has already been submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listVideos",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Submitted videos and how many frames each has",
+        "description": "What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.",
+        "responses": {
+          "200": {
+            "description": "Videos, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminVideoList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
             "content": {
               "application/json": {
                 "schema": {
@@ -1778,6 +2144,310 @@
           },
           "503": {
             "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/classes/{id}/dryrun": {
+      "post": {
+        "operationId": "createDryRun",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Try a candidate prompt against a sample of one video's frames",
+        "description": "Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDryRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The dry-run, queued and not yet reported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, or a video with no extracted frames to sample",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No class with this id, or no such video",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/classes/{id}/dryruns": {
+      "get": {
+        "operationId": "listDryRuns",
+        "tags": [
+          "admin"
+        ],
+        "summary": "This class's recent dry-runs, newest first",
+        "description": "The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dry-runs, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRunList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/image": {
+      "get": {
+        "operationId": "getImage",
+        "tags": [
+          "admin"
+        ],
+        "summary": "One frame's bytes, by R2 key",
+        "description": "Streams an object out of the frames bucket for an admin screen to render. Requires a Cloudflare Access assertion — the bucket stays private and there is no way to enumerate it through this route.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+            },
+            "required": true,
+            "name": "key",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The object's bytes",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A missing or empty key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No object under this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/dryrun": {
+      "post": {
+        "operationId": "reportDryRun",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Report what a candidate prompt found (M12.2)",
+        "description": "One call per dry-run job, the shape `reportImages` and `reportPredictions` established. **Writes nothing to `predictions`**: the boxes land on the dry-run's own row as JSON and are never label data (migration 0007). A re-run after a reap overwrites the row rather than appending, which is safe precisely because nothing downstream references it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportDryRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The dry-run's result is recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRunReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, or a job that is not a dry-run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No job with this id is held by this worker",
             "content": {
               "application/json": {
                 "schema": {

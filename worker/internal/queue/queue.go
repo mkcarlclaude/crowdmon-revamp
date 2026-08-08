@@ -648,3 +648,82 @@ func truncate(s string, limit int) string {
 	}
 	return s[:limit]
 }
+
+// DryRunResult is everything one finished dry-run job reports (M12.2).
+//
+// Deliberately not Detections, although the two look alike. A dry-run's boxes
+// carry no class name and no prompt version — one run is one candidate wording
+// for one class, both already on the `dryruns` row — and, more importantly,
+// they are not label data: nothing here becomes a `predictions` row, and a
+// shared type would be the first step towards the two being handled by the
+// same code that writes them.
+type DryRunResult struct {
+	ModelID string
+	Boxes   []DryRunBox
+	// SampledKeys is every frame the sampler drew, whether or not a box was
+	// found on it. Same reason Detections.SampledKeys exists: without it, a
+	// prompt that matched nothing cannot be told apart from a run that looked
+	// at nothing.
+	SampledKeys []string
+}
+
+// DryRunBox is one box a candidate wording proposed.
+type DryRunBox struct {
+	// Key is the R2 object key of the frame — filled in by the caller, not by
+	// the Detector, exactly as Box.Key is.
+	Key                    string
+	XMin, YMin, XMax, YMax float64
+	Confidence             float64
+}
+
+// ReportDryRun records what a candidate prompt found (M12.2).
+//
+// Called before Complete, the ordering every other report in this file uses:
+// reporting on a lease this worker still holds is what makes the 404 mean
+// something.
+func (c *Client) ReportDryRun(ctx context.Context, jobID int, result DryRunResult) error {
+	boxes := make([]api.DryRunBox, len(result.Boxes))
+	for i, box := range result.Boxes {
+		boxes[i] = api.DryRunBox{
+			R2Key: box.Key,
+			// float32 for ReportPredictions' reason: the contract says
+			// `number`, oapi-codegen renders the narrower type, and float32's
+			// seven significant digits are far past what a box in [0, 1]
+			// means.
+			XMin:       float32(box.XMin),
+			YMin:       float32(box.YMin),
+			XMax:       float32(box.XMax),
+			YMax:       float32(box.YMax),
+			Confidence: float32(box.Confidence),
+		}
+	}
+
+	sampledKeys := result.SampledKeys
+	if sampledKeys == nil {
+		sampledKeys = []string{}
+	}
+
+	resp, err := c.api.ReportDryRun(ctx, jobID, api.ReportDryRunJSONRequestBody{
+		WorkerId:      c.workerID,
+		ModelId:       result.ModelID,
+		Boxes:         boxes,
+		SampledImages: sampledKeys,
+	})
+	if err != nil {
+		return fmt.Errorf("reporting the dry-run for job %d: %w", jobID, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusNotFound:
+		return fmt.Errorf("reporting the dry-run for job %d: %w", jobID, ErrLeaseLost)
+	case http.StatusBadRequest:
+		// A box outside [0, 1], a batch past the per-job bound, or a job that
+		// is not a dry-run. This worker's bug, identical next attempt.
+		return fmt.Errorf("reporting the dry-run for job %d: %w: %s", jobID, ErrRejected, statusError(resp))
+	default:
+		return fmt.Errorf("reporting the dry-run for job %d: %w", jobID, statusError(resp))
+	}
+}

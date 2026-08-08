@@ -400,6 +400,16 @@ Worker CPU, and signed-URL issuance is real infra work rather than a checkbox.
 The handful of sample images on the public demo page are a fixed small set — bundle
 them with the SPA or serve from a separate public path.
 
+**Amended in v2 (M12.2): the admin dry-run grid is proxied, not signed.** Fifty frames,
+Access-gated, rendered once per dry-run — `GET /api/admin/image?key=…` reads the Worker's
+existing `FRAMES` binding and streams the bytes. This does not reopen the decision above,
+because the decision above is a posture argument: the bucket stays private, nothing is
+enumerable, and the gate is the same allowlist every other admin route sits behind. What
+proxying avoids is minting an R2 S3 credential by hand and implementing SigV4 in a Worker
+to serve one operator fifty images. Presigned batches stay where their argument actually
+bites — M13.4's labelling session, a couple of hundred images per sitting, where keeping
+bytes off Worker CPU is worth the infrastructure.
+
 **Amended in v2 (§12): the public path serves R2 images too, and is bounded to make that
 safe.** The public surface is no longer a detector demo over bundled samples; it is the
 verification UI, which needs real frames. Three bounds keep §7's "no republishing at

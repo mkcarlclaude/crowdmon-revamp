@@ -197,10 +197,19 @@ func run(ctx context.Context) error {
 		Detector:    detector,
 		Predictions: jobs,
 		Prompts:     jobs,
-		Extraction:  frames.Config{DedupThreshold: cfg.DedupThreshold},
-		Metrics:     metrics,
-		Logger:      logger,
-		WorkerID:    cfg.WorkerID,
+		// M12.2's dry-run branch. The same sampler value, through its bounded
+		// method: a dry-run's budget arrives on the job (the API stamped it on
+		// `dryruns.sample_size`) rather than coming from this process's
+		// configuration, so `Budget` here is only the fallback SampleN uses if
+		// a job ever arrives asking for none. The detector is shared
+		// unchanged — M11.2's interface takes the prompts as an argument,
+		// which is exactly what makes running a candidate one free.
+		DryRunSampler: sample.Sampler{Images: jobs, Budget: cfg.PrelabelSampleSize},
+		DryRuns:       jobs,
+		Extraction:    frames.Config{DedupThreshold: cfg.DedupThreshold},
+		Metrics:       metrics,
+		Logger:        logger,
+		WorkerID:      cfg.WorkerID,
 	}
 
 	runner := worker.Runner{

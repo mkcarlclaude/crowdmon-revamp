@@ -1,5 +1,5 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
-import type { Bindings } from "../bindings";
+import type { AppEnv } from "../bindings";
 import { nextPromptVersion } from "../prompt-version";
 import {
   AdminClass,
@@ -86,10 +86,7 @@ export const listClassesRoute = createRoute({
   },
 });
 
-export const listClassesHandler: RouteHandler<
-  typeof listClassesRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const listClassesHandler: RouteHandler<typeof listClassesRoute, AppEnv> = async (c) => {
   // `ORDER BY name`, matching `listActiveClasses` — the roster is read by a
   // human scanning for a character, and insertion order is the one ordering
   // that tells them nothing.
@@ -126,10 +123,7 @@ export const createClassRoute = createRoute({
   },
 });
 
-export const createClassHandler: RouteHandler<
-  typeof createClassRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const createClassHandler: RouteHandler<typeof createClassRoute, AppEnv> = async (c) => {
   const { name, appearance_prompt } = c.req.valid("json");
 
   // `ON CONFLICT DO NOTHING ... RETURNING` for the reason `submitVideo` uses
@@ -186,10 +180,7 @@ export const updateClassRoute = createRoute({
   },
 });
 
-export const updateClassHandler: RouteHandler<
-  typeof updateClassRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const updateClassHandler: RouteHandler<typeof updateClassRoute, AppEnv> = async (c) => {
   const { id } = c.req.valid("param");
   const { appearance_prompt, active } = c.req.valid("json");
 

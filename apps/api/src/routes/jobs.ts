@@ -1,11 +1,12 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import { trace } from "@opentelemetry/api";
 import type { Context } from "hono";
-import type { Bindings } from "../bindings";
+import type { AppEnv } from "../bindings";
 import {
   ChunkFanOut,
   ClaimRequest,
   CompleteRequest,
+  DryRunReport,
   errorResponse,
   FanOutRequest,
   HeartbeatRequest,
@@ -15,6 +16,7 @@ import {
   JobStats,
   ListVideoImagesQuery,
   PredictionReport,
+  ReportDryRunRequest,
   ReportImagesRequest,
   ReportPredictionsRequest,
   SEGMENT_SECONDS,
@@ -57,7 +59,7 @@ const HELD_BY = "id = ? AND status = 'claimed' AND claimed_by = ?";
  * and the two are deliberately not distinguished: the worker's response is the
  * same either way, which is to stop.
  */
-const notHeldByCaller = (c: Context<{ Bindings: Bindings }>) =>
+const notHeldByCaller = (c: Context<AppEnv>) =>
   c.json({ error: "no job with this id is held by this worker" }, 404);
 
 export const claimJobRoute = createRoute({
@@ -265,9 +267,7 @@ export const jobStatsRoute = createRoute({
   },
 });
 
-export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, { Bindings: Bindings }> = async (
-  c,
-) => {
+export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, AppEnv> = async (c) => {
   // One statement, one GROUP BY — the task's own constraint, and it is enough:
   // this is a dashboard read on an interval, not a lease operation, so there
   // is nothing here that needs a transaction or a second round trip.
@@ -275,7 +275,7 @@ export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, { Bindings: Bin
     "SELECT status, kind, COUNT(*) AS count FROM jobs GROUP BY status, kind",
   ).all<{
     status: "pending" | "claimed" | "done" | "failed";
-    kind: "download" | "chunk" | "prelabel";
+    kind: "download" | "chunk" | "prelabel" | "dryrun";
     count: number;
   }>();
 
@@ -283,14 +283,15 @@ export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, { Bindings: Bin
   // overwrite it. This is the zero-fill `JobStats`' own comment (schemas.ts)
   // promises the Go worker's gauge callback it will never have to do itself —
   // seeing this shape is what lets that callback report a drained queue as
-  // twelve zeros instead of twelve absences. `GROUP BY status, kind` itself
+  // sixteen zeros instead of sixteen absences. `GROUP BY status, kind` itself
   // needed no change for `prelabel` to show up in `results` — only this
-  // literal, naming every combination up front, has to grow with the kind.
+  // literal, naming every combination up front, has to grow with the kind —
+  // which it did again for `dryrun` (M12.2), making it sixteen combinations.
   const counts = {
-    pending: { download: 0, chunk: 0, prelabel: 0 },
-    claimed: { download: 0, chunk: 0, prelabel: 0 },
-    done: { download: 0, chunk: 0, prelabel: 0 },
-    failed: { download: 0, chunk: 0, prelabel: 0 },
+    pending: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
+    claimed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
+    done: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
+    failed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
   };
 
   for (const row of results) {
@@ -300,9 +301,7 @@ export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, { Bindings: Bin
   return c.json(counts, 200);
 };
 
-export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bindings }> = async (
-  c,
-) => {
+export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async (c) => {
   const { worker_id } = c.req.valid("json");
   const claimedAt = now();
 
@@ -328,7 +327,7 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
     .bind(worker_id, claimedAt, claimedAt, claimedAt)
     .first<{
       id: number;
-      kind: "download" | "chunk" | "prelabel";
+      kind: "download" | "chunk" | "prelabel" | "dryrun";
       video_id: string;
       attempts: number;
       // Whatever the row that created this job stamped onto it (M9.2) — the
@@ -359,6 +358,22 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
           .first<{ segment_index: number; start_seconds: number; end_seconds: number }>()
       : null;
 
+  // The dry-run's candidate wording (M12.2), read the same way and for the
+  // same reason: `RETURNING` cannot join, and the job is already this worker's
+  // by the time this runs. Joined to `classes` for the name the boxes will be
+  // labelled with — the wording itself is deliberately the `dryruns` row's
+  // copy, not the class's current text (migration 0007's own comment).
+  const dryrun =
+    job.kind === "dryrun"
+      ? await c.env.DB.prepare(
+          `SELECT c.name AS class_name, d.appearance_prompt, d.sample_size
+             FROM dryruns d JOIN classes c ON c.id = d.class_id
+            WHERE d.job_id = ?`,
+        )
+          .bind(job.id)
+          .first<{ class_name: string; appearance_prompt: string; sample_size: number }>()
+      : null;
+
   // A job whose work definition is incomplete cannot be run, and handing it
   // out anyway only moves the discovery to the worker, an hour later, after a
   // download.
@@ -371,6 +386,14 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
   if (!video) return failUnrunnable(c, job.id, "video row missing");
   if (job.kind === "chunk" && !chunk) {
     return failUnrunnable(c, job.id, "chunk row missing");
+  }
+  // Reachable, unlike the chunk case above: `createDryRun` writes the job and
+  // its `dryruns` row in two statements rather than one batch (it needs the
+  // job id for the second), so a failure between them leaves exactly this.
+  // Retiring it is the same answer, for the same reason — the alternative is
+  // handing an unrunnable job out on every poll forever.
+  if (job.kind === "dryrun" && !dryrun) {
+    return failUnrunnable(c, job.id, "dryrun row missing");
   }
 
   return c.json(
@@ -397,6 +420,7 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
       // fail that validation on the way out.
       queue_wait_seconds: Math.max(0, claimedAt - job.created_at),
       ...(chunk ? { chunk } : {}),
+      ...(dryrun ? { dryrun } : {}),
     },
     200,
   );
@@ -411,7 +435,7 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
  * error, because from the worker's side nothing went wrong — there was simply
  * nothing it could be given.
  */
-async function failUnrunnable(c: Context<{ Bindings: Bindings }>, jobId: number, reason: string) {
+async function failUnrunnable(c: Context<AppEnv>, jobId: number, reason: string) {
   await c.env.DB.prepare(
     "UPDATE jobs SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ?",
   )
@@ -421,9 +445,7 @@ async function failUnrunnable(c: Context<{ Bindings: Bindings }>, jobId: number,
   return c.body(null, 204);
 }
 
-export const heartbeatHandler: RouteHandler<typeof heartbeatRoute, { Bindings: Bindings }> = async (
-  c,
-) => {
+export const heartbeatHandler: RouteHandler<typeof heartbeatRoute, AppEnv> = async (c) => {
   const { id } = c.req.valid("param");
   const { worker_id } = c.req.valid("json");
 
@@ -439,9 +461,7 @@ export const heartbeatHandler: RouteHandler<typeof heartbeatRoute, { Bindings: B
   return c.body(null, 204);
 };
 
-export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: Bindings }> = async (
-  c,
-) => {
+export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, AppEnv> = async (c) => {
   const { id } = c.req.valid("param");
   const { worker_id, duration_seconds, width, height, title } = c.req.valid("json");
 
@@ -454,7 +474,7 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: B
   // done — the same outcome M7.3 exists to make safe.
   const job = await c.env.DB.prepare(`SELECT kind, video_id FROM jobs WHERE ${HELD_BY}`)
     .bind(id, worker_id)
-    .first<{ kind: "download" | "chunk" | "prelabel"; video_id: string }>();
+    .first<{ kind: "download" | "chunk" | "prelabel" | "dryrun"; video_id: string }>();
 
   if (!job) return notHeldByCaller(c);
 
@@ -530,10 +550,7 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: B
   return c.json({ video_id: job.video_id, segments: segments.length, created }, 200);
 };
 
-export const reportImagesHandler: RouteHandler<
-  typeof reportImagesRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const reportImagesHandler: RouteHandler<typeof reportImagesRoute, AppEnv> = async (c) => {
   const { id } = c.req.valid("param");
   const { worker_id, frames_extracted, frames_kept, dedup_threshold, config_version, images } =
     c.req.valid("json");
@@ -566,7 +583,7 @@ export const reportImagesHandler: RouteHandler<
   )
     .bind(id, worker_id)
     .first<{
-      kind: "download" | "chunk" | "prelabel";
+      kind: "download" | "chunk" | "prelabel" | "dryrun";
       video_id: string;
       start_seconds: number | null;
       end_seconds: number | null;
@@ -693,10 +710,9 @@ function chunkForBinding<T>(values: T[], reservedParams = 0): T[][] {
   return chunks;
 }
 
-export const reportPredictionsHandler: RouteHandler<
-  typeof reportPredictionsRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRoute, AppEnv> = async (
+  c,
+) => {
   const { id } = c.req.valid("param");
   const { worker_id, model_id, predictions, sampled_images } = c.req.valid("json");
 
@@ -705,7 +721,7 @@ export const reportPredictionsHandler: RouteHandler<
   // prediction rows against somebody else's job.
   const job = await c.env.DB.prepare(`SELECT kind, video_id FROM jobs WHERE ${HELD_BY}`)
     .bind(id, worker_id)
-    .first<{ kind: "download" | "chunk" | "prelabel"; video_id: string }>();
+    .first<{ kind: "download" | "chunk" | "prelabel" | "dryrun"; video_id: string }>();
 
   if (!job) return notHeldByCaller(c);
 
@@ -865,10 +881,9 @@ export const reportPredictionsHandler: RouteHandler<
   return c.json({ video_id: job.video_id, predictions: predictions.length }, 200);
 };
 
-export const listVideoImagesHandler: RouteHandler<
-  typeof listVideoImagesRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const listVideoImagesHandler: RouteHandler<typeof listVideoImagesRoute, AppEnv> = async (
+  c,
+) => {
   const { video_id } = c.req.valid("param");
   const { worker_id } = c.req.valid("query");
 
@@ -933,7 +948,7 @@ const TRACER = "crowdmon.jobs";
  */
 function recordJobFailed(job: {
   id: number;
-  kind: "download" | "chunk" | "prelabel";
+  kind: "download" | "chunk" | "prelabel" | "dryrun";
   video_id: string;
   attempts: number;
   failure_reason: string | null;
@@ -956,10 +971,7 @@ function recordJobFailed(job: {
     .end();
 }
 
-export const completeJobHandler: RouteHandler<
-  typeof completeJobRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const completeJobHandler: RouteHandler<typeof completeJobRoute, AppEnv> = async (c) => {
   const { id } = c.req.valid("param");
   const { worker_id, status, failure_reason } = c.req.valid("json");
 
@@ -992,7 +1004,7 @@ export const completeJobHandler: RouteHandler<
   // nothing about how a worker that does not hold the lease is told apart
   // from one that does — both remain "no row came back."
   const results = await c.env.DB.batch<{
-    kind: "download" | "chunk" | "prelabel";
+    kind: "download" | "chunk" | "prelabel" | "dryrun";
     video_id: string;
     attempts: number;
   }>([
@@ -1106,3 +1118,72 @@ function segmentsFor(duration: number): { index: number; start: number; end: num
 
   return segments;
 }
+
+export const reportDryRunRoute = createRoute({
+  method: "post",
+  path: "/api/jobs/{id}/dryrun",
+  operationId: "reportDryRun",
+  tags: ["jobs"],
+  summary: "Report what a candidate prompt found (M12.2)",
+  description:
+    "One call per dry-run job, the shape `reportImages` and `reportPredictions` " +
+    "established. **Writes nothing to `predictions`**: the boxes land on the dry-run's " +
+    "own row as JSON and are never label data (migration 0007). A re-run after a reap " +
+    "overwrites the row rather than appending, which is safe precisely because nothing " +
+    "downstream references it.",
+  request: {
+    params: JobIdParam,
+    body: { content: { "application/json": { schema: ReportDryRunRequest } }, required: true },
+  },
+  responses: {
+    200: {
+      description: "The dry-run's result is recorded",
+      content: { "application/json": { schema: DryRunReport } },
+    },
+    400: errorResponse("A malformed body, or a job that is not a dry-run"),
+    404: errorResponse("No job with this id is held by this worker"),
+  },
+});
+
+export const reportDryRunHandler: RouteHandler<typeof reportDryRunRoute, AppEnv> = async (c) => {
+  const { id } = c.req.valid("param");
+  const { worker_id, model_id, boxes, sampled_images } = c.req.valid("json");
+
+  // The same lease check every other write on a held job makes.
+  const job = await c.env.DB.prepare(`SELECT kind FROM jobs WHERE ${HELD_BY}`)
+    .bind(id, worker_id)
+    .first<{ kind: "download" | "chunk" | "prelabel" | "dryrun" }>();
+
+  if (!job) return notHeldByCaller(c);
+
+  // 400 rather than 404, matching `reportImages` and `reportPredictions`: the
+  // lease is genuine and the worker is who it says it is; what is wrong is the
+  // request, and a 404 would send it hunting for a lease it still holds.
+  if (job.kind !== "dryrun") {
+    return c.json({ error: "only a dry-run job can report a dry-run result" }, 400);
+  }
+
+  // One UPDATE against one row — no key or class resolution, unlike
+  // `reportPredictions`, because none of this becomes a foreign key. That is
+  // the whole difference between a dry-run and a pre-label, and it is why this
+  // handler is twenty lines where that one is two hundred.
+  //
+  // Overwrite rather than append: a reaped-and-rerun dry-run should show its
+  // latest attempt's boxes, and there is nothing referencing the previous
+  // attempt's to lose. `reportPredictions` cannot say the same, which is why
+  // it deliberately writes new rows instead.
+  const updated = await c.env.DB.prepare(
+    `UPDATE dryruns
+        SET model_id = ?, boxes = ?, sampled_keys = ?, reported_at = ?
+      WHERE job_id = ? RETURNING id`,
+  )
+    .bind(model_id, JSON.stringify(boxes), JSON.stringify(sampled_images), now(), id)
+    .first<{ id: number }>();
+
+  // Unreachable through the claim path — a `dryrun` job with no `dryruns` row
+  // is retired at claim time rather than handed out — so this is the answer
+  // for a row deleted underneath a running job, not a state the API produces.
+  if (!updated) return c.json({ error: "this job has no dry-run to report against" }, 400);
+
+  return c.json({ dryrun_id: updated.id, boxes: boxes.length }, 200);
+};

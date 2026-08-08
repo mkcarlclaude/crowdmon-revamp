@@ -1,6 +1,7 @@
 import type { AdminClassRow } from "@crowdmon/api/schemas";
 import { useState } from "react";
 import { useClasses, useUpdateClass } from "../api/queries";
+import { DryRunPanel } from "./DryRunPanel";
 
 /**
  * The class roster (M12.1): every class, active and retired, each editable in
@@ -122,6 +123,11 @@ function ClassCard({
           </span>
         )}
       </div>
+
+      {/* M12.2, and it reads the *unsaved* textarea above rather than the
+          class's stored prompt — trying a wording before saving it is the
+          entire ordering this milestone exists to establish. */}
+      <DryRunPanel classId={klass.id} prompt={prompt} />
     </section>
   );
 }

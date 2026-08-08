@@ -1,5 +1,5 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
-import type { Bindings } from "../bindings";
+import type { AppEnv } from "../bindings";
 import { HealthResponse } from "../schemas";
 
 export const healthRoute = createRoute({
@@ -16,7 +16,7 @@ export const healthRoute = createRoute({
   },
 });
 
-export const healthHandler: RouteHandler<typeof healthRoute, { Bindings: Bindings }> = (c) =>
+export const healthHandler: RouteHandler<typeof healthRoute, AppEnv> = (c) =>
   c.json({
     status: "ok" as const,
     service: "crowdmon-api" as const,
