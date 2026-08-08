@@ -150,41 +150,45 @@ export const createDryRunHandler: RouteHandler<typeof createDryRunRoute, AppEnv>
     return c.json({ error: `${video_id} has no extracted frames to sample yet` }, 400);
   }
 
-  // Two statements, not a batch: the `dryruns` row needs the job id, which
-  // only exists once the job insert has run. A failure between them leaves a
-  // `dryrun` job with no work definition, which the claim handler retires the
-  // same way it retires a chunk job with no `chunks` row — the pre-existing
-  // mechanism for exactly this shape of partial write.
-  const job = await c.env.DB.prepare(
-    "INSERT INTO jobs (kind, video_id, traceparent) VALUES ('dryrun', ?, ?) RETURNING id",
-  )
-    .bind(video_id, currentTraceparent())
-    .first<{ id: number }>();
+  // One batch, and it has to be: the job is claimable the instant its row
+  // commits, and the worker polls continuously. Two separate round trips leave
+  // a window — small, but wide open under a live worker — in which the claim
+  // handler finds a `dryrun` job with no `dryruns` row and retires it as
+  // unrunnable, while this handler goes on to write the work definition and
+  // answer 201. The operator would see a dry-run fail the moment they asked
+  // for it, for a reason that is nobody's fault.
+  //
+  // `last_insert_rowid()` is what makes one batch possible at all: the second
+  // statement needs the id the first assigned, and D1 runs a batch as one
+  // transaction on one connection, which is exactly the scope that function is
+  // defined over. Nothing else in this file needs it — every other two-step
+  // write in the API is either idempotent (`submitVideo`) or conditioned on a
+  // lease.
+  const requestedBy =
+    // Set by `requireAccess`, which cannot have been skipped: this path is
+    // under `/api/admin/*`. The fallback is not a real state, only the one the
+    // type system insists on being told about.
+    c.get("adminEmail") ?? "unknown";
 
-  if (!job) return c.json({ error: "could not enqueue the dry-run job" }, 400);
+  const [job, dryrun] = await c.env.DB.batch<{ id: number; created_at: number }>([
+    c.env.DB.prepare(
+      "INSERT INTO jobs (kind, video_id, traceparent) VALUES ('dryrun', ?, ?) RETURNING id",
+    ).bind(video_id, currentTraceparent()),
+    c.env.DB.prepare(
+      `INSERT INTO dryruns (job_id, class_id, appearance_prompt, sample_size, requested_by)
+            VALUES (last_insert_rowid(), ?, ?, ?, ?) RETURNING id, created_at`,
+    ).bind(klass.id, appearance_prompt, DRYRUN_SAMPLE_SIZE, requestedBy),
+  ]);
 
-  const dryrun = await c.env.DB.prepare(
-    `INSERT INTO dryruns (job_id, class_id, appearance_prompt, sample_size, requested_by)
-          VALUES (?, ?, ?, ?, ?) RETURNING id, created_at`,
-  )
-    .bind(
-      job.id,
-      klass.id,
-      appearance_prompt,
-      DRYRUN_SAMPLE_SIZE,
-      // Set by `requireAccess`, which cannot have been skipped: this path is
-      // under `/api/admin/*`. The fallback is not a real state, only the one
-      // the type system insists on being told about.
-      c.get("adminEmail") ?? "unknown",
-    )
-    .first<{ id: number; created_at: number }>();
+  const jobId = job?.results[0]?.id;
+  const created = dryrun?.results[0];
 
-  if (!dryrun) return c.json({ error: "could not record the dry-run" }, 400);
+  if (!jobId || !created) return c.json({ error: "could not enqueue the dry-run job" }, 400);
 
   return c.json(
     {
-      id: dryrun.id,
-      job_id: job.id,
+      id: created.id,
+      job_id: jobId,
       class_id: klass.id,
       class_name: klass.name,
       video_id,
@@ -197,8 +201,8 @@ export const createDryRunHandler: RouteHandler<typeof createDryRunRoute, AppEnv>
       // and "the prompt matched nothing" is the whole reading of the screen.
       boxes: null,
       sampled_keys: null,
-      requested_by: c.get("adminEmail") ?? "unknown",
-      created_at: dryrun.created_at,
+      requested_by: requestedBy,
+      created_at: created.created_at,
       reported_at: null,
     },
     201,

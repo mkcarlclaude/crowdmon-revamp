@@ -1819,7 +1819,7 @@
           "jobs"
         ],
         "summary": "The candidate pool a prelabel job's sampler draws from",
-        "description": "M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).",
+        "description": "M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. A `dryrun` job (M12.2) draws from the same pool and is accepted here too — see the handler's comment for why the weaker uniqueness of that kind costs this read nothing. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).",
         "parameters": [
           {
             "schema": {
@@ -1864,7 +1864,7 @@
             }
           },
           "404": {
-            "description": "No prelabel job for this video is held by this worker",
+            "description": "No prelabel or dry-run job for this video is held by this worker",
             "content": {
               "application/json": {
                 "schema": {

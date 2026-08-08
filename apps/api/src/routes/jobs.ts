@@ -229,7 +229,9 @@ export const listVideoImagesRoute = createRoute({
     "of a job's primary key. That partial unique index already guarantees at most one " +
     "held prelabel job per video, which is exactly the lease this read needs to prove — " +
     "the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, " +
-    "just proved through a different column. No Access assertion and no credential " +
+    "just proved through a different column. A `dryrun` job (M12.2) draws from the same " +
+    "pool and is accepted here too — see the handler's comment for why the weaker " +
+    "uniqueness of that kind costs this read nothing. No Access assertion and no credential " +
     "beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` " +
     "(`jobStatsRoute`'s own comment explains why that boundary is where it is).",
   request: { params: VideoIdParam, query: ListVideoImagesQuery },
@@ -239,7 +241,7 @@ export const listVideoImagesRoute = createRoute({
       content: { "application/json": { schema: VideoImages } },
     },
     400: errorResponse("Malformed video id or worker id"),
-    404: errorResponse("No prelabel job for this video is held by this worker"),
+    404: errorResponse("No prelabel or dry-run job for this video is held by this worker"),
   },
 });
 
@@ -887,20 +889,34 @@ export const listVideoImagesHandler: RouteHandler<typeof listVideoImagesRoute, A
   const { video_id } = c.req.valid("param");
   const { worker_id } = c.req.valid("query");
 
-  // idx_jobs_one_prelabel_per_video (migration 0005) is what makes this a
-  // real lease check rather than an approximation of one: at most one
-  // prelabel job can ever be 'claimed' for a given video, so finding a row
-  // here is exactly as strong a guarantee as HELD_BY gives every job-id-scoped
-  // route in this file, even though no primary key enters this query.
+  // Both sampling kinds, not just `prelabel` (M12.2): a dry-run draws its
+  // frames from the same pool through the same client, and a check that named
+  // only `prelabel` would fail every dry-run ever queued — the worker holds a
+  // `dryrun` lease, gets a 404 here, and reports it as a lost lease.
+  //
+  // idx_jobs_one_prelabel_per_video (migration 0005) makes this an exact lease
+  // check for a prelabel job: at most one can ever be 'claimed' for a video,
+  // so finding a row is as strong a guarantee as HELD_BY gives every
+  // job-id-scoped route here, even though no primary key enters this query.
+  // A video may have several dry-runs, so for that kind the row proves
+  // something slightly weaker — this worker holds *a* claimed sampling job for
+  // this video, not a specific one. That is the whole guarantee this endpoint
+  // needs either way: the response is the video's entire image pool, identical
+  // for every job that asks, so there is nothing here that a more precise
+  // identity would gate differently.
   const held = await c.env.DB.prepare(
     `SELECT 1 FROM jobs
-      WHERE video_id = ? AND kind = 'prelabel' AND status = 'claimed' AND claimed_by = ?`,
+      WHERE video_id = ? AND kind IN ('prelabel', 'dryrun')
+        AND status = 'claimed' AND claimed_by = ?`,
   )
     .bind(video_id, worker_id)
     .first();
 
   if (!held) {
-    return c.json({ error: "no prelabel job for this video is held by this worker" }, 404);
+    return c.json(
+      { error: "no prelabel or dry-run job for this video is held by this worker" },
+      404,
+    );
   }
 
   const { results } = await c.env.DB.prepare(

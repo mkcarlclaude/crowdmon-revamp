@@ -11,8 +11,9 @@ import { seedVideo } from "./seed";
  * Scoped by video id, not job id — `Sample`'s signature carries only a video
  * id, so the lease check here reads `idx_jobs_one_prelabel_per_video`
  * (migration 0005) instead of a job's primary key. Every test below is really
- * testing that substitution: a row exists exactly when a prelabel job for
- * this video is claimed by this worker, and not otherwise.
+ * testing that substitution: a row exists exactly when a prelabel or
+ * dry-run job (M12.2) for this video is claimed by this worker, and not
+ * otherwise.
  */
 
 /** A prelabel job for `videoId`, claimed by `workerId`, with no `chunks` row needed. */
@@ -103,6 +104,45 @@ describe("GET /api/videos/{video_id}/images", () => {
       .run();
 
     const res = await listVideoImages("eeeeeeeeeee", "w1");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("serves a worker holding a dry-run lease, not only a prelabel one", async () => {
+    // M12.2's dry-run samples from the same pool through the same client, so a
+    // check that named only `prelabel` would 404 every dry-run ever queued —
+    // the worker would report it as a lost lease and the job would fail.
+    await seedVideo("ggggggggggg");
+    await seedImage("ggggggggggg", "frames/ggggggggggg/00000.000.jpg", 0);
+    const at = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      `INSERT INTO jobs (kind, video_id, status, claimed_by, claimed_at, heartbeat_at)
+            VALUES ('dryrun', ?, 'claimed', 'w1', ?, ?)`,
+    )
+      .bind("ggggggggggg", at, at)
+      .run();
+
+    const res = await listVideoImages("ggggggggggg", "w1");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      video_id: "ggggggggggg",
+      images: [{ r2_key: "frames/ggggggggggg/00000.000.jpg", timestamp_seconds: 0 }],
+    });
+  });
+
+  it("still rejects a worker holding a dry-run lease on a different video", async () => {
+    await seedVideo("hhhhhhhhhhh");
+    await seedVideo("iiiiiiiiiii");
+    const at = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      `INSERT INTO jobs (kind, video_id, status, claimed_by, claimed_at, heartbeat_at)
+            VALUES ('dryrun', ?, 'claimed', 'w1', ?, ?)`,
+    )
+      .bind("hhhhhhhhhhh", at, at)
+      .run();
+
+    const res = await listVideoImages("iiiiiiiiiii", "w1");
 
     expect(res.status).toBe(404);
   });

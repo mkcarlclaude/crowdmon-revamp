@@ -111,16 +111,21 @@ export const listVideosRoute = createRoute({
 });
 
 export const listVideosHandler: RouteHandler<typeof listVideosRoute, AppEnv> = async (c) => {
-  // A LEFT JOIN with a GROUP BY rather than a count per video: the picker is
-  // one request and the alternative is one round trip per row. LEFT, not
-  // inner, so a video whose extraction has not started yet is listed at zero
-  // rather than missing — the form has to be able to say why it cannot be
-  // dry-run against.
+  // A correlated subquery over the already-limited rows, not a `LEFT JOIN
+  // images ... GROUP BY`. The join form applies `LIMIT` after aggregating, so
+  // it scans every row in `images` — 2,685 for one v1 video, and growing per
+  // video — to produce fifty counts on a request the Admin page makes on every
+  // mount. This form counts within `idx_images_identity`'s leading column for
+  // fifty videos and touches nothing else.
+  //
+  // A count rather than an existence check, and NULL never appears: a video
+  // whose extraction has not started reads zero rather than dropping out of
+  // the list, because the dry-run form has to be able to say why it cannot be
+  // run against that video.
   const { results } = await c.env.DB.prepare(
-    `SELECT v.id, v.title, v.created_at, COUNT(i.id) AS image_count
+    `SELECT v.id, v.title, v.created_at,
+            (SELECT COUNT(*) FROM images i WHERE i.video_id = v.id) AS image_count
        FROM videos v
-       LEFT JOIN images i ON i.video_id = v.id
-      GROUP BY v.id
       ORDER BY v.created_at DESC, v.id DESC
       LIMIT ?`,
   )

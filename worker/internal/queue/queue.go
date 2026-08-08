@@ -145,6 +145,13 @@ type StatusCounts struct {
 	// "the stats endpoint needs no special-casing to see the new kind" would
 	// be true of the API and false of the gauge reading it.
 	Prelabel int
+	// Dryrun is M12.2's fourth kind, and it is here at the same time as the
+	// field it mirrors rather than a milestone later — the gap between the API
+	// gaining `prelabel` and this gauge reporting it (M11.1 to M11.4) is the
+	// mistake this line exists not to repeat. A dry-run competes for the same
+	// single worker as everything else, so a backlog of them is precisely what
+	// queue depth is for.
+	Dryrun int
 }
 
 // Stats is what the queue looked like the moment this was read: job counts
@@ -179,7 +186,9 @@ func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	}
 
 	counts := func(c api.JobStatusCounts) StatusCounts {
-		return StatusCounts{Download: c.Download, Chunk: c.Chunk, Prelabel: c.Prelabel}
+		return StatusCounts{
+			Download: c.Download, Chunk: c.Chunk, Prelabel: c.Prelabel, Dryrun: c.Dryrun,
+		}
 	}
 
 	return Stats{

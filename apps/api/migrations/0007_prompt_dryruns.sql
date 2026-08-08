@@ -16,10 +16,16 @@
 -- SQLite has no way to alter a CHECK in place. Migration 0005 explains the
 -- table-rebuild recipe and — more importantly — why the *ordering* is
 -- load-bearing rather than tidy: D1 does not honour `PRAGMA foreign_keys=OFF`,
--- and `DROP TABLE` still fires `ON DELETE CASCADE`, so `chunks` (the only
--- table with a cascading foreign key into `jobs`) must be rebuilt and dropped
--- before the old `jobs` is dropped, or production's chunk rows go with it.
--- That reasoning is unchanged here and is not repeated; read 0005's header.
+-- and `DROP TABLE` still fires `ON DELETE CASCADE`, so every table with a
+-- cascading foreign key into `jobs` must be rebuilt and dropped before the old
+-- `jobs` is dropped, or its rows go with it. That reasoning is unchanged here
+-- and is not repeated; read 0005's header.
+--
+-- **A note for whoever writes 0008.** When 0005 ran, `chunks` was the only
+-- such table, and its header says so. This migration adds a second —
+-- `dryruns.job_id ... ON DELETE CASCADE`, below — so the next `jobs` rebuild
+-- has *two* children to move ahead of the drop, not one. Following 0005's
+-- recipe literally would silently take every dry-run with it.
 --
 -- No unique index for `dryrun`
 -- ------------------------------

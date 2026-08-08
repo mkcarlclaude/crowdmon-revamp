@@ -130,8 +130,11 @@ export const dryRunsKey = (classId: number) => ["dryruns", classId] as const;
  * box's two cores, so the screen has to move on its own when the result lands
  * — but a class whose newest run finished has nothing left to poll for, and
  * the interval turns itself off rather than reading D1 forever behind an open
- * tab. Enabled only for a real class id, so the hook can be called
- * unconditionally by a component that may not have one yet.
+ * tab.
+ *
+ * `classId` is required, and there is no `enabled` guard: every caller renders
+ * inside a class card that already has a row id. A caller that does not have
+ * one yet should not be rendering this.
  */
 export function useDryRuns(classId: number) {
   return useQuery({
