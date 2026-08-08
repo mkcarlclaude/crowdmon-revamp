@@ -428,18 +428,99 @@ export const JobStats = z
 /**
  * The bound on `ReportPredictionsRequest.predictions`.
  *
- * M11.3 caps a prelabel job's timeline sample at 200 images, and CONTEXT.md
- * §12 puts the whole dataset at "roughly 4-6 characters total" — round that
- * up to 6 classes. Doubled again for headroom against a class detected more
- * than once on the same frame (two background characters of the same kind
- * is plausible; the doubling is not meant to cover much more than that) —
- * the same idiom `ReportImagesRequest.images` uses `SEGMENT_SECONDS * 2`
- * for. One job is one report ("one call per job, not one per box"), so the
- * whole video's worth of boxes has to clear this bound in a single request;
- * an oversized one is a 400 naming the limit here, not a batch that fails
- * partway through after the worker already ran the detector.
+ * M11.3 defaults a prelabel job's timeline sample to 200 images (configurable
+ * through the worker's environment — `worker/internal/config/config.go`), and
+ * CONTEXT.md §12 puts the whole dataset at "roughly 4-6 characters total" —
+ * round that up to 6 classes. Doubled again for headroom against a class
+ * detected more than once on the same frame (two background characters of the
+ * same kind is plausible; the doubling is not meant to cover much more than
+ * that) — the same idiom `ReportImagesRequest.images` uses
+ * `SEGMENT_SECONDS * 2` for. One job is one report ("one call per job, not
+ * one per box"), so the whole video's worth of boxes has to clear this bound
+ * in a single request; an oversized one is a 400 naming the limit here, not a
+ * batch that fails partway through after the worker already ran the
+ * detector. Left at the 200-image assumption rather than tied to the
+ * configurable budget: this is a ceiling on what one request may carry, not a
+ * restatement of whatever a deployment happens to have configured, and an
+ * operator who raises the budget meaningfully is past the point this bound
+ * exists to catch.
  */
 export const MAX_PREDICTIONS_PER_JOB = 200 * 6 * 2;
+
+/**
+ * The bound on `ReportPredictionsRequest.sampled_images`.
+ *
+ * One entry per image the sampler drew, regardless of whether the detector
+ * found anything on it — unlike `predictions`, this array never multiplies by
+ * class count, so it does not share `MAX_PREDICTIONS_PER_JOB`'s reasoning.
+ * 5x the 200-image default is generous enough that no sane reconfiguration of
+ * `CROWDMON_PRELABEL_SAMPLE_SIZE` trips it, while still rejecting outright a
+ * worker whose configured budget is a typo rather than silently accepting and
+ * processing whatever it sends.
+ */
+export const MAX_SAMPLED_IMAGES_PER_JOB = 200 * 5;
+
+/**
+ * The `{video_id}` path parameter, for `listVideoImagesRoute` — the one
+ * worker-facing route in this file scoped by video rather than by job id
+ * (see that route's own comment for why). `videos.id` is a bare TEXT primary
+ * key with no format of its own, unlike `JobIdParam`'s integer, so there is
+ * nothing to parse or transform here beyond requiring it non-empty.
+ */
+export const VideoIdParam = z.object({
+  video_id: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: "video_id", in: "path" }, example: "dQw4w9WgXcQ" }),
+});
+
+/**
+ * `worker_id` as a query parameter rather than a body field: `listVideoImages`
+ * is the one worker-facing read in this file (`jobStats` is a dashboard read
+ * with no caller identity to check), and a GET here carries no body for it to
+ * live in the way every other route's `worker_id` does.
+ */
+export const ListVideoImagesQuery = z.object({
+  worker_id: workerId.openapi({ param: { name: "worker_id", in: "query" } }),
+});
+
+/**
+ * One row of `images` as `listVideoImages` reads it back — just enough for
+ * `ImageSampler` (worker/internal/worker/pipeline.go, M11.3) to draw its
+ * bounded, timeline-spread subset from: the `r2_key` `Detect` will fetch and
+ * the timestamp the spread is computed over.
+ *
+ * Deliberately not `ImageFrame`: that schema is the chunk worker's *write* —
+ * carries `phash`, and its own docblock describes it as "a frame the chunk
+ * worker reports" — and reusing it here would describe this response as a
+ * frame being written when it is the opposite direction, a frame being read
+ * back for a different job kind entirely.
+ */
+const VideoImage = z
+  .object({
+    r2_key: z.string().min(1).openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    timestamp_seconds: z.number().nonnegative().openapi({ example: 42 }),
+  })
+  .openapi("VideoImage");
+
+/**
+ * Named `VideoImages`, not after the operation: oapi-codegen owns the
+ * `<OperationId>Response` namespace, and the operation is `listVideoImages`.
+ *
+ * Bounded by `MAX_VIDEO_SECONDS`, not by the prelabel sample size — this is
+ * the whole candidate pool the sampler draws *from* (every row `reportImages`
+ * has ever written for the video), not the budget-limited subset it draws
+ * *out*. Extraction runs at 1fps and `FanOutRequest.duration_seconds` is
+ * capped at `MAX_VIDEO_SECONDS`, so no video can ever have produced more
+ * `images` rows than that — dedup only removes rows, never adds them — which
+ * makes this a hard ceiling from the extraction rate rather than a guess.
+ */
+export const VideoImages = z
+  .object({
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    images: z.array(VideoImage).max(MAX_VIDEO_SECONDS),
+  })
+  .openapi("VideoImages");
 
 /**
  * One model-proposed box, as a prelabel worker reports it.
@@ -515,6 +596,21 @@ export const ReportPredictionsRequest = z
     worker_id: workerId,
     model_id: z.string().min(1).max(200).openapi({ example: "owlvit-base-patch32.onnx" }),
     predictions: z.array(PredictionBox).max(MAX_PREDICTIONS_PER_JOB),
+    // Every r2_key the sampler drew for this job (M11.3), whether or not the
+    // detector found a box on it — a detector finding nothing is a real
+    // outcome (this file's own `TestPrelabelReportsAnEmptySampleWithoutFailing`
+    // equivalent on the API side is the empty-report test in
+    // predictions.test.ts), so `predictions` alone can never say which frames
+    // were even looked at. Required rather than optional-and-defaulted-to-`[]`:
+    // a prelabel job that cannot say what it sampled is a worker bug, not a
+    // legitimate "I don't know" — the same argument `ReportImagesRequest.
+    // frames_kept` makes for being checked rather than trusted blindly.
+    //
+    // This is where `images.selection_reason` (migration 0004, M10.2) gets
+    // written — see `reportPredictionsHandler`'s own comment for why that
+    // stamp happens here, together with the boxes, rather than at the moment
+    // the sample was drawn.
+    sampled_images: z.array(z.string().min(1)).max(MAX_SAMPLED_IMAGES_PER_JOB),
   })
   .openapi("ReportPredictionsRequest");
 

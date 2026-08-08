@@ -19,7 +19,12 @@ import (
 // request is what the API saw. The seam is the wire, so the tests assert on
 // this and never on how the client got there.
 type request struct {
-	method  string
+	method string
+	// path is the request URI, query string included when there is one
+	// (r.URL.RequestURI(), not r.URL.Path) — Images (M11.3) is the first
+	// lease-checked call in this package to carry its identity as a query
+	// parameter rather than a JSON body, and a test asserting on it needs the
+	// query string to be there to assert on.
 	path    string
 	body    map[string]any
 	headers http.Header
@@ -43,7 +48,7 @@ func serverRecording(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 				t.Errorf("request body is not JSON: %s", raw)
 			}
 		}
-		seen = append(seen, request{method: r.Method, path: r.URL.Path, body: body, headers: r.Header})
+		seen = append(seen, request{method: r.Method, path: r.URL.RequestURI(), body: body, headers: r.Header})
 
 		handler(w, r)
 	}))
@@ -544,6 +549,138 @@ func TestReportImagesReportsARefusedReportAsPermanent(t *testing.T) {
 	}
 	if errors.Is(err, queue.ErrLeaseLost) {
 		t.Fatalf("ReportImages() error = %v, want it distinct from a lost lease", err)
+	}
+}
+
+func TestImagesReturnsTheVideosCandidatePoolAndSendsTheWorkerIDAsAQuery(t *testing.T) {
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"video_id": "dQw4w9WgXcQ",
+			"images": [
+				{"r2_key": "frames/dQw4w9WgXcQ/00000.000.jpg", "timestamp_seconds": 0},
+				{"r2_key": "frames/dQw4w9WgXcQ/00600.000.jpg", "timestamp_seconds": 600}
+			]
+		}`)
+	})
+
+	candidates, err := newClient(t, server.URL).Images(context.Background(), "dQw4w9WgXcQ")
+	if err != nil {
+		t.Fatalf("Images() returned an unexpected error: %v", err)
+	}
+
+	got := (*seen)[0]
+	if got.method != http.MethodGet {
+		t.Errorf("Images() sent %s, want GET", got.method)
+	}
+	if got.path != "/api/videos/dQw4w9WgXcQ/images?worker_id=worker-under-test" {
+		t.Errorf("Images() sent %s, want the video-scoped path with worker_id as a query "+
+			"parameter — Images is the one lease-checked call in this package with no JSON "+
+			"body for its identity to live in", got.path)
+	}
+
+	want := []queue.SampleCandidate{
+		{Key: "frames/dQw4w9WgXcQ/00000.000.jpg", TimestampSeconds: 0},
+		{Key: "frames/dQw4w9WgXcQ/00600.000.jpg", TimestampSeconds: 600},
+	}
+	if len(candidates) != len(want) {
+		t.Fatalf("Images() = %+v, want %+v", candidates, want)
+	}
+	for i := range want {
+		if candidates[i] != want[i] {
+			t.Errorf("Images()[%d] = %+v, want %+v", i, candidates[i], want[i])
+		}
+	}
+}
+
+func TestImagesReportsALostLease(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error": "no prelabel job for this video is held by this worker"}`)
+	})
+
+	_, err := newClient(t, server.URL).Images(context.Background(), "dQw4w9WgXcQ")
+
+	// The reaper took the prelabel job back, or this worker was never handed
+	// this video at all. Same vocabulary as every other lease-checked call:
+	// stop, do not retry against a lease that is not held.
+	if !errors.Is(err, queue.ErrLeaseLost) {
+		t.Fatalf("Images() error = %v, want ErrLeaseLost", err)
+	}
+}
+
+func TestImagesReportsAnEmptyPoolWithoutError(t *testing.T) {
+	// A prelabel job held for a video with no images rows yet (or none that
+	// survived dedup) is a real, if unlikely, state — not an error.
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "images": []}`)
+	})
+
+	candidates, err := newClient(t, server.URL).Images(context.Background(), "dQw4w9WgXcQ")
+	if err != nil {
+		t.Fatalf("Images() returned an unexpected error: %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Errorf("Images() = %+v, want an empty pool", candidates)
+	}
+}
+
+func TestReportPredictionsSendsTheSampledImagesAlongsideTheBoxes(t *testing.T) {
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "predictions": 1}`)
+	})
+
+	detections := queue.Detections{
+		ModelID: "owlvit-base-patch32.onnx",
+		Boxes: []queue.Box{
+			{Key: "frames/dQw4w9WgXcQ/00000.000.jpg", ClassName: "Paimon", Confidence: 0.9},
+		},
+		// Two frames were sampled; only one produced a box — the case
+		// selection_reason's stamp exists to cover on its own (M11.3).
+		SampledKeys: []string{
+			"frames/dQw4w9WgXcQ/00000.000.jpg",
+			"frames/dQw4w9WgXcQ/00600.000.jpg",
+		},
+	}
+
+	if err := newClient(t, server.URL).ReportPredictions(context.Background(), 9, detections); err != nil {
+		t.Fatalf("ReportPredictions() returned an unexpected error: %v", err)
+	}
+
+	got := (*seen)[0]
+	sampled, ok := got.body["sampled_images"].([]any)
+	if !ok || len(sampled) != 2 {
+		t.Fatalf("body carried sampled_images %v, want 2 keys", got.body["sampled_images"])
+	}
+	if sampled[0] != "frames/dQw4w9WgXcQ/00000.000.jpg" || sampled[1] != "frames/dQw4w9WgXcQ/00600.000.jpg" {
+		t.Errorf("sampled_images = %v, want the two sampled keys in order", sampled)
+	}
+}
+
+func TestReportPredictionsSendsAnEmptySampleAsAnEmptyArrayNotNull(t *testing.T) {
+	// json.Marshal already renders a nil slice as `[]`, but the field is
+	// built explicitly (queue.go's own comment on why) — this pins that a
+	// zero-value Detections{} still produces `[]`, not a bare `null` a
+	// stricter decoder on the API side could choke on.
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "predictions": 0}`)
+	})
+
+	if err := newClient(t, server.URL).ReportPredictions(context.Background(), 9, queue.Detections{
+		ModelID: "owlvit-base-patch32.onnx",
+	}); err != nil {
+		t.Fatalf("ReportPredictions() returned an unexpected error: %v", err)
+	}
+
+	sampled, ok := (*seen)[0].body["sampled_images"].([]any)
+	if !ok {
+		t.Fatalf("body carried sampled_images %v, want an empty array", (*seen)[0].body["sampled_images"])
+	}
+	if len(sampled) != 0 {
+		t.Errorf("sampled_images = %v, want empty", sampled)
 	}
 }
 

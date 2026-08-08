@@ -20,6 +20,7 @@ import (
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/frames"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/sample"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/telemetry"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/video"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/worker"
@@ -147,7 +148,14 @@ func run(ctx context.Context) error {
 		Uploader:   frames.Uploader{Client: s3Client, Bucket: cfg.R2Bucket},
 		// The same client as Queue. Two fields because they belong to the two
 		// job kinds, not because there are two connections.
-		Images:     jobs,
+		Images: jobs,
+		// M11.3's own dependency: jobs (the same *queue.Client as Images and
+		// Queue above) is also where the prelabel sample's candidate pool is
+		// read from. Detector and Prompts are left unset here — M11.2 and M12
+		// wire those — which is why prelabel jobs are still refused as
+		// misconfigured (retryably, per prelabel's own comment) until this
+		// binary carries all three.
+		Sampler:    sample.Sampler{Images: jobs, Budget: cfg.PrelabelSampleSize},
 		Extraction: frames.Config{DedupThreshold: cfg.DedupThreshold},
 		Metrics:    metrics,
 		Logger:     logger,

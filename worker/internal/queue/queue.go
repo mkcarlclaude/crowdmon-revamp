@@ -318,6 +318,58 @@ type Image struct {
 	PHash string
 }
 
+// SampleCandidate is one row of `images` as ListVideoImages reads it back —
+// the wire's VideoImage, renamed for the reason Image is (this package is the
+// wire, and worker/internal/sample should not have to import the generated
+// api package just to read a key and a timestamp off it).
+type SampleCandidate struct {
+	Key              string
+	TimestampSeconds float64
+}
+
+// Images lists every row `images` holds for a video — the pool a prelabel
+// job's sampler draws its bounded, timeline-spread subset from (M11.3).
+//
+// Scoped by video id rather than a job id the way every other call in this
+// file is, because that is all worker.ImageSampler.Sample is ever handed
+// (pipeline.go's own comment on the interface explains why: the sample is
+// drawn once per video, not once per job). The API's lease check follows
+// suit — see reportImagesRoute's sibling, listVideoImagesRoute, in
+// apps/api/src/routes/jobs.ts for how it proves this worker holds *a*
+// prelabel job for this video without a job id to check against.
+func (c *Client) Images(ctx context.Context, videoID string) ([]SampleCandidate, error) {
+	resp, err := c.api.ListVideoImages(ctx, videoID, &api.ListVideoImagesParams{WorkerId: c.workerID})
+	if err != nil {
+		return nil, fmt.Errorf("listing images for %s: %w", videoID, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var page api.VideoImages
+		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+			return nil, fmt.Errorf("decoding the image pool for %s: %w", videoID, err)
+		}
+		candidates := make([]SampleCandidate, len(page.Images))
+		for i, image := range page.Images {
+			candidates[i] = SampleCandidate{
+				Key:              image.R2Key,
+				TimestampSeconds: float64(image.TimestampSeconds),
+			}
+		}
+		return candidates, nil
+	case http.StatusNotFound:
+		// No prelabel job for this video is held by this worker — the reaper
+		// took it back, or Sample is being called for a video this worker was
+		// never handed. Same vocabulary as every other lease-checked call:
+		// the caller's response is to stop, not to retry against a lease it
+		// does not hold.
+		return nil, fmt.Errorf("listing images for %s: %w", videoID, ErrLeaseLost)
+	default:
+		return nil, fmt.Errorf("listing images for %s: %w", videoID, statusError(resp))
+	}
+}
+
 // Extraction is everything a finished chunk has to report: the counts the
 // dedup ratio is computed from, the rows themselves, and the provenance that
 // makes both interpretable later.
@@ -416,8 +468,8 @@ type Box struct {
 	PromptVersion string
 }
 
-// Detections is everything one finished prelabel job reports: the boxes, and
-// the model that proposed them.
+// Detections is everything one finished prelabel job reports: the boxes, the
+// model that proposed them, and every image the sample actually drew.
 type Detections struct {
 	// ModelID identifies the detector, stamped onto every row in the batch so
 	// that swapping the model is visible in the data rather than inferred from
@@ -425,6 +477,14 @@ type Detections struct {
 	// than on each box.
 	ModelID string
 	Boxes   []Box
+	// SampledKeys is every image the sampler drew for this job (M11.3),
+	// whether or not the detector found a box on it — a detector finding
+	// nothing is a real outcome, so Boxes alone cannot say which frames were
+	// even looked at. This is what the API stamps `images.selection_reason`
+	// from (apps/api/src/routes/jobs.ts's reportPredictionsHandler explains
+	// why that stamp is written here, with the report, rather than at the
+	// moment Sample drew the frames).
+	SampledKeys []string
 }
 
 // ReportPredictions records a prelabel job's boxes.
@@ -457,10 +517,24 @@ func (c *Client) ReportPredictions(ctx context.Context, jobID int, detections De
 		}
 	}
 
+	// Never nil on the wire, even for an empty sample: the contract declares
+	// `sampled_images` required (schemas.ts's own comment on the field
+	// explains why "I don't know what I sampled" is not a legitimate answer),
+	// and a nil slice still marshals to `[]` via encoding/json, so this is
+	// belt-and-braces rather than load-bearing — but SampledKeys being nil is
+	// the common shape a zero-value Detections{} produces, and there is no
+	// reason to depend on json.Marshal's nil-slice behaviour when naming the
+	// intent costs one line.
+	sampledKeys := detections.SampledKeys
+	if sampledKeys == nil {
+		sampledKeys = []string{}
+	}
+
 	resp, err := c.api.ReportPredictions(ctx, jobID, api.ReportPredictionsJSONRequestBody{
-		WorkerId:    c.workerID,
-		ModelId:     detections.ModelID,
-		Predictions: boxes,
+		WorkerId:      c.workerID,
+		ModelId:       detections.ModelID,
+		Predictions:   boxes,
+		SampledImages: sampledKeys,
 	})
 	if err != nil {
 		return fmt.Errorf("reporting the predictions for job %d: %w", jobID, err)

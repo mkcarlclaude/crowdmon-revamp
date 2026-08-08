@@ -119,6 +119,16 @@ type Config struct {
 	// edited tomorrow is to have exactly one of them own the number. This
 	// package owns the environment variable name; frames owns the value.
 	DedupThreshold int
+	// PrelabelSampleSize is passed straight through to sample.Sampler.Budget
+	// (M11.3). Zero means "let the sample package decide"
+	// (sample.DefaultBudget) rather than a number restated here — the same
+	// argument DedupThreshold makes for frames, and for the same reason:
+	// config does not import sample, so exactly one package owns the default
+	// and this one owns only the environment variable name. Pool size is
+	// governed by what a human can verify and by what the box's CPU can run
+	// in a night, not by what ffmpeg can produce, which is why this exists as
+	// a setting at all rather than a constant sample.Sampler bakes in.
+	PrelabelSampleSize int
 }
 
 // TracingEnabled reports whether an exporter should be built. Config answers
@@ -201,6 +211,25 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("CROWDMON_DEDUP_THRESHOLD must not be negative, got %d", threshold)
 		}
 		cfg.DedupThreshold = threshold
+	}
+
+	// Parsed and range-checked for the same reason CROWDMON_DEDUP_THRESHOLD
+	// is: a parse failure falling back to the zero value would make
+	// CROWDMON_PRELABEL_SAMPLE_SIZE=banana behave identically to leaving it
+	// unset, and zero already means "use sample.DefaultBudget" — an operator
+	// who set it to something never gets told their something was wrong. A
+	// negative value is rejected for the mirror-image reason: it would
+	// silently collapse to the same default an absent value produces, and
+	// the two mean different things.
+	if raw := os.Getenv("CROWDMON_PRELABEL_SAMPLE_SIZE"); raw != "" {
+		size, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("CROWDMON_PRELABEL_SAMPLE_SIZE is not an integer: %w", err)
+		}
+		if size < 0 {
+			return Config{}, fmt.Errorf("CROWDMON_PRELABEL_SAMPLE_SIZE must not be negative, got %d", size)
+		}
+		cfg.PrelabelSampleSize = size
 	}
 
 	// R2 is fail-closed on partial configuration, the same argument as the

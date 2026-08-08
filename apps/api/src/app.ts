@@ -18,6 +18,8 @@ import {
   heartbeatRoute,
   jobStatsHandler,
   jobStatsRoute,
+  listVideoImagesHandler,
+  listVideoImagesRoute,
   reportImagesHandler,
   reportImagesRoute,
   reportPredictionsHandler,
@@ -95,6 +97,7 @@ app.openapi(completeJobRoute, completeJobHandler);
 app.openapi(fanOutJobRoute, fanOutJobHandler);
 app.openapi(reportImagesRoute, reportImagesHandler);
 app.openapi(reportPredictionsRoute, reportPredictionsHandler);
+app.openapi(listVideoImagesRoute, listVideoImagesHandler);
 app.openapi(jobStatsRoute, jobStatsHandler);
 
 // Serves the same document the build artifact contains, from the same config.

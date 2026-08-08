@@ -636,6 +636,22 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 		attribute.Int("crowdmon.prelabel.classes", len(p.Prompts)),
 	)
 
+	// Collected up front, before a single Detect call runs, and reported
+	// unconditionally alongside whatever boxes come out of the loop below
+	// (M11.3). This is the budget the sample actually drew — every frame
+	// Detect is about to be asked about, whether or not it ends up with a
+	// box — and it is what apps/api/src/routes/jobs.ts's
+	// reportPredictionsHandler stamps images.selection_reason from. Built
+	// here rather than inside the loop so a job that fails partway through
+	// detection (ErrObjectMissing, a lost lease) never reaches
+	// ReportPredictions at all and so never stamps a sample it did not
+	// finish looking at — see that handler's own comment for the full
+	// argument.
+	sampledKeys := make([]string, len(sampled))
+	for i, image := range sampled {
+		sampledKeys[i] = image.Key
+	}
+
 	boxes := make([]queue.Box, 0, len(sampled))
 	for _, image := range sampled {
 		found, err := p.Detector.Detect(ctx, image, p.Prompts)
@@ -674,8 +690,9 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 	// report on a lease this worker still holds is what makes the 404
 	// meaningful.
 	if err := p.Predictions.ReportPredictions(ctx, job.Id, queue.Detections{
-		ModelID: p.Detector.ModelID(),
-		Boxes:   boxes,
+		ModelID:     p.Detector.ModelID(),
+		Boxes:       boxes,
+		SampledKeys: sampledKeys,
 	}); err != nil {
 		if errors.Is(err, queue.ErrRejected) {
 			// The contract refused it — a key or class the API could not

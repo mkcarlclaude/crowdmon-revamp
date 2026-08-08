@@ -13,10 +13,13 @@ import {
   Job,
   JobIdParam,
   JobStats,
+  ListVideoImagesQuery,
   PredictionReport,
   ReportImagesRequest,
   ReportPredictionsRequest,
   SEGMENT_SECONDS,
+  VideoIdParam,
+  VideoImages,
 } from "../schemas";
 
 /**
@@ -204,6 +207,37 @@ export const reportPredictionsRoute = createRoute({
       "Malformed job id or body, or a prediction naming an r2_key or class_name that does not exist",
     ),
     404: errorResponse("No job with this id is held by this worker"),
+  },
+});
+
+export const listVideoImagesRoute = createRoute({
+  method: "get",
+  path: "/api/videos/{video_id}/images",
+  operationId: "listVideoImages",
+  tags: ["jobs"],
+  summary: "The candidate pool a prelabel job's sampler draws from",
+  description:
+    "M11.3: every row `reportImages` has written for this video, oldest timestamp " +
+    "first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) " +
+    "draws its bounded, timeline-spread subset from. Scoped by video id rather than by " +
+    "job id, unlike every other worker-facing route in this file: `Sample`'s signature " +
+    "is handed only a video id (it is called once per video, not once per job — the " +
+    "same reason `prelabel` is one job per video rather than one per chunk), so the " +
+    "lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead " +
+    "of a job's primary key. That partial unique index already guarantees at most one " +
+    "held prelabel job per video, which is exactly the lease this read needs to prove — " +
+    "the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, " +
+    "just proved through a different column. No Access assertion and no credential " +
+    "beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` " +
+    "(`jobStatsRoute`'s own comment explains why that boundary is where it is).",
+  request: { params: VideoIdParam, query: ListVideoImagesQuery },
+  responses: {
+    200: {
+      description: "Every image row for this video",
+      content: { "application/json": { schema: VideoImages } },
+    },
+    400: errorResponse("Malformed video id or worker id"),
+    404: errorResponse("No prelabel job for this video is held by this worker"),
   },
 });
 
@@ -664,7 +698,7 @@ export const reportPredictionsHandler: RouteHandler<
   { Bindings: Bindings }
 > = async (c) => {
   const { id } = c.req.valid("param");
-  const { worker_id, model_id, predictions } = c.req.valid("json");
+  const { worker_id, model_id, predictions, sampled_images } = c.req.valid("json");
 
   // Same lease check as every other write on a held job (heartbeat, complete,
   // fanout, report-images): a request that only knew a job id could write
@@ -686,10 +720,14 @@ export const reportPredictionsHandler: RouteHandler<
     return c.json({ error: "only a prelabel job can report predictions" }, 400);
   }
 
-  // An empty report is well-formed (a detector finding nothing is a real
-  // outcome, not an error) and skipping straight to the answer avoids an
-  // `IN ()` with no placeholders below, which is invalid SQL.
-  if (predictions.length === 0) {
+  // A genuinely empty report is well-formed (a detector finding nothing is a
+  // real outcome, not an error) and skipping straight to the answer avoids an
+  // `IN ()` with no placeholders below, which is invalid SQL. Both arrays have
+  // to be empty for this to fire: `predictions` alone being empty is the
+  // common case (M11.3's whole sample can come back with nothing detected),
+  // but `sampled_images` still needs its stamp written in that case, so only
+  // "nothing was sampled and nothing was found" short-circuits here.
+  if (predictions.length === 0 && sampled_images.length === 0) {
     return c.json({ video_id: job.video_id, predictions: 0 }, 200);
   }
 
@@ -702,11 +740,19 @@ export const reportPredictionsHandler: RouteHandler<
   // names which one, instead of a D1 constraint failure with no field to
   // point at.
   //
+  // `r2Keys` is the union of `predictions`' and `sampled_images`' keys, not
+  // just the former: `sampled_images` gets no insert of its own (the stamp
+  // below is an UPDATE against rows that already exist), but a worker naming
+  // an r2_key that does not exist is exactly as much a bug there as it is in
+  // `predictions`, and folding the two into one lookup means one unified
+  // "unknown r2_key" 400 covers both instead of the stamp silently no-op'ing
+  // on a typo'd key.
+  //
   // Images are scoped to `job.video_id`, the same way `reportImages` reads
   // `video_id` off the held job rather than the body: an r2_key that is real
   // but belongs to a different video must not resolve here, or a worker
   // could write predictions against a video it was never assigned.
-  const r2Keys = [...new Set(predictions.map((p) => p.r2_key))];
+  const r2Keys = [...new Set([...predictions.map((p) => p.r2_key), ...sampled_images])];
   const classNames = [...new Set(predictions.map((p) => p.class_name))];
 
   // Chunked against D1_MAX_BOUND_PARAMS. The image lookup reserves one
@@ -746,28 +792,50 @@ export const reportPredictionsHandler: RouteHandler<
     return c.json({ error: parts.join("; ") }, 400);
   }
 
-  // One batch: every row lands or none does. `predictions` is never read
-  // back by anything that tolerates a partial write, and the goal here is
-  // the same one M8.4 states for `images` — a failure partway through must
-  // not leave rows whose provenance (`model_id`, `prompt_version`) is only
-  // half-recorded.
+  // One batch: every row and every stamp lands together or none does.
   //
-  // Insert-only, and deliberately without `reportImages`' `ON CONFLICT`: a
-  // prelabel job reaped mid-report and re-run writes its boxes a second time
-  // as new rows. There is no natural key to collide on the way `images` has
-  // `(video_id, timestamp_seconds)` — the same detector on the same frame
-  // legitimately proposes several boxes, so "one row per (image, class)"
-  // would be a constraint on the data, not a statement about re-runs. Still
-  // left open rather than guessed at here even though M11.1 (migration 0005)
-  // is what makes `prelabel` a real, reapable job kind: a re-run genuinely
-  // duplicating a whole video's boxes is a dataset-quality question for
-  // whichever milestone first reads `predictions` for training or review, not
-  // a correctness question this insert-only endpoint can answer on its own —
-  // answering it here would mean guessing at a dedup rule (nearest box?
-  // latest `model_id`? every row kept and left for a query to filter?) with
-  // no reader yet to say which one is right.
-  await c.env.DB.batch(
-    predictions.map((prediction) =>
+  // `sampled_images`' stamp — `images.selection_reason = 'random'` (M11.3;
+  // `'random'` is the only value v2 ever writes, CONTEXT.md §Q16) — is
+  // written here, in the same batch as the boxes, and deliberately not back
+  // in `Sample`'s own read or in a call of its own issued the moment the
+  // sample was drawn. Three things are true at once: sampling happens before
+  // detection, so at selection time this handler cannot yet know the job
+  // will finish; a prelabel job can fail (a missing object, a lost lease, a
+  // detector timeout) after sampling but before this call ever arrives; and
+  // `Sample` deterministically redraws the same frames for the same video on
+  // a retry (worker/internal/sample's own comment on why). Stamping at
+  // selection time would mean a job that samples and then fails leaves
+  // `selection_reason` set on rows whose "entry into the pool" never actually
+  // produced anything — and worse, if `Sample` were ever non-deterministic, a
+  // reap-and-rerun could stamp two different partial samples on top of each
+  // other. Stamping here instead means the stamp exists exactly when the
+  // dataset is honest about it: a row reads `selection_reason = 'random'`
+  // only once a real, complete prelabel run looked at it, the same way
+  // `images.dedup_threshold` is stamped when `reportImages` runs — after
+  // extraction and dedup finished — and not the instant ffmpeg wrote a frame
+  // to disk.
+  //
+  // Insert-only for `predictions`, and deliberately without `reportImages`'
+  // `ON CONFLICT`: a prelabel job reaped mid-report and re-run writes its
+  // boxes a second time as new rows. There is no natural key to collide on
+  // the way `images` has `(video_id, timestamp_seconds)` — the same detector
+  // on the same frame legitimately proposes several boxes, so "one row per
+  // (image, class)" would be a constraint on the data, not a statement about
+  // re-runs. Still left open rather than guessed at here even though M11.1
+  // (migration 0005) is what makes `prelabel` a real, reapable job kind: a
+  // re-run genuinely duplicating a whole video's boxes is a dataset-quality
+  // question for whichever milestone first reads `predictions` for training
+  // or review, not a correctness question this insert-only endpoint can
+  // answer on its own — answering it here would mean guessing at a dedup rule
+  // (nearest box? latest `model_id`? every row kept and left for a query to
+  // filter?) with no reader yet to say which one is right.
+  //
+  // The stamp UPDATE, by contrast, is naturally idempotent: it always sets
+  // the same literal, `'random'`, so a re-run restamping the same
+  // deterministically-redrawn keys is a no-op in every way that matters,
+  // unlike an insert that would duplicate.
+  const statements = [
+    ...predictions.map((prediction) =>
       c.env.DB.prepare(
         `INSERT INTO predictions
               (image_id, class_id, x_min, y_min, x_max, y_max, confidence, prompt_version, model_id)
@@ -784,9 +852,49 @@ export const reportPredictionsHandler: RouteHandler<
         model_id,
       ),
     ),
-  );
+    ...chunkForBinding(sampled_images, 1).map((keys) =>
+      c.env.DB.prepare(
+        `UPDATE images SET selection_reason = 'random'
+          WHERE video_id = ? AND r2_key IN (${placeholders(keys)})`,
+      ).bind(job.video_id, ...keys),
+    ),
+  ];
+
+  await c.env.DB.batch(statements);
 
   return c.json({ video_id: job.video_id, predictions: predictions.length }, 200);
+};
+
+export const listVideoImagesHandler: RouteHandler<
+  typeof listVideoImagesRoute,
+  { Bindings: Bindings }
+> = async (c) => {
+  const { video_id } = c.req.valid("param");
+  const { worker_id } = c.req.valid("query");
+
+  // idx_jobs_one_prelabel_per_video (migration 0005) is what makes this a
+  // real lease check rather than an approximation of one: at most one
+  // prelabel job can ever be 'claimed' for a given video, so finding a row
+  // here is exactly as strong a guarantee as HELD_BY gives every job-id-scoped
+  // route in this file, even though no primary key enters this query.
+  const held = await c.env.DB.prepare(
+    `SELECT 1 FROM jobs
+      WHERE video_id = ? AND kind = 'prelabel' AND status = 'claimed' AND claimed_by = ?`,
+  )
+    .bind(video_id, worker_id)
+    .first();
+
+  if (!held) {
+    return c.json({ error: "no prelabel job for this video is held by this worker" }, 404);
+  }
+
+  const { results } = await c.env.DB.prepare(
+    "SELECT r2_key, timestamp_seconds FROM images WHERE video_id = ? ORDER BY timestamp_seconds",
+  )
+    .bind(video_id)
+    .all<{ r2_key: string; timestamp_seconds: number }>();
+
+  return c.json({ video_id, images: results }, 200);
 };
 
 /** A job whose worker reported it as unrecoverable, rather than one the reaper retired. */
