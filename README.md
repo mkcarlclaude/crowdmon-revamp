@@ -7,20 +7,22 @@ healthy, observable infrastructure.
 zero-shot model, have humans verify the long tail, distil a real-time detector that runs
 in the browser — is the workload that generates signal worth observing.
 
-> **Status: M1 through M5 complete.** D1 and R2 are provisioned by Terraform, the Worker
-> is deployed by CI at `crowdmon.mkcarl.com`, and its spans are landing in Tempo
-> through a gated OTLP endpoint. A URL can be submitted, a job claimed, heartbeated and
-> completed over a contract both runtimes generate from, with Cloudflare Access in front
-> of the admin endpoints — and the far end of that queue is now a Go worker running as a
-> container on the home box, polling on a budget and closing the lifecycle for real. It
-> does no video work yet; M7 is the extraction. M5's admin dashboard is live — one
-> Worker serving the SPA and the API at `crowdmon.mkcarl.com`, Access gating
-> `/api/admin`, and a URL submitted from the browser visibly moving through the queue.
-> `api.crowdmon.mkcarl.com` was retired on 2026-08-03; `ROADMAP.md` M5.4 records that
-> the expiry symptom this project predicted was not the one production produces, and
-> that the first recovery could not reach a login at all. M4.5's "survives host reboot" was
-> accepted on its mechanisms rather than on an actual reboot, which is recorded in
-> `ROADMAP.md` rather than glossed over.
+> **Status: v1 is closed.** All nine milestones are complete, and all eight success
+> criteria in [`PRD.md`](PRD.md) §5 were verified on 2026-08-08 against one real run —
+> the table is [below](#acceptance-run-2026-08-08). A YouTube URL submitted from the
+> dashboard is claimed by the Go worker on the home box, downloaded, fanned out into
+> 97 chunk jobs, extracted at 1fps, deduplicated by perceptual hash and uploaded to R2,
+> with one Tempo trace spanning the whole thing and Grafana showing the queue drain.
+>
+> Two things are deliberately left open rather than glossed over. The deadman check
+> (M9.3) was **cancelled, not deferred** — a dead collector costs visibility, not data,
+> and `queue_depth`'s explicit zeros already distinguish "idle" from "nothing is
+> exporting"; the reasoning is in `CONTEXT.md` §9.5. And M4.5's "survives host reboot"
+> was accepted on its mechanisms rather than on an actual reboot, which `ROADMAP.md`
+> records as such.
+>
+> Next is v2: the ML flywheel — annotation, bootstrap, training, the in-browser demo —
+> which v1 excluded on purpose. Nothing in v1's decisions blocks it.
 
 ## Documents
 
@@ -167,7 +169,7 @@ span_name="GET /health"}` appears in Prometheus via Tempo's metrics-generator.
 ```
 apps/api/     Cloudflare Worker — Hono API, OpenAPI contract, D1 job queue, OTel
 apps/web/     React SPA — admin dashboard, built by Vite and served by the API Worker's [assets] (M5.1)
-worker/       Go module — the home-side worker: config, telemetry, poll loop, queue client. Extraction lands in M7/M8
+worker/       Go module — the home-side worker: config, telemetry, poll loop, queue client, and the download/extract/dedup/upload pipeline
 deploy/       How the worker gets onto the home box: compose project and a systemd user timer. See deploy/homebox/README.md
 infra/        Terraform — D1, R2, the Worker's custom domain and the Access app. See infra/README.md
 ```
@@ -268,8 +270,8 @@ file between attempts, and the honest repair for that is to delete the video's r
 
 **Chunk jobs read the file from local disk, so they must run on the box that downloaded
 it.** That is free with one worker and not free with two. A chunk job checks the source
-is present before doing anything else — that check is the whole of a chunk job until M8
-adds extraction — and fails terminally if it is missing, naming the constraint. Half a
+is present before doing anything else, and fails terminally if it is missing, naming
+the constraint — the check is cheap and everything after it is not. Half a
 chunk's frames are worse than none, because the rows they produce look like a complete
 segment. The check happens after the claim, not before it: a worker cannot inspect a job
 it has not been given, and the claim endpoint has no idea which box holds which file. The
@@ -287,6 +289,38 @@ costs a lease window and the attempt already spent on the claim. A wrongly retry
 failure costs seven minutes; a wrongly terminal one burns a video permanently. One
 pattern is deliberately kept off the terminal list: `Sign in to confirm you're not a
 bot` reads exactly like the age gate and is about the box's address, not the video.
+
+## Phase two: extraction, dedup and upload
+
+A chunk job is ffmpeg at 1fps over its 60s window, a perceptual hash of every frame,
+and an upload of the survivors. 5,812 frames in, 2,685 kept, on the acceptance run.
+
+**Dedup compares against the last *kept* frame, not the previous one.** A slow camera
+pan changes the picture only slightly frame to frame, so an adjacent-pair comparison
+would fall under the threshold every time and drop nothing after the first frame. The
+same pan drifts arbitrarily far from where the last kept frame left off, which is what
+makes it a new frame worth having. The threshold is a Hamming distance of 10 of 64
+bits: gameplay holds a near-static HUD over a moving scene, so distances cluster low.
+
+Hashing runs concurrently, bounded to `NumCPU`, and writes into a preallocated slice at
+each frame's own index — so the sequential keep/drop walk stays in timestamp order
+without the goroutines agreeing on anything. A frame that cannot be hashed fails the
+whole chunk naming the file, rather than being skipped: "dropped as a duplicate" and
+"could not be read" must not look the same downstream.
+
+**Keys are deterministic — `frames/{video_id}/{timestamp}.jpg`** — so a re-run
+overwrites rather than duplicating. Proven in production, not just in test: a chunk was
+forced back to `pending` in D1 and re-run against the real bucket; `images` held at
+exactly 674 rows and `attempts` went to 2, so the re-run genuinely happened. That
+claim covers a re-run under the *same* settings, which is what the reaper produces. A
+re-run whose dedup keeps a different set of timestamps is a different question, and
+leaves orphaned rows and objects behind.
+
+**The threshold in force is stamped onto every row it produced.** Changing it later
+does not re-deduplicate old videos, so without the stamp the dataset silently becomes
+an unrecorded mixture of regimes — and the mAP chart v2 is built to produce gains a
+confounder nobody can name. `CONTEXT.md` §7 treats thresholds as dataset provenance,
+not settings, for that reason.
 
 ## Recovery from a crash
 
@@ -352,9 +386,9 @@ within about seven minutes with `attempts` one higher, and past `MAX_ATTEMPTS` l
 
 ## The worker
 
-`worker/` is a Go binary that polls the queue and runs jobs. Since M7 the work is real:
-`worker.Pipeline` runs a download job — fetch, probe, fan out — and checks a chunk job's
-source is on this box. Frame extraction is M8 and lands in the same place.
+`worker/` is a Go binary that polls the queue and runs jobs. `worker.Pipeline` is both
+phases: a download job fetches, probes and fans out; a chunk job checks its source is on
+this box, then extracts, hashes, dedupes, uploads and reports the rows.
 
 Polling is 30s idle, doubling to a 120s cap on repeated empty polls, immediate re-poll
 after finding work — CONTEXT.md §Q20. That is ~1,000 requests a day against a
@@ -471,7 +505,8 @@ pnpm --filter @crowdmon/api exec wrangler secret put CF_ACCESS_CLIENT_SECRET
 ## Milestones
 
 Each is independently shippable and a valid stopping point. The project is open-ended by
-choice, so no milestone depends on finishing the next one to be worth having.
+choice, so no milestone depends on finishing the next one to be worth having. All nine
+are complete.
 
 | | Milestone | Done when |
 |---|---|---|
