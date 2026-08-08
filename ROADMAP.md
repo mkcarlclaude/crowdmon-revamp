@@ -1,12 +1,18 @@
-# Crowdmon 2026 — v1 Roadmap
+# Crowdmon 2026 — Roadmap
 
 **Scope:** [`PRD.md`](PRD.md) · **Design record:** [`CONTEXT.md`](CONTEXT.md)
 
-Nine milestones. Each is independently shippable and a valid stopping point — the
-project is open-ended by choice, so no milestone may depend on finishing the next one
-to be worth having.
+Nine milestones for v1, all delivered; six for v2, none started. Each is independently
+shippable and a valid stopping point — the project is open-ended by choice, so no
+milestone may depend on finishing the next one to be worth having.
 
 Issue bodies below are written to be pasted directly into GitHub.
+
+- **v1 — M1 to M9.** Closed 2026-08-08, all eight `PRD.md` §5 criteria verified against
+  one real run.
+- **[v2 — M10 to M15](#v2--labelling-platform).** Scope in `PRD.md` §9, design in
+  `CONTEXT.md` §12, tracked as
+  [issue #89](https://github.com/mkcarlclaude/crowdmon-revamp/issues/89).
 
 ---
 
@@ -739,11 +745,285 @@ the directory visibly exists. Verified the right way round: the volume came up
 
 ---
 
-## Deferred to v2
+## What v1 deferred, and where it went
 
-Tracked so they are not lost: annotation UI, Google OAuth and sessions, Grounding DINO
-bootstrap, gated pre-label pool, weighted active-learning selection, YOLO training,
-model registry, dataset snapshots with split manifests, presigned image serving,
-public landing and demo pages, semantic flywheel spans.
+Recorded here as it stood when v1 closed, so the split is auditable rather than
+retold.
 
-All are designed in `CONTEXT.md` §5 and §7. None are blocked by v1 decisions.
+| Deferred from v1 | Where it landed |
+|---|---|
+| Annotation UI | M13 (admin), M14 (public) |
+| Gated pre-label pool | M11 |
+| Presigned image serving | M13.4 (batched, admin), M14.2 (one per request, public) |
+| Dataset snapshots with split manifests | M15 |
+| Semantic flywheel spans | M11.4 — the promotion trigger `CONTEXT.md` §9.3 wanted |
+| Weighted active-learning selection | **Split.** The `selection_reason` flag is M10.2; the 70/20/10 weighting is v4 |
+| Google OAuth and sessions | **Dropped.** v2 has two tiers, admin behind Access and anonymous, so there is nothing for OAuth to authenticate — `CONTEXT.md` §Q7 |
+| Grounding DINO bootstrap | **Replaced.** Zero-shot detection runs on the home box behind a one-method interface (M11.2), so the model is a swap rather than a commitment |
+| YOLO training, model registry | v4. Training moves onto the box rather than Kaggle — `CONTEXT.md` §Q21 |
+| Public landing and demo pages | **Reshaped.** The public surface is the verification page (M14), not a detector demo; the detector leaves with the training |
+| Leaderboards | Still out. `CONTEXT.md` §Q10 |
+
+---
+
+# v2 — Labelling platform
+
+**Done-claim:** a submitted video becomes pre-labelled frames with no human trigger,
+verified through this platform's own UI — public to anyone, authoritative for an admin —
+and exported as a dataset snapshot with a split manifest.
+
+Six milestones. Scope in `PRD.md` §9, design and rejected alternatives in `CONTEXT.md`
+§12. v2 has no separate success-criteria list: the sentence is the completion test, and
+`PRD.md` §9 tabulates the observation that falsifies each clause.
+
+**Two ordering decisions worth stating before the milestones, because both look wrong at
+a glance.**
+
+*Schema lands whole and first,* against §Q26's warning about infra-first phases. Every
+later milestone writes to these tables, and a migration reversed after three UIs read from
+it is the expensive version of this ordering. What does **not** land up front is the
+endpoint surface: each milestone brings the routes it needs, so the vertical-slice
+discipline holds everywhere it costs something. This refines `CONTEXT.md` §12's milestone
+1, which read as though the whole contract landed at once.
+
+*Pre-labelling precedes the class-management UI,* which reads like a dependency error
+since the detector needs prompts. It is not: `classes` is a table from M10, so M11 reads
+prompts that were seeded by hand. M12 is the *management* of classes — adding, validating
+and activating one without a deploy — which is worth having only once there is something
+that consumes them.
+
+---
+
+## M10 — Schema and prediction contract
+
+*Goal: everything v2 writes to exists, on both sides of the contract.*
+*Depends on: v1.*
+*Done when:* a migration applied to D1 creates the five new tables, and the committed
+spec declares the prediction-write endpoint with the Go client regenerated from it.
+
+### M10.1 — Migration: classes, predictions, verdicts, missing_reports, snapshots
+- [ ] `classes` — name, appearance prompt, prompt version, active flag
+- [ ] `predictions` — image, class, box, **confidence**, prompt version, model identifier.
+      Confidence is persisted because a later uncertainty-band selector needs it and
+      cannot reconstruct it from coordinates (`CONTEXT.md` §Q16)
+- [ ] `verdicts` — prediction reference, `accept`/`adjust`/`reject`, adjusted coordinates,
+      source, annotator identity or opaque session id. **Append-only, and several verdicts
+      on one prediction is a legal state** — the schema must not carry a uniqueness
+      constraint that forbids it
+- [ ] `missing_reports` — image, optional class, reporter
+- [ ] `snapshots` — id, R2 key, counts, the inclusion policy in force
+- [ ] **Nothing overwrites a prediction.** An `adjust` writes coordinates onto the verdict
+      row. A schema that let it mutate the prediction would make excluding an annotator
+      later unrecoverable rather than a `WHERE` clause
+
+### M10.2 — images gains public_sample and selection_reason
+- [ ] `public_sample` — hand-curated, set from `/admin`, never by an ingestion run
+- [ ] `selection_reason` — written at selection time. **This is the half of §Q16 that
+      cannot be added later:** every image labelled before the flag exists was chosen by
+      some biased rule and can never be retro-declared an unbiased sample
+- [ ] Both nullable and backfilled as null, so v1's 2,685 rows stay valid
+
+### M10.3 — Prediction-write contract
+- [ ] zod schemas for a prediction batch, declared with `@hono/zod-openapi`
+- [ ] The endpoint the worker posts predictions to, in the shape `/api/jobs/{id}/images`
+      already established — one call per job, not one per box
+- [ ] Committed spec regenerated, Go client regenerated, drift test green
+
+---
+
+## M11 — Pre-labelling
+
+*Goal: frames get boxes without anybody starting anything.*
+*Depends on: M10.*
+*Done when:* submitting a video results in `predictions` rows, with no manual step
+between the URL and the boxes.
+
+### M11.1 — `prelabel` as a fourth job kind
+- [ ] `jobs.kind` accepts `prelabel`; the claim query, reaper and stats endpoint need no
+      special-casing to see it
+- [ ] One job per video, enqueued when its chunks are complete. **Not one per chunk** —
+      the sample is drawn across the whole timeline and a chunk job cannot see outside
+      its own sixty seconds
+- [ ] Go pipeline dispatches a third branch; terminal-versus-retryable classification
+      follows `worker.Terminal`'s existing rule, defaulting to retryable
+- [ ] A missing image object is terminal, in the same spirit as M7.4's affinity guard —
+      re-queueing it hands the same broken row out on every poll
+
+### M11.2 — Detector behind a one-method interface
+- [ ] Interface takes an image path plus prompts, returns boxes with confidences
+- [ ] ONNX open-vocabulary model running on the box's CPU as the production implementation
+- [ ] Tests substitute a table of known boxes — **no test may require a model file, an
+      ONNX runtime or a GPU.** Same seam as `frames.Deduper`'s injectable hash
+- [ ] Model identifier recorded on every prediction, so swapping the model is visible in
+      the data rather than inferred from dates
+
+### M11.3 — Bounded timeline sampling
+- [ ] Default 200 images per video, configurable through worker environment
+- [ ] Drawn across the timeline, not the first N — the test asserts the **spread** of
+      selected timestamps, not the count
+- [ ] Budget in force stamped on the rows produced, in `images.dedup_threshold`'s idiom
+- [ ] Unsampled frames keep their rows and objects, available to a later pass
+
+### M11.4 — Semantic spans
+- [ ] Spans for sample selection, detection per class, and the prediction write —
+      the first work in this project with a middle worth naming, which is the concrete
+      promotion trigger `CONTEXT.md` §9.3 asked for and never got
+- [ ] Sampling posture decided before any global sampler is configured (§9.4): flywheel
+      spans are low-rate and high-value, HTTP spans are the opposite, so a global head
+      sampler set now would discard the only data worth having
+- [ ] Pre-label duration, throughput and failure rate on the existing Grafana dashboard;
+      `queue_depth` picks up the new kind through the stats endpoint's zero-fill
+
+---
+
+## M12 — Classes as data
+
+*Goal: a prompt can be tried before it counts, and changed without a deploy.*
+*Depends on: M11.*
+*Done when:* a class can be added, validated against a sample of frames and activated
+from `/admin`, with no code change.
+
+### M12.1 — Class management behind Access
+- [ ] Create, edit, activate and deactivate — never delete, so the predictions a retired
+      prompt produced keep their referent
+- [ ] Editing a prompt bumps its version rather than overwriting it. **Rewording in place
+      would silently create two regimes inside one class**, which is the same failure
+      `images.dedup_threshold` exists to prevent
+
+### M12.2 — Prompt dry-run
+- [ ] Run a candidate prompt against ~50 frames and show the boxes, writing nothing
+- [ ] Available before activation, because the alternative is discovering a bad prompt
+      after it has pre-labelled a video
+
+### M12.3 — Five active classes
+- [ ] Paimon plus four, chosen on visual separability and on appearing in footage that
+      can actually be obtained
+- [ ] Prompts written as **appearance descriptions, not names** — an open-vocabulary
+      detector has no concept of a proper noun
+- [ ] Per-class pre-label precision will vary widely and that is expected: the characters
+      the zero-shot model fumbles are the ones that justify a verification platform
+
+---
+
+## M13 — Admin verification
+
+*Goal: verdicts exist, and they are human judgements on model predictions.*
+*Depends on: M11.*
+*Done when:* an admin can accept, adjust or reject a proposed box and the verdict is a
+row in D1.
+
+### M13.1 — The verification component
+- [ ] One image, its proposed boxes, and accept / adjust / reject
+- [ ] Reject-whole-image in one action — menus, loading screens and black frames are the
+      common case and must not cost several
+- [ ] Built as one component with two mounts from the start, because M14 renders the same
+      thing against different endpoints
+
+### M13.2 — Verdict endpoints
+- [ ] Append-only writes; an `adjust` carries coordinates on the verdict row and leaves
+      the prediction byte-for-byte unchanged
+- [ ] Verdicts carry `source` and identity from the Access assertion
+- [ ] Under `/api/admin`, so the existing gate and the Worker's own allowlist both apply
+      with no new auth code
+
+### M13.3 — Missing-object reports
+- [ ] Admin-only, stored as their own row type rather than as a verdict on a prediction
+      that does not exist
+- [ ] **This is the escape hatch for the one thing verify-only cannot see.** A frame the
+      detector missed produces no pre-label, is never shown, and in the table is
+      indistinguishable from a frame where the character was absent
+- [ ] Report rate per class surfaced in `/admin` — the number that says whether a prompt
+      is good enough
+
+### M13.4 — Image serving for a labelling session
+- [ ] Batched short-lived presigned URLs, per `CONTEXT.md` §Q25 — N images and their
+      signed URLs in one call, bytes fetched from R2 directly
+- [ ] The UI re-requests the batch on a 403 rather than treating expiry as an error
+- [ ] Verdict counts, class coverage and pool size in `/admin`. **Business data here,
+      system data in Grafana** — §7's "do not rebuild Grafana inside /admin"
+
+---
+
+## M14 — Public verification
+
+*Goal: a stranger can try the interface without an account, and cannot touch the dataset.*
+*Depends on: M13.*
+*Done when:* an unauthenticated visitor verifies a frame and the verdict is recorded with
+`source = 'anon'`.
+
+### M14.1 — Curating the public pool
+- [ ] Flag an image into `public_sample` from `/admin`
+- [ ] **Kept separate from the frozen evaluation pool.** The two have opposite selection
+      criteria: the eval pool must be *random*, so it is full of menus and black frames;
+      the public pool must be *legible*, or a visitor's first impression is a black
+      rectangle. An image qualifying for both is excluded from `public_sample`
+
+### M14.2 — The public route
+- [ ] Outside the `/api/admin` prefix, authenticating nobody
+- [ ] **One short-lived signed URL per request, no enumeration.** The batched form stays
+      on the authenticated path where throughput matters
+- [ ] Adjust and missing-object reporting hidden on this mount
+
+### M14.3 — Bounding it
+- [ ] Rate limiting on the public endpoints — "not at scale" enforced by a mechanism
+      rather than asserted in a document
+- [ ] `noindex` on the public pages
+- [ ] Copy that says the visitor is trying the interface, not labelling the live dataset.
+      The page must not be lying to them about what their click did
+
+### M14.4 — Anonymous verdicts recorded, never promoted
+- [ ] `source = 'anon'` plus an opaque session id, so excluding one bad actor does not
+      mean discarding every anonymous contribution
+- [ ] Shown back to the visitor immediately, so the page is not theatre
+- [ ] Excluded at snapshot time by the recorded inclusion policy. **Admitting them as
+      labels is the single decision that would force consensus resolution, agreement
+      scoring and trust weighting** — the three subsystems §Q10 refuses
+- [ ] Accept/adjust/reject rates computed **per source**. Pooled, a troll rejecting
+      everything is indistinguishable from a model that got worse
+
+---
+
+## M15 — Snapshot and split manifest
+
+*Goal: the dataset leaves the system as one artifact.*
+*Depends on: M13, M14.*
+*Done when:* a snapshot with a split manifest is in R2, and the done-claim is true end
+to end.
+
+### M15.1 — Snapshot builder
+- [ ] Admin-triggered, runs as a job rather than in a request — building one must not
+      depend on a browser tab staying open
+- [ ] Images, labels and manifest written to R2 under a stable snapshot id
+- [ ] Listable with counts and dates, so the dataset visibly grows
+
+### M15.2 — Split manifest
+- [ ] Holds `selection_reason = 'random'` images out of train
+- [ ] **Matters more now than it did on Kaggle.** A training script on the same box as the
+      images can glob the directory and never read the manifest, and that mistake looks
+      like nothing going wrong — §Q21
+
+### M15.3 — Inclusion policy recorded
+- [ ] Each snapshot records the policy it was built under, so two snapshots built under
+      different rules are distinguishable rather than mysteriously different
+- [ ] Default policy excludes anonymous verdicts
+
+### M15.4 — Close v2
+- [ ] Every clause of the done-claim checked against a real run, using `PRD.md` §9's
+      falsification table
+- [ ] README updated with the v2 path, beside the v1 acceptance run
+- [ ] Verified internally. **There is no stranger-checkable claim in v2** — a public
+      statistics surface would have closed that gap and was deliberately not taken
+
+---
+
+## Deferred past v2
+
+Training on any machine · model registry · distilled detector · in-browser inference ·
+public detector demo · Google OAuth and sessions · consensus resolution, agreement
+scoring, trust weighting · leaderboards · 70/20/10 weighted selection · a public
+statistics surface · any measurement of detector accuracy.
+
+Training and the flywheel proper are v4 or v5, on the home box, CPU-only and slow by
+choice — `CONTEXT.md` §Q21 records the trap that will eat a multi-day run and the two
+ways out. The operational debt in `CONTEXT.md` §9 stays debt, including yt-dlp
+freshness, which was considered for v2 and left out to keep the sentence honest.
