@@ -405,16 +405,17 @@ const JobStatusCounts = z
  * (worker/internal/telemetry/metrics.go) — this endpoint exists for that
  * poll and has no other caller.
  *
- * Fixed shape — eight named fields, four statuses times two kinds — rather
- * than the array of rows `SELECT status, kind, COUNT(*) ... GROUP BY status,
- * kind` naturally produces. That query returns only combinations with at
- * least one row, so a drained `pending` bucket is *absent* from the result
- * set, not present at zero. Handing that straight to the Go worker would
- * make an empty queue and a worker that stopped reporting look identical in
- * Prometheus — the one distinction the dashboard's queue-depth panel exists
- * to show. The zero-fill happens here, in the one place that already knows
- * all eight combinations exist, so the gauge callback on the other end of
- * the wire never has to guess which ones it did not hear about.
+ * Fixed shape — twelve named fields, four statuses times three kinds (M11.1
+ * added `prelabel` alongside `download` and `chunk`) — rather than the array
+ * of rows `SELECT status, kind, COUNT(*) ... GROUP BY status, kind` naturally
+ * produces. That query returns only combinations with at least one row, so a
+ * drained `pending` bucket is *absent* from the result set, not present at
+ * zero. Handing that straight to the Go worker would make an empty queue and
+ * a worker that stopped reporting look identical in Prometheus — the one
+ * distinction the dashboard's queue-depth panel exists to show. The
+ * zero-fill happens here, in the one place that already knows all twelve
+ * combinations exist, so the gauge callback on the other end of the wire
+ * never has to guess which ones it did not hear about.
  */
 export const JobStats = z
   .object({

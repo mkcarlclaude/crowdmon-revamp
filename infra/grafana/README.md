@@ -24,6 +24,36 @@ by `uid` alone, so the folder never appears in the URL and moving it later
 cannot break the link from `/admin` — which is the whole reason the link
 targets a `uid` rather than a path someone can reorganise.
 
+## What M11.4 added
+
+Three panels for `prelabel` jobs, row 4 (y=24): **Pre-label duration**,
+**Pre-label throughput** and **Pre-label failure rate**. All three read Tempo
+spanmetrics off spans `worker/internal/worker/pipeline.go` already opens —
+`job.prelabel` and, once per sampled image, `image.detect` — rather than a new
+OTel instrument, for the reason each panel's own `description` gives: nothing
+about M11 needed image or box counts as a *Prometheus* series the way M8.2
+needed frame counts, since those numbers already live as span attributes
+(`crowdmon.prelabel.sampled`, `crowdmon.prelabel.boxes`,
+`crowdmon.prelabel.boxes_by_class`), and a duration/rate histogram alongside
+them would only be a second source for a number the span already carries.
+
+Pre-label failure rate does **not** fold into the Failure rate panel above it,
+on purpose. `job.failed` and `job.retired` are API-side spans, and Tempo's
+spanmetrics connector on this box only promotes `service`, `span_name` and
+`status_code` as label dimensions — confirmed against the live collector
+(`curl … /api/v1/label/__name__/values` from `CLAUDE.md`'s read-only probes),
+no `job.kind` dimension exists to filter Failure rate down to prelabel
+specifically. `job.prelabel`'s own span status is this signal's whole source
+instead: `traces_spanmetrics_calls_total{service="crowdmon-worker",
+span_name="job.prelabel", status_code="STATUS_CODE_ERROR"}`.
+
+`queue_depth`'s three-kind zero-fill (`download`/`chunk`/`prelabel`) already
+covers `prelabel` on the existing Queue depth panel without an edit here — see
+`worker/cmd/worker/main.go`'s `queueDepthCounts`, which read `prelabel` off
+the API's response but silently dropped it building the gauge's slice until
+M11.4 fixed that; the panel's own PromQL (`sum by (status, kind) (...)`) was
+never the part that needed to change.
+
 ## Why committed, not provisioned
 
 `~/monitoring-stack/` on the home box — Loki, Tempo, Prometheus, the

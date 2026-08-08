@@ -265,13 +265,14 @@ const queueDepthCallbackTimeout = 10 * time.Second
 //     than the one missing point a plain log line costs. The API being
 //     unreachable becomes a gap in the queue-depth graph, never a reason the
 //     worker stops claiming jobs.
-//   - Zero must be reported as zero. fetch is expected to return all eight
-//     (status, kind) combinations every time — that is what the API's
-//     zero-fill (schemas.ts's JobStats comment) buys back here — and this
-//     function observes every element it is given without filtering zeros
-//     out. Doing otherwise would make a drained queue and a worker that
-//     stopped exporting indistinguishable in Prometheus, which is the one
-//     failure mode M9.1's queue-depth panel exists to catch.
+//   - Zero must be reported as zero. fetch is expected to return all twelve
+//     (status, kind) combinations every time — four statuses times three
+//     kinds since M11.1 added `prelabel` — that is what the API's zero-fill
+//     (schemas.ts's JobStats comment) buys back here — and this function
+//     observes every element it is given without filtering zeros out. Doing
+//     otherwise would make a drained queue and a worker that stopped
+//     exporting indistinguishable in Prometheus, which is the one failure
+//     mode M9.1's queue-depth panel exists to catch.
 func NewQueueDepthGauge(fetch QueueDepthFetcher, logger *slog.Logger) error {
 	meter := otel.GetMeterProvider().Meter(meterName)
 

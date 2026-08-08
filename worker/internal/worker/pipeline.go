@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -626,7 +627,7 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 			"this worker has no class prompts configured: prelabel job %d has nothing to detect", job.Id))
 	}
 
-	sampled, err := p.Sampler.Sample(ctx, job.VideoId)
+	sampled, err := p.sample(ctx, job.VideoId)
 	if err != nil {
 		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", job.VideoId, err))
 	}
@@ -654,7 +655,7 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 
 	boxes := make([]queue.Box, 0, len(sampled))
 	for _, image := range sampled {
-		found, err := p.Detector.Detect(ctx, image, p.Prompts)
+		found, err := p.detect(ctx, image)
 		if err != nil {
 			if errors.Is(err, ErrObjectMissing) {
 				// Terminal, in the same spirit as the affinity guard in chunk:
@@ -684,12 +685,21 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 		boxes = append(boxes, found...)
 	}
 
-	span.SetAttributes(attribute.Int("crowdmon.prelabel.boxes", len(boxes)))
+	span.SetAttributes(
+		attribute.Int("crowdmon.prelabel.boxes", len(boxes)),
+		// The per-image detect.* spans already carry this breakdown one image
+		// at a time; this is the same fact rolled up to the job, for the
+		// reader who wants "what did this video turn up" without opening
+		// every child span to add it by hand. Every configured class is
+		// listed even at zero — see boxesByClass's own comment on why a class
+		// with nothing found must not look like a class nobody asked about.
+		attribute.StringSlice("crowdmon.prelabel.boxes_by_class", boxesByClass(p.Prompts, boxes)),
+	)
 
 	// Reported before Complete, the ordering ReportImages established: a
 	// report on a lease this worker still holds is what makes the 404
 	// meaningful.
-	if err := p.Predictions.ReportPredictions(ctx, job.Id, queue.Detections{
+	if err := p.reportPredictions(ctx, job.Id, queue.Detections{
 		ModelID:     p.Detector.ModelID(),
 		Boxes:       boxes,
 		SampledKeys: sampledKeys,
@@ -705,6 +715,115 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 	}
 
 	return nil
+}
+
+// sample draws the job's bounded, timeline-spread frame set (M11.3) inside
+// its own span — the first of the three the prelabel branch needed to become
+// the "middle worth naming" CONTEXT.md §9.3 asked for and never got until
+// this one landed. Mirrors extract/dedup/upload/report's shape in the chunk
+// branch above: one collaborator call, one span, attributes set only on the
+// success path so a failed call leaves nothing half-true on the span.
+func (p Pipeline) sample(ctx context.Context, videoID string) ([]SampledImage, error) {
+	ctx, span := tracer().Start(ctx, "sample.select")
+	defer span.End()
+
+	sampled, err := p.Sampler.Sample(ctx, videoID)
+	if err != nil {
+		return nil, recordErr(span, err)
+	}
+
+	span.SetAttributes(attribute.Int("crowdmon.sample.selected", len(sampled)))
+	return sampled, nil
+}
+
+// detect runs one image through the configured prompts inside its own span —
+// the second of the three, and the one the prelabel loop opens up to a couple
+// hundred times per job (M11.3's budget). That volume is the point, not a
+// cost to apologise for: CONTEXT.md §9.4 is the sampling-posture argument for
+// why a span this rare and this specific must not be thinned by a ratio
+// sampler aimed at trimming somebody else's noise.
+//
+// image.detect, not job.prelabel.detect or detect.image: singular "image"
+// distinguishes a call scoped to the one frame Detect just ran on from
+// images.report's plural, which reports the whole set chunk work produced —
+// the same singular/plural split that already separates SampledImage (one)
+// from queue.Extraction.Images (many).
+func (p Pipeline) detect(ctx context.Context, image SampledImage) ([]queue.Box, error) {
+	ctx, span := tracer().Start(ctx, "image.detect", trace.WithAttributes(
+		attribute.String("crowdmon.image.key", image.Key),
+		attribute.Int("crowdmon.detect.classes", len(p.Prompts)),
+	))
+	defer span.End()
+
+	found, err := p.Detector.Detect(ctx, image, p.Prompts)
+	if err != nil {
+		return nil, recordErr(span, err)
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.detect.boxes", len(found)),
+		attribute.StringSlice("crowdmon.detect.boxes_by_class", boxesByClass(p.Prompts, found)),
+	)
+	return found, nil
+}
+
+// reportPredictions writes a prelabel job's boxes inside its own span — the
+// third of the three, and the one that turns a detector run into a durable
+// row. predictions.report, not images.report: a different job kind reports
+// through PredictionReporter for the same reason it is a separate interface
+// from ImageReporter (that interface's own doc comment), and two spans
+// sharing one name would make a Tempo query for either ambiguous about which
+// job kind it was looking at.
+func (p Pipeline) reportPredictions(ctx context.Context, jobID int, detections queue.Detections) error {
+	ctx, span := tracer().Start(ctx, "predictions.report", trace.WithAttributes(
+		attribute.String("crowdmon.predictions.model_id", detections.ModelID),
+	))
+	defer span.End()
+
+	if err := p.Predictions.ReportPredictions(ctx, jobID, detections); err != nil {
+		return recordErr(span, err)
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.predictions.boxes", len(detections.Boxes)),
+		attribute.Int("crowdmon.predictions.sampled", len(detections.SampledKeys)),
+	)
+	return nil
+}
+
+// boxesByClass counts found's boxes against every one of prompts, not merely
+// the classes that produced one. A class prompt ran and matched nothing is a
+// real result — the same "a detector finding nothing is a real outcome" rule
+// prelabel's own doc comment already states for a whole image — and folding
+// it into absence would make "this class was never checked" indistinguishable
+// from "this class was checked and the answer was none," which is exactly the
+// distinction an operator staring at a span needs the most.
+//
+// A []string of "name=count" pairs rather than two parallel slices: OTel span
+// attributes have no map type, and a pair of same-length arrays keyed by
+// index is a footgun the moment either one is edited without the other — this
+// keeps each fact self-contained. Sorted by name so two spans over the same
+// prompt set render identically regardless of p.Prompts's iteration order.
+func boxesByClass(prompts []ClassPrompt, found []queue.Box) []string {
+	counts := make(map[string]int, len(prompts))
+	for _, prompt := range prompts {
+		counts[prompt.Name] = 0
+	}
+	for _, box := range found {
+		counts[box.ClassName]++
+	}
+
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]string, len(names))
+	for i, name := range names {
+		out[i] = fmt.Sprintf("%s=%d", name, counts[name])
+	}
+	return out
 }
 
 // prune clears expired source videos, and never fails the job it runs inside.

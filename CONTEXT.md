@@ -842,12 +842,61 @@ Recorded so they are not re-litigated.
    `worker/internal/api`. Kept in place rather than deleted so the numbering of the
    items below does not shift under anything that cites them.
 2. **v1 scope cut and build order.** Not yet discussed.
-3. ~~**Promotion trigger for semantic spans.**~~ **Resolved by v2's shape (§12).** "First
-   verify pass on real data" was the concrete version of this, and v2 supplies it: the
-   `prelabel` job is the first work with a middle worth naming — sample, detect per class,
-   persist predictions — so the spans land with it rather than being retrofitted. The
-   trigger is a milestone, not a mood.
-4. **Sampling posture.** Must be decided before any global sampler is configured.
+3. ~~**Promotion trigger for semantic spans.**~~ **Resolved by v2's shape (§12), and cashed
+   in at M11.4.** "First verify pass on real data" was the concrete version of this, and
+   v2 supplied the milestone; M11.4 is where the milestone stopped being a promise and
+   became three actual spans. `sample.select` (drawing M11.3's bounded, timeline-spread
+   subset), `image.detect` (one per sampled image, run against every configured class),
+   and `predictions.report` (the write) nest under `job.prelabel`, following
+   `worker/internal/worker/pipeline.go`'s existing chunk-branch shape — one collaborator
+   call, one span, attributes set only once the call succeeds. This item stayed
+   struck-through rather than deleted between the two milestones on purpose: "resolved by
+   a milestone" and "resolved" are different claims, and the gap between them is exactly
+   what a status line that only says "not yet discussed" (item 2, still true) would hide.
+4. ~~**Sampling posture.**~~ **Resolved at M11.4, 2026-08-08: `sdktrace.AlwaysSample()`,
+   spelled out explicitly rather than left as the SDK's default.** The question was never
+   "sample or don't" — it was what to do about the day a global head sampler gets
+   configured, and the answer is: not yet, and not uniformly when it is.
+
+   M11.4 is what made the two kinds of span in this system impossible to ignore.
+   `job.prelabel` and what nests under it — `sample.select`, `image.detect`,
+   `predictions.report` — are low-rate (one prelabel job per video, bounded to M11.3's
+   sample budget) and high-value: each one is evidence behind a promotion decision, the
+   argument item 3 above just finished making concrete. Everything else this project
+   emits — `job.claimed`, `video.download`, `frames.extract`, the API's
+   `POST /api/jobs/claim` and its siblings — is comparatively cheap to lose and
+   comparatively expensive to keep at scale. A single `TraceIdRatioBased` sampler
+   configured today would not distinguish between the two: it would thin `job.prelabel`
+   exactly as hard as it thins a poll that found nothing, discarding the only data this
+   milestone exists to produce in exchange for a cost saving this project does not yet
+   have a bill for. That is the mistake this decision exists to head off, not a sampler
+   left unconfigured because nobody got to it.
+
+   `AlwaysSample()`, not `ParentBased(AlwaysSample())` — the two look identical for a
+   root span, but a prelabel job's `job.prelabel` span is not always a root: M9.2 chains
+   it onto whatever traceparent the job row was stamped with, minted by `apps/api` rather
+   than this worker (`withStoredTraceContext`, `pipeline.go`). `ParentBased` would honour
+   that remote parent's sampled flag — a decision some other process made, for reasons
+   that have nothing to do with this job — and a stray `sampled=0` upstream would drop
+   the flywheel spans silently, with nothing in this worker ever deciding that should
+   happen. `worker/internal/telemetry/tracing_test.go`'s
+   `TestSetupSamplesAChildOfAnUnsampledRemoteParent` pins exactly this: a span parented
+   on a remote, explicitly-unsampled context still reaches the collector, which is the
+   one behaviour a reviewer skimming `sdktrace.WithSampler(sdktrace.AlwaysSample())` could
+   mistake for the no-op the SDK's own default already provides.
+
+   **The threshold for revisiting**, stated rather than left to be discovered: this stops
+   being viable once job *throughput* — submissions, not the sample budget inside one
+   prelabel job — is high enough that Tempo's 7-day retention (§2, a box shared with
+   unrelated projects) becomes a real cost, or once this worker gains a genuinely
+   high-rate, low-value span category of its own. It does not have one today by
+   deliberate design — `queue.go`'s `tracingTransport` injects the `traceparent` header
+   onto every outbound call without wrapping it in a client span, precisely so that the
+   only spans this process emits are the ones a human already wants (its own comment
+   explains why `otelhttp.NewTransport` was rejected for exactly this reason). When that
+   day comes, the fix is a `Sampler` that inspects the span name — always-sample
+   `job.prelabel`'s tree, ratio-sample the rest — not one ratio applied uniformly to
+   everything this process exports.
 5. ~~**Deadman check.**~~ **Not an open item — an accepted risk, decided 2026-08-08.**
    Nothing tells you the collector died, and nothing will. Issue #48 closed as not
    planned; M9.3 was dropped from v1 rather than deferred.
@@ -864,8 +913,9 @@ Recorded so they are not re-litigated.
    reason.** The dangerous failure is not the collector dying, it is a dead collector
    being indistinguishable from a healthy idle system — every panel empty either way,
    and the failure-rate panel is *supposed* to be empty when things are well.
-   `queue_depth` breaks that tie: it reports eight explicit zeros when the queue is
-   drained and healthy, and goes *absent* when nothing is exporting. The API's zero-fill
+   `queue_depth` breaks that tie: it reports twelve explicit zeros (four statuses times
+   three kinds, since M11.1 added `prelabel`) when the queue is drained and healthy, and
+   goes *absent* when nothing is exporting. The API's zero-fill
    was built for exactly this distinction one layer down. So the "is it dead or idle"
    question is answerable at a glance; only the unprompted alert is gone, and that is
    the half that was optional.

@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"testing"
 
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/api"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/worker"
@@ -277,6 +281,168 @@ func TestPrelabelWithoutCollaboratorsIsRetryable(t *testing.T) {
 				t.Errorf("error %v is terminal, want retryable", err)
 			}
 		})
+	}
+}
+
+// endedSpansNamed returns every recorded span with the given name, in the
+// order they ended. image.detect is the reason this exists alongside
+// pipeline_test.go's endedSpan: it opens once per sampled image, so a test
+// asserting on "the" detect span needs to say which one.
+func endedSpansNamed(spans *tracetest.SpanRecorder, name string) []sdktrace.ReadOnlySpan {
+	var out []sdktrace.ReadOnlySpan
+	for _, span := range spans.Ended() {
+		if span.Name() == name {
+			out = append(out, span)
+		}
+	}
+	return out
+}
+
+func attrs(span sdktrace.ReadOnlySpan) map[string]any {
+	out := map[string]any{}
+	for _, a := range span.Attributes() {
+		out[string(a.Key)] = a.Value.AsInterface()
+	}
+	return out
+}
+
+// M11.4 (issue #104): the three spans inside job.prelabel — sample selection,
+// detection, and the prediction write — are the "middle worth naming"
+// CONTEXT.md §9.3 asked for. This pins their names, their attributes, and
+// that they nest under job.prelabel rather than floating as siblings, the
+// same way TestAJobSpanContinuesItsStoredTraceparent pins job.download's
+// parentage.
+func TestPrelabelOpensASpanForEachOfItsThreeSteps(t *testing.T) {
+	spans := recordingProvider(t)
+
+	sampler := &fakeSampler{images: []worker.SampledImage{
+		{Key: "frames/dQw4w9WgXcQ/00000.000.jpg", TimestampSeconds: 0},
+		{Key: "frames/dQw4w9WgXcQ/00600.000.jpg", TimestampSeconds: 600},
+	}}
+	detector := &fakeDetector{
+		modelID: "owlvit-base-patch32.onnx",
+		boxes: map[string][]queue.Box{
+			"frames/dQw4w9WgXcQ/00000.000.jpg": {
+				{ClassName: "Paimon", XMax: 0.5, YMax: 0.5, Confidence: 0.9, PromptVersion: "2026-08-08-a"},
+				{ClassName: "Paimon", XMax: 0.9, YMax: 0.9, Confidence: 0.4, PromptVersion: "2026-08-08-a"},
+			},
+		},
+	}
+	p := worker.Pipeline{
+		Sampler: sampler, Detector: detector, Predictions: &fakePredictionReporter{}, Prompts: testPrompts,
+	}
+
+	if err := p.Work(t.Context(), prelabelJob()); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	job := endedSpan(t, spans, "job.prelabel")
+
+	sample := endedSpan(t, spans, "sample.select")
+	if got := attrs(sample)["crowdmon.sample.selected"]; got != int64(2) {
+		t.Errorf("sample.select crowdmon.sample.selected = %v, want 2", got)
+	}
+	if sample.Parent().SpanID() != job.SpanContext().SpanID() {
+		t.Error("sample.select is not a child of job.prelabel")
+	}
+
+	detects := endedSpansNamed(spans, "image.detect")
+	if len(detects) != 2 {
+		t.Fatalf("image.detect spans = %d, want one per sampled image (2)", len(detects))
+	}
+	byKey := map[string]sdktrace.ReadOnlySpan{}
+	for _, d := range detects {
+		byKey[attrs(d)["crowdmon.image.key"].(string)] = d
+	}
+	withBoxes, ok := byKey["frames/dQw4w9WgXcQ/00000.000.jpg"]
+	if !ok {
+		t.Fatal("no image.detect span for the frame the detector found boxes on")
+	}
+	if got := attrs(withBoxes)["crowdmon.detect.classes"]; got != int64(1) {
+		t.Errorf("crowdmon.detect.classes = %v, want 1 (len(testPrompts))", got)
+	}
+	if got := attrs(withBoxes)["crowdmon.detect.boxes"]; got != int64(2) {
+		t.Errorf("crowdmon.detect.boxes = %v, want 2", got)
+	}
+	// The per-class breakdown is what answers "detection per class" — a
+	// count keyed by every configured prompt, not just the ones that matched.
+	wantBreakdown := []string{"Paimon=2"}
+	gotBreakdown := attrs(withBoxes)["crowdmon.detect.boxes_by_class"]
+	if fmt.Sprint(gotBreakdown) != fmt.Sprint(wantBreakdown) {
+		t.Errorf("crowdmon.detect.boxes_by_class = %v, want %v", gotBreakdown, wantBreakdown)
+	}
+	empty, ok := byKey["frames/dQw4w9WgXcQ/00600.000.jpg"]
+	if !ok {
+		t.Fatal("no image.detect span for the frame the detector found nothing on")
+	}
+	// Zero boxes is a real outcome, not a skipped span — the same rule
+	// prelabel's own doc comment states for the whole job applies per image.
+	if got := attrs(empty)["crowdmon.detect.boxes"]; got != int64(0) {
+		t.Errorf("crowdmon.detect.boxes = %v, want 0", got)
+	}
+	if got := fmt.Sprint(attrs(empty)["crowdmon.detect.boxes_by_class"]); got != fmt.Sprint([]string{"Paimon=0"}) {
+		t.Errorf("crowdmon.detect.boxes_by_class = %v, want [Paimon=0] — a class that matched nothing "+
+			"must not look like a class nobody asked about", got)
+	}
+	for _, d := range detects {
+		if d.Parent().SpanID() != job.SpanContext().SpanID() {
+			t.Errorf("image.detect span for %s is not a child of job.prelabel", attrs(d)["crowdmon.image.key"])
+		}
+	}
+
+	report := endedSpan(t, spans, "predictions.report")
+	reportAttrs := attrs(report)
+	if reportAttrs["crowdmon.predictions.model_id"] != "owlvit-base-patch32.onnx" {
+		t.Errorf("crowdmon.predictions.model_id = %v, want the detector's own", reportAttrs["crowdmon.predictions.model_id"])
+	}
+	if reportAttrs["crowdmon.predictions.boxes"] != int64(2) {
+		t.Errorf("crowdmon.predictions.boxes = %v, want 2", reportAttrs["crowdmon.predictions.boxes"])
+	}
+	if reportAttrs["crowdmon.predictions.sampled"] != int64(2) {
+		t.Errorf("crowdmon.predictions.sampled = %v, want 2 (both sampled images, boxed or not)", reportAttrs["crowdmon.predictions.sampled"])
+	}
+	if report.Parent().SpanID() != job.SpanContext().SpanID() {
+		t.Error("predictions.report is not a child of job.prelabel")
+	}
+
+	// The job-level rollup: the same breakdown the per-image spans carry,
+	// summed across the whole video, on the span an operator opens first.
+	jobBreakdown := fmt.Sprint(attrs(job)["crowdmon.prelabel.boxes_by_class"])
+	if jobBreakdown != fmt.Sprint([]string{"Paimon=2"}) {
+		t.Errorf("job.prelabel crowdmon.prelabel.boxes_by_class = %v, want [Paimon=2]", jobBreakdown)
+	}
+}
+
+// A missing object aborts the loop before every image gets its own
+// image.detect span recorded as failed — only the one that actually hit
+// ErrObjectMissing does, and the job span carries the failure, not a second
+// synthetic span for images Detect was never called on.
+func TestPrelabelDetectSpanRecordsTheFailureThatAbortedTheJob(t *testing.T) {
+	spans := recordingProvider(t)
+
+	p := worker.Pipeline{
+		Sampler: &fakeSampler{images: []worker.SampledImage{{Key: "frames/x/00000.000.jpg"}}},
+		Detector: &fakeDetector{errs: map[string]error{
+			"frames/x/00000.000.jpg": fmt.Errorf("fetching: %w", worker.ErrObjectMissing),
+		}},
+		Predictions: &fakePredictionReporter{},
+		Prompts:     testPrompts,
+	}
+
+	if err := p.Work(t.Context(), prelabelJob()); err == nil {
+		t.Fatal("Work succeeded, want a failure")
+	}
+
+	detect := endedSpan(t, spans, "image.detect")
+	if detect.Status().Code != codes.Error {
+		t.Errorf("image.detect status = %v, want Error", detect.Status().Code)
+	}
+
+	// No predictions.report at all: the job aborted before reaching it.
+	for _, span := range spans.Ended() {
+		if span.Name() == "predictions.report" {
+			t.Error("predictions.report was opened despite the job failing before it")
+		}
 	}
 }
 

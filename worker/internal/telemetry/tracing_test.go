@@ -2,12 +2,14 @@ package telemetry_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/telemetry"
@@ -78,6 +80,71 @@ func TestSetupExportsSpansWithTheAccessHeaders(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no export reached the collector")
+	}
+}
+
+// CONTEXT.md §9.4's sampling-posture decision, pinned on the property that
+// actually matters rather than on which constructor setupTracing calls: a
+// span whose context carries a *remote, explicitly unsampled* parent must
+// still reach the collector. That is the one behavioural difference between
+// plain AlwaysSample and the SDK's own default, ParentBased(AlwaysSample()) —
+// the two are indistinguishable for a root span, which is why a test that
+// only started fresh spans (as every other test in this file does) could not
+// tell them apart and would keep passing after a regression to the default.
+//
+// The scenario is not contrived: withStoredTraceContext (pipeline.go)
+// extracts exactly this kind of remote parent from a job's stored
+// traceparent, minted by apps/api rather than by this worker. Under
+// ParentBased, an upstream sampled=0 would silently drop job.prelabel and
+// everything sample.select/image.detect/predictions.report put under it —
+// losing the flywheel data this milestone exists to keep, for a sampling
+// decision this process never made and does not control.
+func TestSetupSamplesAChildOfAnUnsampledRemoteParent(t *testing.T) {
+	received := make(chan int, 1)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received <- len(body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer collector.Close()
+
+	ctx := context.Background()
+	shutdown, err := telemetry.Setup(ctx, config.Config{
+		APIBaseURL:   "https://api.example.com",
+		Environment:  "test",
+		WorkerID:     "worker-under-test",
+		OTLPEndpoint: collector.URL + "/v1/traces",
+	})
+	if err != nil {
+		t.Fatalf("Setup() returned an unexpected error: %v", err)
+	}
+
+	// TraceFlags 0: unsampled, exactly what a traceparent whose own head
+	// sampler said no would carry. Remote: true is what makes ParentBased
+	// consult this flag at all — a local parent is never in question here.
+	remoteParent := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		SpanID:     trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8},
+		TraceFlags: trace.TraceFlags(0),
+		Remote:     true,
+	})
+	parented := trace.ContextWithRemoteSpanContext(ctx, remoteParent)
+
+	_, span := otel.Tracer("test").Start(parented, "job.prelabel")
+	span.End()
+
+	if err := shutdown(ctx); err != nil {
+		t.Fatalf("shutdown() returned an unexpected error: %v", err)
+	}
+
+	select {
+	case n := <-received:
+		if n == 0 {
+			t.Error("the collector received an empty export body")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no export reached the collector: an unsampled remote parent dropped the span, " +
+			"which means setupTracing regressed to ParentBased(AlwaysSample()) or is not sampling everything")
 	}
 }
 

@@ -45,7 +45,7 @@
       }
     ]
   },
-  "description": "Job-pipeline health for crowdmon's v1 flywheel: queue depth, download and chunk duration, dedup ratio, reclaim rate, and every way a job permanently fails. Business data (annotations, dataset counts, model versions) lives in D1 and is shown in /admin, not here — see CONTEXT.md §7's \"Do not rebuild Grafana inside /admin.\"",
+  "description": "Job-pipeline health for crowdmon's v1 flywheel: queue depth, download/chunk/pre-label duration, dedup ratio, pre-label throughput, reclaim rate, and every way a job permanently fails. Business data (annotations, dataset counts, model versions) lives in D1 and is shown in /admin, not here — see CONTEXT.md §7's \"Do not rebuild Grafana inside /admin.\"",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -411,6 +411,186 @@
           "legendFormat": "failed + retired/s"
         }
       ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Pre-label duration",
+      "description": "p50 and p95 wall time for a whole `prelabel` job — sample selection, one `image.detect` call per sampled frame, and the prediction write (M11.4, CONTEXT.md §9.3's promotion trigger made concrete). Same shape as Download duration beside it, and for the same reason: nothing about M11 asked for an image or box count as a Prometheus series the way M8.2 asked for frames extracted/kept — those numbers already live as attributes on `job.prelabel` and its children (`crowdmon.prelabel.sampled`, `crowdmon.prelabel.boxes`, `crowdmon.prelabel.boxes_by_class`), so a duration histogram alongside them would be a second source for a number `job.prelabel`'s own span already carries, with nothing to disagree about only because it would be measuring the same span metrics-generator already turns into `traces_spanmetrics_latency_bucket`. A bad value is p95 pulling away from p50 — the detector sidecar sharing the box's two cores with a live chunk job (`worker/internal/detect/client.go`'s comment on the CPU budget), or `CROWDMON_PRELABEL_SAMPLE_SIZE` having grown past the 200-image default (`worker/internal/sample/sample.go`).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "seconds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "last",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"crowdmon-worker\", span_name=\"job.prelabel\"}[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service=\"crowdmon-worker\", span_name=\"job.prelabel\"}[$__rate_interval])))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Pre-label throughput",
+      "description": "Images per second the detector actually finished, as the call rate of `image.detect` — one span per sampled frame (M11.4), read the same way Reclaim rate reads `job.reclaimed`: span *rate* is the only shape a one-span-per-unit-of-work signal turns into in Prometheus, and the alternative (a counter incremented next to the span) would be the same redundant-second-source the Pre-label duration panel's description argues against. This is the number CONTEXT.md §12's CPU sizing claim is about — an i5-7200U running open-vocabulary detection in low seconds per image on two cores with no GPU. A bad value is this dropping toward zero while Queue depth's `prelabel`/`pending` series climbs: the sidecar is up but starved, most likely sharing its two cores with a live chunk job (the same contention Chunk duration's own description names).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "images/s"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "last",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"crowdmon-worker\", span_name=\"image.detect\"}[$__rate_interval]))",
+          "legendFormat": "images/s"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Pre-label failure rate",
+      "description": "Rate of `job.prelabel` spans that ended in error — the sidecar down, an image object missing from R2, a rejected prediction report (`worker/internal/worker/pipeline.go`'s `prelabel` branch is the full classification). Read off `job.prelabel`'s own span status (`status_code=\"STATUS_CODE_ERROR\"`) rather than folded into the Failure rate panel above: `job.failed` and `job.retired` are API-side spans, and Tempo's spanmetrics connector on this box only promotes `service`, `span_name` and `status_code` as dimensions — no job-kind label to filter Failure rate down to prelabel specifically (checked live against the collector; `traces_spanmetrics_calls_total`'s label set has no third dimension to split on). `job.prelabel` already carries the kind in its own span name, so its status code is this signal's whole source rather than something added for this panel. A bad value is any sustained non-zero rate here, distinct from Failure rate's crash-or-report mix: a prelabel job retries up to the same attempt ceiling (CONTEXT.md §Q14) before the video's frames simply never get boxes, which is not a job.failed/job.retired event on the API side today — it is silence, a video that stays out of the pool M11's own done-when clause promises it would enter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisLabel": "failed/s"
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "last",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"crowdmon-worker\", span_name=\"job.prelabel\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))",
+          "legendFormat": "failed/s"
+        }
+      ]
     }
   ],
   "refresh": "30s",
@@ -429,6 +609,6 @@
   "timezone": "",
   "title": "Crowdmon — v1 system health",
   "uid": "crowdmon-v1",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
