@@ -77,6 +77,52 @@ itself, per `CONTEXT.md` §Q19.
 | Observability | OpenTelemetry → self-hosted Tempo/Prometheus/Grafana | With no user-facing frontend in v1, Grafana *is* the UI |
 | Training | Manual, batch, on Kaggle | No GPU worth training on at home — auto-retrain is ruled out by physics, not preference |
 
+## The v1 demo path
+
+Five minutes, no credentials beyond an Access login, and it exercises every claim above.
+
+1. **Submit.** [`crowdmon.mkcarl.com/admin`](https://crowdmon.mkcarl.com/admin) → paste a
+   YouTube URL. Access challenges the *API* call, not the page. A `download` job appears
+   in the queue table below the form within a second.
+2. **Watch it get claimed.** The home worker is long-polling with adaptive backoff, so
+   pickup takes anywhere from a moment to the idle interval. The row moves to `claimed`
+   and starts showing a heartbeat age that resets every 30s.
+3. **Watch it fan out.** When the download and ffprobe finish, one chunk job appears per
+   60s segment — 97 of them for a 97-minute video — all `pending`, and the worker starts
+   draining them one at a time.
+4. **Watch the system, not the rows.** "System health (Grafana) ↗" in the top right of
+   `/admin` opens the dashboard in `infra/grafana/`: queue depth draining, chunk and
+   download duration, dedup ratio, reclaim rate, failure rate. `/admin` deliberately
+   shows none of this itself — `CONTEXT.md` §7.
+5. **Follow one video through one trace.** In Grafana → Explore → Tempo, search
+   `{name="job.download"}` and open the trace. It starts at the `POST /api/admin/videos`
+   your browser made and ends at the last chunk's upload, across both runtimes.
+6. **Break it on purpose.** `docker exec crowdmon-worker sh -c 'kill -TERM 1'` on the box
+   abandons whatever chunk was in flight. Within ~7 minutes the reaper takes the lease
+   back, the restarted worker re-claims it, and `attempts` on that row reads 2. See
+   `deploy/homebox/README.md` for why `kill -9` there does nothing at all.
+
+### Acceptance run, 2026-08-08
+
+All eight success criteria in [`PRD.md`](PRD.md) §5, verified against one real run —
+"Archon quest chapter 4 Act 2 (part 2)", 5,812s, submitted through the dashboard.
+
+| | Criterion | Evidence |
+|---|---|---|
+| 1 | `terraform apply` reconstructs the account | `terraform plan` reports no changes across D1, R2, the Worker custom domain, the Access application and the reaper's cron trigger. Destroy-then-apply was exercised for real in M1.3 |
+| 2 | CI deploys the Worker and publishes the image on merge | Both workflows green on the M9 merge; the box pulled the new digest and restarted |
+| 3 | Submitting a URL through the dashboard creates a job | Job 24, `kind=download`, `pending` |
+| 4 | The worker claims, downloads, fans out, extracts, dedupes, uploads | 2,237MB in 268s, ffprobe measured 5,812s, 97 segments enqueued in one D1 batch, all 97 drained |
+| 5 | Images in R2, rows in D1, deduplicated | 5,812 frames extracted, 2,685 kept, 2,685 `images` rows against 2,685 distinct R2 keys — no key written twice. `dedup_threshold=10` stamped on every row |
+| 6 | A single trace spans submit → claim → download → fan-out → chunk completion | Trace `bf4c7b4a…`, **3,961 spans**: one `POST /api/admin/videos`, 99 `job.claimed`, 98 `job.chunk`, 97 `POST /api/jobs/:id/images` |
+| 7 | Grafana shows queue depth, dedup ratio, job duration, reclaim rate | All four return data. Dedup agrees with D1 to within rounding — 0.540 from Prometheus, 0.538 computed from the rows |
+| 8 | Killing the worker mid-job produces a visible reap and retry | SIGTERM mid-chunk; the worker logged `shutting down mid-job, leaving it for the reaper`; the cron tick's span carries `crowdmon.reaper.requeued=1` with a child `job.reclaimed` naming job 65; the row came back at `attempts=2` |
+
+Two numbers worth reading together. 98 `job.chunk` spans against 97 segments is the
+reaped job running twice, which is what a correct retry looks like from the outside. And
+the failure-rate panel is empty rather than zero-valued, because nothing failed and
+nothing was retired — the one panel whose emptiness is the good outcome.
+
 ## Observability
 
 A span leaves the Worker on every request, crosses the public internet to a Cloudflare
