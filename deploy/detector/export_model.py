@@ -62,10 +62,14 @@ def main() -> None:
 
     # Saved as a plain local directory rather than left in HuggingFace's
     # cache format, so the runtime stage can load it with no network access
-    # and no dependency on the cache layout matching between build and run —
-    # CLIPTokenizerFast.from_pretrained("/opt/model/tokenizer") reads exactly
-    # the four files this writes (vocab.json, merges.txt, tokenizer_config.
-    # json, special_tokens_map.json), nothing else.
+    # and no dependency on the cache layout matching between build and run.
+    # transformers 5.x writes two files here — tokenizer.json and
+    # tokenizer_config.json — and CLIPTokenizerFast.from_pretrained reads the
+    # pair back with no vocab.json or merges.txt alongside them, because a
+    # fast tokenizer carries its whole vocabulary and merge table inside
+    # tokenizer.json. Confirmed by listing the directory the build produces,
+    # not assumed from the older five-file layout.
+    #
     # The tokenizer directly, not via OwlViTProcessor.
     #
     # OwlViTProcessor bundles a tokenizer *and* an image processor, and
@@ -115,6 +119,30 @@ def main() -> None:
             "logits": {2: "num_prompts"},
         },
         opset_version=17,
+        # The TorchScript exporter, explicitly, not torch 2.13's default
+        # dynamo one. This is not a style preference — the dynamo exporter
+        # silently produces a graph that only works for a single prompt.
+        #
+        # Verified by exporting both ways and running them: dynamo honours
+        # `dynamic_axes` for the *inputs* and drops it for the output,
+        # emitting `logits [1, 576, 1]` with the prompt count baked in, and
+        # overrides `opset_version=17` with 18. Feeding it five prompts —
+        # the number of active classes seeded by migration 0006 — fails
+        # inside the graph:
+        #
+        #   Reshape: Input shape:{5,16,512}, requested shape:{16,512}
+        #
+        # so every request the sidecar ever served would have failed, while
+        # the build stayed green. With dynamo=False the output is
+        # `logits [batch, 576, num_prompts]`, the opset is the 17 asked for,
+        # and five prompts return `(1, 576, 5)`.
+        #
+        # `dynamic_axes` and `opset_version` above are TorchScript-exporter
+        # arguments; the dynamo path takes `dynamic_shapes` instead and has
+        # no obligation to respect them. Passing them while letting the
+        # default choose the other exporter is the actual bug, and naming
+        # the exporter is what makes the three arguments agree.
+        dynamo=False,
     )
 
 
