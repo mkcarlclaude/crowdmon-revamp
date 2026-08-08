@@ -729,9 +729,27 @@ Recorded so they are not re-litigated.
 3. **Promotion trigger for semantic spans.** "First verify pass on real data" is
    concrete; "when I get to it" is how it dies.
 4. **Sampling posture.** Must be decided before any global sampler is configured.
-5. **Deadman check.** Nothing currently tells you the collector died — it is the thing
-   that tells you when things die. Needs an external ping (e.g. healthchecks.io).
-   Scheduled as roadmap issue M9.3.
+5. ~~**Deadman check.**~~ **Not an open item — an accepted risk, decided 2026-08-08.**
+   Nothing tells you the collector died, and nothing will. Issue #48 closed as not
+   planned; M9.3 was dropped from v1 rather than deferred.
+
+   The reasoning, recorded because "flagged since M2, still unfixed" reads as neglect
+   and this is a decision. A dead collector costs *visibility*, not data: jobs still
+   run, images still land in R2, D1 still records, and the pipeline does not have the
+   collector on its critical path by design (§6). Against that, a deadman buys a push
+   notification about a system with no users and no SLA, and costs a third-party
+   account, a secret in `~/crowdmon/.env`, and a systemd unit — operational surface on
+   a project whose case rests on being cheap and simple.
+
+   **What made it safe to accept is a property M9.1 already shipped for another
+   reason.** The dangerous failure is not the collector dying, it is a dead collector
+   being indistinguishable from a healthy idle system — every panel empty either way,
+   and the failure-rate panel is *supposed* to be empty when things are well.
+   `queue_depth` breaks that tie: it reports eight explicit zeros when the queue is
+   drained and healthy, and goes *absent* when nothing is exporting. The API's zero-fill
+   was built for exactly this distinction one layer down. So the "is it dead or idle"
+   question is answerable at a glance; only the unprompted alert is gone, and that is
+   the half that was optional.
 
 **Operational debt:**
 

@@ -113,7 +113,7 @@ v1 is done when all of the following are true:
 | **Scope is large; project stalls like 2023** | Nine milestones, each independently shippable and a valid stopping point. v1 explicitly excludes the entire ML side. |
 | **Instrumentation deferred until it never lands** | Observability is milestone 2, before there is anything complex to instrument. |
 | **Home machine is a single point of failure** | Accepted. Cloud survives; jobs queue. Error page rather than cached fallback is a deliberate choice. |
-| **Nothing tells you the collector died** | Open item — needs an external deadman ping. |
+| **Nothing tells you the collector died** | **Accepted, 2026-08-08.** A dead collector costs visibility, not data — the pipeline does not have it on its critical path. `queue_depth` is what distinguishes a dead collector from a healthy idle system, since it reports explicit zeros when drained and goes absent when nothing is exporting. See `CONTEXT.md` §9.5. |
 | **Extraction pipeline has no prior art** | The 2023 repos contain no orchestrator at all. Milestones 7 and 8 are the highest-uncertainty work and are sequenced last for that reason. |
 
 ## 8. Out-of-band items
