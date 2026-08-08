@@ -678,6 +678,132 @@ export const ActiveClasses = z
   })
   .openapi("ActiveClasses");
 
+/**
+ * The longest an appearance prompt may be.
+ *
+ * Migration 0006's five seeds run to about a hundred characters each, and the
+ * text goes to a CLIP-style tokenizer whose context is 77 tokens — wording
+ * past that is silently truncated by the model rather than rejected anywhere,
+ * which would make the stored prompt and the prompt that actually ran two
+ * different things with nothing to tell them apart. 500 is comfortably past
+ * anything that survives tokenization intact, so this bound is the backstop
+ * against a paste accident, not an opinion about how to word a prompt.
+ */
+const MAX_APPEARANCE_PROMPT = 500;
+
+/**
+ * One class as the operator sees it (M12.1) — the whole row, unlike
+ * `PrelabelClass` above, which is trimmed to exactly what the detector needs.
+ *
+ * `active` is a boolean here and an INTEGER in D1 (migration 0003's `CHECK
+ * (active IN (0, 1))`). The conversion happens in the handler rather than on
+ * the wire, because a JSON `1` in a field named `active` is a value a UI has
+ * to remember to interpret, and every place that forgets reads it as truthy by
+ * accident rather than by contract.
+ *
+ * Carries `id`, which nothing else in this file hands out: every other route
+ * refers to a class by `name` (see `PredictionBox.class_name`'s comment).
+ * Admin edits cannot, precisely because renaming is one of the things they
+ * might do — an endpoint keyed on the mutable field would lose the row it was
+ * editing the moment it succeeded.
+ */
+export const AdminClass = z
+  .object({
+    id: z.int().positive().openapi({ example: 1 }),
+    name: z.string().openapi({ example: "Paimon" }),
+    appearance_prompt: z.string().openapi({
+      example: "a small white-haired floating fairy companion with a dark crown and a white cape",
+    }),
+    prompt_version: z.string().openapi({ example: "2026-08-08-a" }),
+    active: z.boolean().openapi({ example: true }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+    updated_at: z.int().openapi({ example: 1_754_100_030 }),
+  })
+  .openapi("AdminClass");
+
+export type AdminClassRow = z.infer<typeof AdminClass>;
+
+/**
+ * Named `AdminClassList`, not `ListClassesResponse`: oapi-codegen owns the
+ * `<OperationId>Response` namespace, and the operation is `listClasses`.
+ *
+ * Unbounded, deliberately, where `ActiveClasses` is capped at
+ * `MAX_ACTIVE_CLASSES`. That cap protects the *worker*, whose per-job
+ * prediction ceiling is sized against the number of classes it will run; this
+ * is the operator's roster, and it grows by one every time a class is retired
+ * rather than deleted (M12.1's "never delete"). A bound here would eventually
+ * refuse to show an admin the history they are forbidden from clearing.
+ */
+export const AdminClassList = z.object({ classes: z.array(AdminClass) }).openapi("AdminClassList");
+
+/**
+ * What creating a class takes (M12.1).
+ *
+ * No `active`: a class is created deactivated, always, and turned on by a
+ * separate edit. That is the ordering M12.2 exists for — a prompt is tried
+ * against a sample of frames *before* it counts — and an `active: true` on
+ * creation would be the one request that skips it.
+ *
+ * No `prompt_version` either. The server stamps the first tag for the same
+ * reason it computes every later one (see `src/prompt-version.ts`): a caller
+ * that can choose the tag can choose one already stamped on existing boxes.
+ */
+export const CreateClassRequest = z
+  .object({
+    name: z.string().min(1).max(100).openapi({ example: "Nahida" }),
+    appearance_prompt: z
+      .string()
+      .min(1)
+      .max(MAX_APPEARANCE_PROMPT)
+      .openapi({ example: "a small girl with long white-and-green hair" }),
+  })
+  .openapi("CreateClassRequest");
+
+/**
+ * What editing a class takes (M12.1): the wording, the active flag, or both.
+ *
+ * Both optional and at least one required. An empty body is refused rather
+ * than treated as a no-op — a UI that forgot to send its field would otherwise
+ * get a 200 and look like it saved.
+ *
+ * `name` is absent on purpose, although migration 0003 anticipates renaming.
+ * `reportPredictions` resolves a box's class by `name` (`PredictionBox`'s own
+ * comment on why), so a rename between a detector run and the report it
+ * produces turns that report into a 400 the worker classifies as terminal —
+ * a prelabel job lost to an admin's typo fix. The day renaming is worth having
+ * is the day predictions are reported by id.
+ */
+export const UpdateClassRequest = z
+  .object({
+    appearance_prompt: z
+      .string()
+      .min(1)
+      .max(MAX_APPEARANCE_PROMPT)
+      .optional()
+      .openapi({ example: "a tiny white-haired floating companion with a dark crown" }),
+    active: z.boolean().optional().openapi({ example: true }),
+  })
+  .refine((body) => body.appearance_prompt !== undefined || body.active !== undefined, {
+    message: "give at least one of appearance_prompt or active",
+  })
+  .openapi("UpdateClassRequest");
+
+/**
+ * The `{id}` path parameter for the class-management routes. Same digits-then-
+ * parse treatment as `JobIdParam`, and deliberately not `z.coerce.number()`,
+ * for that schema's own reason: coercion resolves `0x10`, `1e3` and `+1` to
+ * different integers, so a malformed id would edit some other class rather
+ * than being rejected.
+ */
+export const ClassIdParam = z.object({
+  id: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((id) => id > 0)
+    .openapi({ param: { name: "id", in: "path" }, type: "integer", example: 1 }),
+});
+
 export const JobListQuery = z.object({
   status: JobStatus.optional().openapi({ param: { name: "status", in: "query" } }),
   limit: z

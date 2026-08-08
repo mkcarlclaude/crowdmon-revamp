@@ -4,6 +4,14 @@ import type { Bindings } from "./bindings";
 import { requireAccess } from "./middleware/access";
 import { nameSpanAfterRoute } from "./middleware/trace-route";
 import { openApiConfig } from "./openapi";
+import {
+  createClassHandler,
+  createClassRoute,
+  listClassesHandler,
+  listClassesRoute,
+  updateClassHandler,
+  updateClassRoute,
+} from "./routes/admin-classes";
 import { listJobsHandler, listJobsRoute } from "./routes/admin-jobs";
 import { adminLoginHandler, adminLoginRoute } from "./routes/admin-login";
 import { listActiveClassesHandler, listActiveClassesRoute } from "./routes/classes";
@@ -101,6 +109,9 @@ app.openapi(reportPredictionsRoute, reportPredictionsHandler);
 app.openapi(listVideoImagesRoute, listVideoImagesHandler);
 app.openapi(jobStatsRoute, jobStatsHandler);
 app.openapi(listActiveClassesRoute, listActiveClassesHandler);
+app.openapi(listClassesRoute, listClassesHandler);
+app.openapi(createClassRoute, createClassHandler);
+app.openapi(updateClassRoute, updateClassHandler);
 
 // Serves the same document the build artifact contains, from the same config.
 // A deployed Worker that describes itself is worth one route: it answers "what

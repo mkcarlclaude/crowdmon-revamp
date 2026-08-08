@@ -765,6 +765,100 @@
           "appearance_prompt",
           "prompt_version"
         ]
+      },
+      "AdminClassList": {
+        "type": "object",
+        "properties": {
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminClass"
+            }
+          }
+        },
+        "required": [
+          "classes"
+        ]
+      },
+      "AdminClass": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "name": {
+            "type": "string",
+            "example": "Paimon"
+          },
+          "appearance_prompt": {
+            "type": "string",
+            "example": "a small white-haired floating fairy companion with a dark crown and a white cape"
+          },
+          "prompt_version": {
+            "type": "string",
+            "example": "2026-08-08-a"
+          },
+          "active": {
+            "type": "boolean",
+            "example": true
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          },
+          "updated_at": {
+            "type": "integer",
+            "example": 1754100030
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "appearance_prompt",
+          "prompt_version",
+          "active",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "CreateClassRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "example": "Nahida"
+          },
+          "appearance_prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "example": "a small girl with long white-and-green hair"
+          }
+        },
+        "required": [
+          "name",
+          "appearance_prompt"
+        ]
+      },
+      "UpdateClassRequest": {
+        "type": "object",
+        "properties": {
+          "appearance_prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "example": "a tiny white-haired floating companion with a dark crown"
+          },
+          "active": {
+            "type": "boolean",
+            "example": true
+          }
+        }
       }
     },
     "parameters": {}
@@ -1453,6 +1547,241 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ActiveClasses"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/classes": {
+      "get": {
+        "operationId": "listClasses",
+        "tags": [
+          "admin"
+        ],
+        "summary": "The whole class roster, active and retired",
+        "description": "The operator's view of migration 0003's `classes` table. Unlike `/api/classes/active`, retired classes are included — a deactivated class is the one an admin most needs to see, because reactivating it is the only way it comes back. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.",
+        "responses": {
+          "200": {
+            "description": "Every class, ordered by name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminClassList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createClass",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Add a class, deactivated",
+        "description": "Creates a class with `active = 0` and the first prompt version stamped by the server. Deactivated is not a default the caller can override: M12.2's dry-run is the step between writing a prompt and letting it pre-label a video, and a class that could be created active would be the one way around it. Requires a Cloudflare Access assertion.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateClassRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The class as created — inactive, with its first prompt version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminClass"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, an empty name or an oversized prompt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A class with this name already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/classes/{id}": {
+      "patch": {
+        "operationId": "updateClass",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Reword a class's prompt, activate it or retire it",
+        "description": "Editing `appearance_prompt` bumps `prompt_version` — rewording in place would silently create two regimes inside one class, which is what that column exists to prevent. Resubmitting identical wording does not bump it: the boxes either side were produced by the same text. There is no delete: retiring a class is `active: false`, so the predictions it produced keep their referent. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateClassRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The class as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminClass"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, or one that asks for no change at all",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No class with this id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Activating this class would exceed the active-class bound",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }

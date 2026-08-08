@@ -126,6 +126,35 @@ type AdminChunkWork struct {
 	StartSeconds int `json:"start_seconds"`
 }
 
+// AdminClass defines model for AdminClass.
+type AdminClass struct {
+	// Active Example: true
+	Active bool `json:"active"`
+
+	// AppearancePrompt Example: a small white-haired floating fairy companion with a dark crown and a white cape
+	AppearancePrompt string `json:"appearance_prompt"`
+
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// Id Example: 1
+	Id int `json:"id"`
+
+	// Name Example: Paimon
+	Name string `json:"name"`
+
+	// PromptVersion Example: 2026-08-08-a
+	PromptVersion string `json:"prompt_version"`
+
+	// UpdatedAt Example: 1754100030
+	UpdatedAt int `json:"updated_at"`
+}
+
+// AdminClassList defines model for AdminClassList.
+type AdminClassList struct {
+	Classes []AdminClass `json:"classes"`
+}
+
 // AdminJob defines model for AdminJob.
 type AdminJob struct {
 	// Attempts Example: 1
@@ -204,6 +233,15 @@ type CompleteRequest struct {
 
 // CompleteRequestStatus defines model for CompleteRequest.Status.
 type CompleteRequestStatus string
+
+// CreateClassRequest defines model for CreateClassRequest.
+type CreateClassRequest struct {
+	// AppearancePrompt Example: a small girl with long white-and-green hair
+	AppearancePrompt string `json:"appearance_prompt"`
+
+	// Name Example: Nahida
+	Name string `json:"name"`
+}
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
@@ -412,6 +450,15 @@ type SubmitVideoRequest struct {
 	Url string `json:"url"`
 }
 
+// UpdateClassRequest defines model for UpdateClassRequest.
+type UpdateClassRequest struct {
+	// Active Example: true
+	Active *bool `json:"active,omitempty"`
+
+	// AppearancePrompt Example: a tiny white-haired floating companion with a dark crown
+	AppearancePrompt *string `json:"appearance_prompt,omitempty"`
+}
+
 // ValidationIssue defines model for ValidationIssue.
 type ValidationIssue struct {
 	// Message Example: Invalid URL
@@ -457,6 +504,12 @@ type ListJobsParams struct {
 type ListVideoImagesParams struct {
 	WorkerId string `form:"worker_id" json:"worker_id"`
 }
+
+// CreateClassJSONRequestBody defines body for CreateClass for application/json ContentType.
+type CreateClassJSONRequestBody = CreateClassRequest
+
+// UpdateClassJSONRequestBody defines body for UpdateClass for application/json ContentType.
+type UpdateClassJSONRequestBody = UpdateClassRequest
 
 // SubmitVideoJSONRequestBody defines body for SubmitVideo for application/json ContentType.
 type SubmitVideoJSONRequestBody = SubmitVideoRequest
@@ -552,6 +605,49 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+
+	// ListClasses The whole class roster, active and retired
+	//
+	// The operator's view of migration 0003's `classes` table. Unlike `/api/classes/active`, retired classes are included — a deactivated class is the one an admin most needs to see, because reactivating it is the only way it comes back. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
+	//
+	// Corresponds with GET /api/admin/classes (the `ListClasses` operationId).
+	ListClasses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateClassWithBody Add a class, deactivated
+	//
+	// Creates a class with `active = 0` and the first prompt version stamped by the server. Deactivated is not a default the caller can override: M12.2's dry-run is the step between writing a prompt and letting it pre-label a video, and a class that could be created active would be the one way around it. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/admin/classes (the `CreateClass` operationId).
+	CreateClassWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateClass Add a class, deactivated
+	//
+	// Creates a class with `active = 0` and the first prompt version stamped by the server. Deactivated is not a default the caller can override: M12.2's dry-run is the step between writing a prompt and letting it pre-label a video, and a class that could be created active would be the one way around it. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/admin/classes (the `CreateClass` operationId).
+	CreateClass(ctx context.Context, body CreateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateClassWithBody Reword a class's prompt, activate it or retire it
+	//
+	// Editing `appearance_prompt` bumps `prompt_version` — rewording in place would silently create two regimes inside one class, which is what that column exists to prevent. Resubmitting identical wording does not bump it: the boxes either side were produced by the same text. There is no delete: retiring a class is `active: false`, so the predictions it produced keep their referent. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
+	UpdateClassWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateClass Reword a class's prompt, activate it or retire it
+	//
+	// Editing `appearance_prompt` bumps `prompt_version` — rewording in place would silently create two regimes inside one class, which is what that column exists to prevent. Resubmitting identical wording does not bump it: the boxes either side were produced by the same text. There is no delete: retiring a class is `active: false`, so the predictions it produced keep their referent. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
+	UpdateClass(ctx context.Context, id int, body UpdateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListJobs List jobs with their lease and failure state
 	//
@@ -714,6 +810,99 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// ListClasses The whole class roster, active and retired
+//
+// The operator's view of migration 0003's `classes` table. Unlike `/api/classes/active`, retired classes are included — a deactivated class is the one an admin most needs to see, because reactivating it is the only way it comes back. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
+//
+// Corresponds with GET /api/admin/classes (the `ListClasses` operationId).
+func (c *Client) ListClasses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListClassesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateClassWithBody Add a class, deactivated
+//
+// Creates a class with `active = 0` and the first prompt version stamped by the server. Deactivated is not a default the caller can override: M12.2's dry-run is the step between writing a prompt and letting it pre-label a video, and a class that could be created active would be the one way around it. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/admin/classes (the `CreateClass` operationId).
+func (c *Client) CreateClassWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateClassRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateClass Add a class, deactivated
+//
+// Creates a class with `active = 0` and the first prompt version stamped by the server. Deactivated is not a default the caller can override: M12.2's dry-run is the step between writing a prompt and letting it pre-label a video, and a class that could be created active would be the one way around it. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/admin/classes (the `CreateClass` operationId).
+func (c *Client) CreateClass(ctx context.Context, body CreateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateClassRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateClassWithBody Reword a class's prompt, activate it or retire it
+//
+// Editing `appearance_prompt` bumps `prompt_version` — rewording in place would silently create two regimes inside one class, which is what that column exists to prevent. Resubmitting identical wording does not bump it: the boxes either side were produced by the same text. There is no delete: retiring a class is `active: false`, so the predictions it produced keep their referent. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
+func (c *Client) UpdateClassWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateClassRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateClass Reword a class's prompt, activate it or retire it
+//
+// Editing `appearance_prompt` bumps `prompt_version` — rewording in place would silently create two regimes inside one class, which is what that column exists to prevent. Resubmitting identical wording does not bump it: the boxes either side were produced by the same text. There is no delete: retiring a class is `active: false`, so the predictions it produced keep their referent. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
+func (c *Client) UpdateClass(ctx context.Context, id int, body UpdateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateClassRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // ListJobs List jobs with their lease and failure state
@@ -1076,6 +1265,120 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewListClassesRequest constructs an http.Request for the ListClasses method
+func NewListClassesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/classes")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateClassRequest calls the generic CreateClass builder with application/json body
+func NewCreateClassRequest(server string, body CreateClassJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateClassRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateClassRequestWithBody constructs an http.Request for the CreateClass method, with any body, and a specified content type
+func NewCreateClassRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/classes")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUpdateClassRequest calls the generic UpdateClass builder with application/json body
+func NewUpdateClassRequest(server string, id int, body UpdateClassJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateClassRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateClassRequestWithBody constructs an http.Request for the UpdateClass method, with any body, and a specified content type
+func NewUpdateClassRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/classes/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
 }
 
 // NewListJobsRequest constructs an http.Request for the ListJobs method
@@ -1668,6 +1971,51 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ListClassesWithResponse The whole class roster, active and retired
+	//
+	// The operator's view of migration 0003's `classes` table. Unlike `/api/classes/active`, retired classes are included — a deactivated class is the one an admin most needs to see, because reactivating it is the only way it comes back. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/classes (the `ListClasses` operationId).
+	ListClassesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListClassesResponse, error)
+
+	// CreateClassWithBodyWithResponse Add a class, deactivated
+	//
+	// Creates a class with `active = 0` and the first prompt version stamped by the server. Deactivated is not a default the caller can override: M12.2's dry-run is the step between writing a prompt and letting it pre-label a video, and a class that could be created active would be the one way around it. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/classes (the `CreateClass` operationId).
+	CreateClassWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateClassResponse, error)
+
+	// CreateClassWithResponse Add a class, deactivated
+	//
+	// Creates a class with `active = 0` and the first prompt version stamped by the server. Deactivated is not a default the caller can override: M12.2's dry-run is the step between writing a prompt and letting it pre-label a video, and a class that could be created active would be the one way around it. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/classes (the `CreateClass` operationId).
+	CreateClassWithResponse(ctx context.Context, body CreateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateClassResponse, error)
+
+	// UpdateClassWithBodyWithResponse Reword a class's prompt, activate it or retire it
+	//
+	// Editing `appearance_prompt` bumps `prompt_version` — rewording in place would silently create two regimes inside one class, which is what that column exists to prevent. Resubmitting identical wording does not bump it: the boxes either side were produced by the same text. There is no delete: retiring a class is `active: false`, so the predictions it produced keep their referent. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
+	UpdateClassWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateClassResponse, error)
+
+	// UpdateClassWithResponse Reword a class's prompt, activate it or retire it
+	//
+	// Editing `appearance_prompt` bumps `prompt_version` — rewording in place would silently create two regimes inside one class, which is what that column exists to prevent. Resubmitting identical wording does not bump it: the boxes either side were produced by the same text. There is no delete: retiring a class is `active: false`, so the predictions it produced keep their referent. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
+	UpdateClassWithResponse(ctx context.Context, id int, body UpdateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateClassResponse, error)
+
 	// ListJobsWithResponse List jobs with their lease and failure state
 	//
 	// The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -1841,6 +2189,227 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
+}
+
+type ListClassesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminClassList
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListClassesResponse) GetJSON200() *AdminClassList {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListClassesResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListClassesResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListClassesResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListClassesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListClassesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListClassesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListClassesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateClassResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *AdminClass
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateClassResponse) GetJSON201() *AdminClass {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateClassResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateClassResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateClassResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateClassResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateClassResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateClassResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateClassResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateClassResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateClassResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateClassResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminClass
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateClassResponse) GetJSON200() *AdminClass {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateClassResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateClassResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateClassResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateClassResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateClassResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateClassResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateClassResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateClassResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateClassResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateClassResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ListJobsResponse struct {
@@ -2537,6 +3106,81 @@ func (r GetHealthResponse) ContentType() string {
 	return ""
 }
 
+// ListClassesWithResponse The whole class roster, active and retired
+//
+// The operator's view of migration 0003's `classes` table. Unlike `/api/classes/active`, retired classes are included — a deactivated class is the one an admin most needs to see, because reactivating it is the only way it comes back. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/classes (the `ListClasses` operationId).
+func (c *ClientWithResponses) ListClassesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListClassesResponse, error) {
+	rsp, err := c.ListClasses(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListClassesResponse(rsp)
+}
+
+// CreateClassWithBodyWithResponse Add a class, deactivated
+//
+// Creates a class with `active = 0` and the first prompt version stamped by the server. Deactivated is not a default the caller can override: M12.2's dry-run is the step between writing a prompt and letting it pre-label a video, and a class that could be created active would be the one way around it. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/classes (the `CreateClass` operationId).
+func (c *ClientWithResponses) CreateClassWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateClassResponse, error) {
+	rsp, err := c.CreateClassWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateClassResponse(rsp)
+}
+
+// CreateClassWithResponse Add a class, deactivated
+//
+// Creates a class with `active = 0` and the first prompt version stamped by the server. Deactivated is not a default the caller can override: M12.2's dry-run is the step between writing a prompt and letting it pre-label a video, and a class that could be created active would be the one way around it. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/classes (the `CreateClass` operationId).
+func (c *ClientWithResponses) CreateClassWithResponse(ctx context.Context, body CreateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateClassResponse, error) {
+	rsp, err := c.CreateClass(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateClassResponse(rsp)
+}
+
+// UpdateClassWithBodyWithResponse Reword a class's prompt, activate it or retire it
+//
+// Editing `appearance_prompt` bumps `prompt_version` — rewording in place would silently create two regimes inside one class, which is what that column exists to prevent. Resubmitting identical wording does not bump it: the boxes either side were produced by the same text. There is no delete: retiring a class is `active: false`, so the predictions it produced keep their referent. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
+func (c *ClientWithResponses) UpdateClassWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateClassResponse, error) {
+	rsp, err := c.UpdateClassWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateClassResponse(rsp)
+}
+
+// UpdateClassWithResponse Reword a class's prompt, activate it or retire it
+//
+// Editing `appearance_prompt` bumps `prompt_version` — rewording in place would silently create two regimes inside one class, which is what that column exists to prevent. Resubmitting identical wording does not bump it: the boxes either side were produced by the same text. There is no delete: retiring a class is `active: false`, so the predictions it produced keep their referent. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
+func (c *ClientWithResponses) UpdateClassWithResponse(ctx context.Context, id int, body UpdateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateClassResponse, error) {
+	rsp, err := c.UpdateClass(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateClassResponse(rsp)
+}
+
 // ListJobsWithResponse List jobs with their lease and failure state
 //
 // The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -2829,6 +3473,182 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetHealthResponse(rsp)
+}
+
+// ParseListClassesResponse parses an HTTP response from a ListClassesWithResponse call
+func ParseListClassesResponse(rsp *http.Response) (*ListClassesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListClassesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminClassList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateClassResponse parses an HTTP response from a CreateClassWithResponse call
+func ParseCreateClassResponse(rsp *http.Response) (*CreateClassResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateClassResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest AdminClass
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateClassResponse parses an HTTP response from a UpdateClassWithResponse call
+func ParseUpdateClassResponse(rsp *http.Response) (*UpdateClassResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateClassResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminClass
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseListJobsResponse parses an HTTP response from a ListJobsWithResponse call
