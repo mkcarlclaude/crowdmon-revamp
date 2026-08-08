@@ -181,18 +181,22 @@ func run(ctx context.Context) error {
 		// read, Predictions serves prelabel reports, and *queue.Client
 		// satisfies all of them.
 		Images: jobs,
-		// The three prelabel dependencies, now all present: M11.3's sampler,
-		// M11.2's detector, and the prediction reporter. Detector is nil
-		// exactly when CROWDMON_DETECTOR_BASE_URL is unset (above), and
-		// pipeline.go treats that as a retryable misconfiguration rather than
-		// a crash — a worker without a detector still runs download and chunk
-		// jobs unchanged. Prompts stays unset until M12 makes classes
-		// editable; until then prelabel refuses on the empty prompt set,
-		// which is why this binary is not yet one that completes a prelabel
-		// job.
+		// The four prelabel dependencies, now all present: M11.3's sampler,
+		// M11.2's detector, the prediction reporter, and — as of M11.5 — the
+		// prompt source. Detector is nil exactly when
+		// CROWDMON_DETECTOR_BASE_URL is unset (above), and pipeline.go treats
+		// that as a retryable misconfiguration rather than a crash — a worker
+		// without a detector still runs download and chunk jobs unchanged.
+		// Prompts is the same *queue.Client as Queue, Images and Predictions:
+		// worker.PromptSource's ActiveClasses fetches migration 0003's
+		// `classes` table straight from D1 rather than any copy this binary
+		// would otherwise have to carry — see that interface's own comment
+		// for why a worker-side copy of the wording is the drift this
+		// milestone closes rather than leaves for M12.
 		Sampler:     sample.Sampler{Images: jobs, Budget: cfg.PrelabelSampleSize},
 		Detector:    detector,
 		Predictions: jobs,
+		Prompts:     jobs,
 		Extraction:  frames.Config{DedupThreshold: cfg.DedupThreshold},
 		Metrics:     metrics,
 		Logger:      logger,

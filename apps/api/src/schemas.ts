@@ -627,6 +627,57 @@ export const PredictionReport = z
   })
   .openapi("PredictionReport");
 
+/**
+ * One active class as the prelabel worker needs to see it: the wording the
+ * detector matches on, and the version stamped onto every prediction it
+ * produces (migration 0003's `classes` table).
+ *
+ * Mirrors `worker.ClassPrompt` (worker/internal/worker/pipeline.go) field for
+ * field — `name`, `appearance_prompt`/`Appearance`, `prompt_version`/
+ * `Version` — which is the point: this is exactly what that struct needs and
+ * nothing else. No `id`, no `active`, no timestamps: a worker never needs a
+ * class's row id, and it never needs to be told a returned row is active
+ * because the query is what guarantees that (see `listActiveClassesRoute`'s
+ * own comment).
+ */
+const PrelabelClass = z
+  .object({
+    name: z.string().min(1).openapi({ example: "Paimon" }),
+    appearance_prompt: z.string().min(1).openapi({
+      example: "a small white-haired floating fairy companion with a dark crown and a white cape",
+    }),
+    prompt_version: z.string().max(200).openapi({ example: "2026-08-08-a" }),
+  })
+  .openapi("PrelabelClass");
+
+/**
+ * The bound on `ActiveClasses.classes`.
+ *
+ * 5x the 6-class assumption `MAX_PREDICTIONS_PER_JOB` already rounds
+ * CONTEXT.md §12's "roughly 4-6 characters total" up to — the same headroom
+ * `MAX_SAMPLED_IMAGES_PER_JOB` gives its own 200-image default. Generous
+ * enough that M12's roster growth (adding a class without a deploy is the
+ * entire point of that milestone) does not trip it, while still catching a
+ * runaway seed migration before the mismatch it would cause is silent:
+ * `queue.Client.ActiveClasses` feeds this list straight into
+ * `worker.Pipeline`'s detector loop, and `MAX_PREDICTIONS_PER_JOB`'s ceiling
+ * on one report is only correctly sized while the number of classes it
+ * multiplies against stays near the assumption it was derived from.
+ */
+export const MAX_ACTIVE_CLASSES = 6 * 5;
+
+/**
+ * Named `ActiveClasses`, not after the operation: oapi-codegen owns the
+ * `<OperationId>Response` namespace, and the operation is `listActiveClasses`
+ * — the same reason `ImageReport` and `VideoImages` are not named after
+ * theirs.
+ */
+export const ActiveClasses = z
+  .object({
+    classes: z.array(PrelabelClass).max(MAX_ACTIVE_CLASSES),
+  })
+  .openapi("ActiveClasses");
+
 export const JobListQuery = z.object({
   status: JobStatus.optional().openapi({ param: { name: "status", in: "query" } }),
   limit: z

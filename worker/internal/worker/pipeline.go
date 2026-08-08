@@ -107,6 +107,52 @@ type ClassPrompt struct {
 	Version    string
 }
 
+// PromptSource fetches the classes a prelabel job's detector should
+// currently run against — name, appearance wording, and the version stamped
+// onto every prediction it produces (migration 0003's `classes` table, read
+// through `GET /api/classes/active`, M11.5).
+//
+// This is what replaced Pipeline's old static `Prompts []ClassPrompt` field.
+// That field was configuration an operator typed in by hand, and D1 already
+// has its own copy — migration 0006 seeded five real rows into `classes` —
+// so two copies of the same wording is exactly the drift
+// `predictions.prompt_version` exists to prevent (migration 0003's own
+// comment on that column): a reworded migration with an un-updated worker
+// would silently stamp a version describing different text than the one
+// that actually ran, and nothing in the data would catch it. Fetching
+// removes the second copy entirely rather than trying to keep the two in
+// sync.
+//
+// One method, in the same spirit as ImageSampler, Detector and
+// PredictionReporter: it lets a test substitute a fixed table without a D1
+// round trip. Returns queue.ClassPrompt rather than this package's own
+// ClassPrompt, and that is why *queue.Client can satisfy it directly the way
+// it satisfies ImageReporter and PredictionReporter (whose signatures are
+// also declared purely in queue's own types): ImageSampler and Detector, by
+// contrast, are declared in terms of *this* package's types (SampledImage,
+// ClassPrompt) and need an adapter package (sample, detect) in between,
+// because queue cannot import worker without creating the cycle worker's own
+// import of queue already forbids in the other direction. The conversion
+// into this package's ClassPrompt happens once, at prelabel's own call site
+// (toClassPrompts, below) — the one place that actually needs the local
+// type.
+type PromptSource interface {
+	ActiveClasses(ctx context.Context) ([]queue.ClassPrompt, error)
+}
+
+// toClassPrompts converts PromptSource's wire-shaped result into this
+// package's own ClassPrompt, the type Detector.Detect and boxesByClass
+// already take. A loop rather than a shared type, for PromptSource's own
+// reason: queue.ClassPrompt and ClassPrompt cannot be the same type without
+// queue importing worker.
+func toClassPrompts(fetched []queue.ClassPrompt) []ClassPrompt {
+	prompts := make([]ClassPrompt, len(fetched))
+	for i, f := range fetched {
+		prompts[i] = ClassPrompt{Name: f.Name, Appearance: f.Appearance, Version: f.Version}
+	}
+	return prompts
+}
+
 // Detector proposes boxes for the given prompts on one image.
 //
 // The one-method interface CONTEXT.md §12 commits to, and the whole reason
@@ -169,12 +215,13 @@ type Pipeline struct {
 	Sampler     ImageSampler
 	Detector    Detector
 	Predictions PredictionReporter
-	// Prompts is the active classes the detector runs against. Held on the
-	// pipeline rather than fetched per job because M12 is what makes classes
-	// editable without a deploy; until then they are seeded by hand and this
-	// is configuration, exactly as ROADMAP.md M11 says ("M11 reads prompts
-	// that were seeded by hand"). M12 replaces this field with a fetch.
-	Prompts []ClassPrompt
+	// Prompts fetches the active classes the detector should run against
+	// (M11.5). D1 is the single source of the wording — see PromptSource's
+	// own comment for why a second, worker-side copy is not an option — so
+	// this is called once per prelabel job rather than cached at startup: a
+	// class activated, deactivated or reworded between two jobs is visible on
+	// the very next one, with no restart required.
+	Prompts PromptSource
 	// Extraction is the settings in force, and therefore what gets stamped
 	// onto the rows this pipeline produces (M8.4).
 	Extraction frames.Config
@@ -606,25 +653,36 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 	defer span.End()
 
 	// Retryable, not terminal, and the distinction is the whole of terminal.go's
-	// argument. A worker built without a sampler or a detector is a deployment
-	// that is wrong right now and may be right in a minute, once the binary the
-	// operator meant to ship is running: burning the video permanently on that
-	// would be the expensive mistake, and leaving the job claimed costs one
-	// lease window.
-	if p.Sampler == nil || p.Detector == nil || p.Predictions == nil {
+	// argument. A worker built without a sampler, a detector or a prompt
+	// source is a deployment that is wrong right now and may be right in a
+	// minute, once the binary the operator meant to ship is running: burning
+	// the video permanently on that would be the expensive mistake, and
+	// leaving the job claimed costs one lease window.
+	if p.Sampler == nil || p.Detector == nil || p.Predictions == nil || p.Prompts == nil {
 		return recordErr(span, fmt.Errorf(
 			"this worker has no pre-labelling configured: it cannot run the prelabel job %d", job.Id))
 	}
 
-	if len(p.Prompts) == 0 {
-		// Also retryable, and for a sharper reason than the above: until M12
-		// the prompts are seeded by hand, so an empty set is a box that has
-		// not been configured yet rather than a video that cannot be labelled.
-		// Reporting zero boxes instead would be worse than failing — it would
-		// be indistinguishable in the data from a detector that genuinely
-		// found nothing.
+	// Fetched fresh for this job rather than cached (PromptSource's own
+	// comment on Pipeline.Prompts explains why), and any error here defaults
+	// retryable per terminal.go's own rule — a GET with no lease and no body
+	// has no request-shaped failure for the API to reject, so there is no
+	// case here that mirrors reportPredictions' queue.ErrRejected below.
+	fetched, err := p.Prompts.ActiveClasses(ctx)
+	if err != nil {
+		return recordErr(span, fmt.Errorf("fetching active classes for job %d: %w", job.Id, err))
+	}
+	prompts := toClassPrompts(fetched)
+
+	if len(prompts) == 0 {
+		// Also retryable, and for a sharper reason than the above: an empty
+		// active set means nothing in `classes` is turned on yet (or a
+		// migration removed the last row), not a video that cannot be
+		// labelled. Reporting zero boxes instead would be worse than failing
+		// — it would be indistinguishable in the data from a detector that
+		// genuinely found nothing.
 		return recordErr(span, fmt.Errorf(
-			"this worker has no class prompts configured: prelabel job %d has nothing to detect", job.Id))
+			"no active class prompts: prelabel job %d has nothing to detect", job.Id))
 	}
 
 	sampled, err := p.sample(ctx, job.VideoId)
@@ -634,7 +692,7 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 
 	span.SetAttributes(
 		attribute.Int("crowdmon.prelabel.sampled", len(sampled)),
-		attribute.Int("crowdmon.prelabel.classes", len(p.Prompts)),
+		attribute.Int("crowdmon.prelabel.classes", len(prompts)),
 	)
 
 	// Collected up front, before a single Detect call runs, and reported
@@ -655,7 +713,7 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 
 	boxes := make([]queue.Box, 0, len(sampled))
 	for _, image := range sampled {
-		found, err := p.detect(ctx, image)
+		found, err := p.detect(ctx, image, prompts)
 		if err != nil {
 			if errors.Is(err, ErrObjectMissing) {
 				// Terminal, in the same spirit as the affinity guard in chunk:
@@ -693,7 +751,7 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 		// every child span to add it by hand. Every configured class is
 		// listed even at zero — see boxesByClass's own comment on why a class
 		// with nothing found must not look like a class nobody asked about.
-		attribute.StringSlice("crowdmon.prelabel.boxes_by_class", boxesByClass(p.Prompts, boxes)),
+		attribute.StringSlice("crowdmon.prelabel.boxes_by_class", boxesByClass(prompts, boxes)),
 	)
 
 	// Reported before Complete, the ordering ReportImages established: a
@@ -748,21 +806,21 @@ func (p Pipeline) sample(ctx context.Context, videoID string) ([]SampledImage, e
 // images.report's plural, which reports the whole set chunk work produced —
 // the same singular/plural split that already separates SampledImage (one)
 // from queue.Extraction.Images (many).
-func (p Pipeline) detect(ctx context.Context, image SampledImage) ([]queue.Box, error) {
+func (p Pipeline) detect(ctx context.Context, image SampledImage, prompts []ClassPrompt) ([]queue.Box, error) {
 	ctx, span := tracer().Start(ctx, "image.detect", trace.WithAttributes(
 		attribute.String("crowdmon.image.key", image.Key),
-		attribute.Int("crowdmon.detect.classes", len(p.Prompts)),
+		attribute.Int("crowdmon.detect.classes", len(prompts)),
 	))
 	defer span.End()
 
-	found, err := p.Detector.Detect(ctx, image, p.Prompts)
+	found, err := p.Detector.Detect(ctx, image, prompts)
 	if err != nil {
 		return nil, recordErr(span, err)
 	}
 
 	span.SetAttributes(
 		attribute.Int("crowdmon.detect.boxes", len(found)),
-		attribute.StringSlice("crowdmon.detect.boxes_by_class", boxesByClass(p.Prompts, found)),
+		attribute.StringSlice("crowdmon.detect.boxes_by_class", boxesByClass(prompts, found)),
 	)
 	return found, nil
 }
@@ -803,7 +861,9 @@ func (p Pipeline) reportPredictions(ctx context.Context, jobID int, detections q
 // attributes have no map type, and a pair of same-length arrays keyed by
 // index is a footgun the moment either one is edited without the other — this
 // keeps each fact self-contained. Sorted by name so two spans over the same
-// prompt set render identically regardless of p.Prompts's iteration order.
+// prompt set render identically regardless of the fetched slice's iteration
+// order (which, since M11.5, is the API's `ORDER BY name` — stable, but not
+// a guarantee this function should have to trust).
 func boxesByClass(prompts []ClassPrompt, found []queue.Box) []string {
 	counts := make(map[string]int, len(prompts))
 	for _, prompt := range prompts {

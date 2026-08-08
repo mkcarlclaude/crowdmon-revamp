@@ -109,6 +109,11 @@ func (e JobStatus) Valid() bool {
 	}
 }
 
+// ActiveClasses defines model for ActiveClasses.
+type ActiveClasses struct {
+	Classes []PrelabelClass `json:"classes"`
+}
+
 // AdminChunkWork defines model for AdminChunkWork.
 type AdminChunkWork struct {
 	// EndSeconds Example: 60
@@ -359,6 +364,18 @@ type PredictionReport struct {
 	VideoId string `json:"video_id"`
 }
 
+// PrelabelClass defines model for PrelabelClass.
+type PrelabelClass struct {
+	// AppearancePrompt Example: a small white-haired floating fairy companion with a dark crown and a white cape
+	AppearancePrompt string `json:"appearance_prompt"`
+
+	// Name Example: Paimon
+	Name string `json:"name"`
+
+	// PromptVersion Example: 2026-08-08-a
+	PromptVersion string `json:"prompt_version"`
+}
+
 // ReportImagesRequest defines model for ReportImagesRequest.
 type ReportImagesRequest struct {
 	// ConfigVersion Example: 2026-08-01-a
@@ -568,6 +585,13 @@ type ClientInterface interface {
 	// Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 	SubmitVideo(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListActiveClasses The classes a prelabel job's detector currently runs against
+	//
+	// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
+	//
+	// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
+	ListActiveClasses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ClaimJobWithBody Claim the next pending job
 	//
 	// Atomic: the claim is a single `UPDATE ... WHERE status='pending' ... RETURNING`, so two workers polling at once cannot take the same row.
@@ -754,6 +778,23 @@ func (c *Client) SubmitVideoWithBody(ctx context.Context, contentType string, bo
 // Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 func (c *Client) SubmitVideo(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSubmitVideoRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListActiveClasses The classes a prelabel job's detector currently runs against
+//
+// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
+//
+// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
+func (c *Client) ListActiveClasses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListActiveClassesRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -1166,6 +1207,33 @@ func NewSubmitVideoRequestWithBody(server string, contentType string, body io.Re
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListActiveClassesRequest constructs an http.Request for the ListActiveClasses method
+func NewListActiveClassesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/classes/active")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1636,6 +1704,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 	SubmitVideoWithResponse(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitVideoResponse, error)
 
+	// ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
+	//
+	// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
+	ListActiveClassesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListActiveClassesResponse, error)
+
 	// ClaimJobWithBodyWithResponse Claim the next pending job
 	//
 	// Atomic: the claim is a single `UPDATE ... WHERE status='pending' ... RETURNING`, so two workers polling at once cannot take the same row.
@@ -1967,6 +2044,47 @@ func (r SubmitVideoResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SubmitVideoResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListActiveClassesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ActiveClasses
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListActiveClassesResponse) GetJSON200() *ActiveClasses {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListActiveClassesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListActiveClassesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListActiveClassesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListActiveClassesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2479,6 +2597,21 @@ func (c *ClientWithResponses) SubmitVideoWithResponse(ctx context.Context, body 
 	return ParseSubmitVideoResponse(rsp)
 }
 
+// ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
+//
+// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
+func (c *ClientWithResponses) ListActiveClassesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListActiveClassesResponse, error) {
+	rsp, err := c.ListActiveClasses(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListActiveClassesResponse(rsp)
+}
+
 // ClaimJobWithBodyWithResponse Claim the next pending job
 //
 // Atomic: the claim is a single `UPDATE ... WHERE status='pending' ... RETURNING`, so two workers polling at once cannot take the same row.
@@ -2863,6 +2996,32 @@ func ParseSubmitVideoResponse(rsp *http.Response) (*SubmitVideoResponse, error) 
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListActiveClassesResponse parses an HTTP response from a ListActiveClassesWithResponse call
+func ParseListActiveClassesResponse(rsp *http.Response) (*ListActiveClassesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListActiveClassesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ActiveClasses
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 

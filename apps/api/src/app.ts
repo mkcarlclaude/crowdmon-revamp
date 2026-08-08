@@ -6,6 +6,7 @@ import { nameSpanAfterRoute } from "./middleware/trace-route";
 import { openApiConfig } from "./openapi";
 import { listJobsHandler, listJobsRoute } from "./routes/admin-jobs";
 import { adminLoginHandler, adminLoginRoute } from "./routes/admin-login";
+import { listActiveClassesHandler, listActiveClassesRoute } from "./routes/classes";
 import { healthHandler, healthRoute } from "./routes/health";
 import {
   claimJobHandler,
@@ -99,6 +100,7 @@ app.openapi(reportImagesRoute, reportImagesHandler);
 app.openapi(reportPredictionsRoute, reportPredictionsHandler);
 app.openapi(listVideoImagesRoute, listVideoImagesHandler);
 app.openapi(jobStatsRoute, jobStatsHandler);
+app.openapi(listActiveClassesRoute, listActiveClassesHandler);
 
 // Serves the same document the build artifact contains, from the same config.
 // A deployed Worker that describes itself is worth one route: it answers "what

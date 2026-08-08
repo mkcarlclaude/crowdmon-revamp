@@ -725,6 +725,46 @@
           "chunk",
           "prelabel"
         ]
+      },
+      "ActiveClasses": {
+        "type": "object",
+        "properties": {
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrelabelClass"
+            },
+            "maxItems": 30
+          }
+        },
+        "required": [
+          "classes"
+        ]
+      },
+      "PrelabelClass": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Paimon"
+          },
+          "appearance_prompt": {
+            "type": "string",
+            "minLength": 1,
+            "example": "a small white-haired floating fairy companion with a dark crown and a white cape"
+          },
+          "prompt_version": {
+            "type": "string",
+            "maxLength": 200,
+            "example": "2026-08-08-a"
+          }
+        },
+        "required": [
+          "name",
+          "appearance_prompt",
+          "prompt_version"
+        ]
       }
     },
     "parameters": {}
@@ -1391,6 +1431,28 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JobStats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/classes/active": {
+      "get": {
+        "operationId": "listActiveClasses",
+        "tags": [
+          "classes"
+        ],
+        "summary": "The classes a prelabel job's detector currently runs against",
+        "description": "M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).",
+        "responses": {
+          "200": {
+            "description": "Every class with `active = 1`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveClasses"
                 }
               }
             }

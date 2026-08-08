@@ -77,6 +77,35 @@ func (r *fakePredictionReporter) ReportPredictions(
 	return r.err
 }
 
+// fakePromptSource stands in for D1's `classes` table (M11.5's
+// worker.PromptSource): a fixed list handed back on every call rather than a
+// real fetch, the same substitution `testPrompts` was directly before
+// Pipeline.Prompts became an interface.
+type fakePromptSource struct {
+	classes []queue.ClassPrompt
+	err     error
+	calls   int
+}
+
+func (s *fakePromptSource) ActiveClasses(_ context.Context) ([]queue.ClassPrompt, error) {
+	s.calls++
+	return s.classes, s.err
+}
+
+// promptSource wraps prompts — written in worker.ClassPrompt form, the shape
+// every assertion in this file already reads — as the queue.ClassPrompt a
+// real worker.PromptSource returns over the wire. The conversion mirrors
+// worker.toClassPrompts run backwards, and exists for the same reason that
+// function does: queue.ClassPrompt cannot be worker.ClassPrompt without
+// queue importing worker.
+func promptSource(prompts ...worker.ClassPrompt) *fakePromptSource {
+	classes := make([]queue.ClassPrompt, len(prompts))
+	for i, p := range prompts {
+		classes[i] = queue.ClassPrompt{Name: p.Name, Appearance: p.Appearance, Version: p.Version}
+	}
+	return &fakePromptSource{classes: classes}
+}
+
 func prelabelJob() *api.Job {
 	return &api.Job{Id: 7, Kind: api.Prelabel, VideoId: "dQw4w9WgXcQ"}
 }
@@ -104,7 +133,7 @@ func TestPrelabelReportsEveryBoxUnderOneModelID(t *testing.T) {
 	reporter := &fakePredictionReporter{}
 
 	p := worker.Pipeline{
-		Sampler: sampler, Detector: detector, Predictions: reporter, Prompts: testPrompts,
+		Sampler: sampler, Detector: detector, Predictions: reporter, Prompts: promptSource(testPrompts...),
 	}
 
 	if err := p.Work(context.Background(), prelabelJob()); err != nil {
@@ -145,7 +174,7 @@ func TestPrelabelPassesEveryPromptToTheDetector(t *testing.T) {
 		Sampler:     &fakeSampler{images: []worker.SampledImage{{Key: "frames/x/00000.000.jpg"}}},
 		Detector:    detector,
 		Predictions: &fakePredictionReporter{},
-		Prompts:     testPrompts,
+		Prompts:     promptSource(testPrompts...),
 	}
 
 	if err := p.Work(context.Background(), prelabelJob()); err != nil {
@@ -154,6 +183,68 @@ func TestPrelabelPassesEveryPromptToTheDetector(t *testing.T) {
 
 	if len(detector.prompts) != 1 || detector.prompts[0].Version != "2026-08-08-a" {
 		t.Errorf("detector got %+v, want the configured prompt and its version", detector.prompts)
+	}
+}
+
+// versionEchoingDetector stands in for a real Detector's behaviour: it
+// stamps a box's PromptVersion from whichever ClassPrompt.Version Detect was
+// actually handed, the same as a production detector does when it matches a
+// class (M11.2). fakeDetector, above, always returns whatever PromptVersion
+// a test typed into its static boxes table — which cannot demonstrate that
+// the version travelling all the way to a prediction came from the fetch
+// rather than from the test's own fixture. This one can.
+type versionEchoingDetector struct {
+	prompts []worker.ClassPrompt
+}
+
+func (d *versionEchoingDetector) Detect(
+	_ context.Context, _ worker.SampledImage, prompts []worker.ClassPrompt,
+) ([]queue.Box, error) {
+	d.prompts = prompts
+	return []queue.Box{
+		{ClassName: prompts[0].Name, Confidence: 0.9, PromptVersion: prompts[0].Version},
+	}, nil
+}
+
+func (d *versionEchoingDetector) ModelID() string { return "fake-detector-v1" }
+
+// TestPrelabelStampsThePromptVersionTheFetchedClassSupplied is the property
+// this whole milestone exists to guarantee (see worker.PromptSource's own
+// comment, and migration 0003's comment on predictions.prompt_version): the
+// version a prediction carries must be the one PromptSource's D1-backed
+// fetch actually supplied for that class, not a value any local copy of the
+// wording could have drifted from. The version below is chosen to look
+// nothing like the "2026-08-08-a" every other test in this file hard-codes,
+// specifically so a pass here cannot be explained by a stale constant
+// leaking through instead of the fetched value.
+func TestPrelabelStampsThePromptVersionTheFetchedClassSupplied(t *testing.T) {
+	source := promptSource(worker.ClassPrompt{
+		Name:       "Paimon",
+		Appearance: "a small white-haired flying companion",
+		Version:    "2026-09-01-fetched-from-d1",
+	})
+	detector := &versionEchoingDetector{}
+	reporter := &fakePredictionReporter{}
+
+	p := worker.Pipeline{
+		Sampler:     &fakeSampler{images: []worker.SampledImage{{Key: "frames/x/00000.000.jpg"}}},
+		Detector:    detector,
+		Predictions: reporter,
+		Prompts:     source,
+	}
+
+	if err := p.Work(context.Background(), prelabelJob()); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	if source.calls != 1 {
+		t.Fatalf("PromptSource.ActiveClasses called %d times, want exactly 1", source.calls)
+	}
+	if len(reporter.sent.Boxes) != 1 {
+		t.Fatalf("reported %d boxes, want 1", len(reporter.sent.Boxes))
+	}
+	if got := reporter.sent.Boxes[0].PromptVersion; got != "2026-09-01-fetched-from-d1" {
+		t.Errorf("prediction carries prompt_version %q, want the version PromptSource supplied", got)
 	}
 }
 
@@ -166,7 +257,7 @@ func TestPrelabelReportsAnEmptySampleWithoutFailing(t *testing.T) {
 		Sampler:     &fakeSampler{},
 		Detector:    &fakeDetector{},
 		Predictions: reporter,
-		Prompts:     testPrompts,
+		Prompts:     promptSource(testPrompts...),
 	}
 
 	if err := p.Work(context.Background(), prelabelJob()); err != nil {
@@ -188,7 +279,7 @@ func TestPrelabelMissingObjectIsTerminal(t *testing.T) {
 			"frames/x/00000.000.jpg": fmt.Errorf("fetching: %w", worker.ErrObjectMissing),
 		}},
 		Predictions: reporter,
-		Prompts:     testPrompts,
+		Prompts:     promptSource(testPrompts...),
 	}
 
 	err := p.Work(context.Background(), prelabelJob())
@@ -212,7 +303,7 @@ func TestPrelabelDetectorFailureDefaultsToRetryable(t *testing.T) {
 			"frames/x/00000.000.jpg": errors.New("connection refused"),
 		}},
 		Predictions: &fakePredictionReporter{},
-		Prompts:     testPrompts,
+		Prompts:     promptSource(testPrompts...),
 	}
 
 	err := p.Work(context.Background(), prelabelJob())
@@ -231,7 +322,7 @@ func TestPrelabelRejectedReportIsTerminal(t *testing.T) {
 		Sampler:     &fakeSampler{images: []worker.SampledImage{{Key: "frames/x/00000.000.jpg"}}},
 		Detector:    &fakeDetector{},
 		Predictions: &fakePredictionReporter{err: fmt.Errorf("reporting: %w", queue.ErrRejected)},
-		Prompts:     testPrompts,
+		Prompts:     promptSource(testPrompts...),
 	}
 
 	err := p.Work(context.Background(), prelabelJob())
@@ -250,7 +341,7 @@ func TestPrelabelLostLeaseIsRetryable(t *testing.T) {
 		Sampler:     &fakeSampler{images: []worker.SampledImage{{Key: "frames/x/00000.000.jpg"}}},
 		Detector:    &fakeDetector{},
 		Predictions: &fakePredictionReporter{err: fmt.Errorf("reporting: %w", queue.ErrLeaseLost)},
-		Prompts:     testPrompts,
+		Prompts:     promptSource(testPrompts...),
 	}
 
 	err := p.Work(context.Background(), prelabelJob())
@@ -267,10 +358,21 @@ func TestPrelabelWithoutCollaboratorsIsRetryable(t *testing.T) {
 	// may be right in a minute. Burning the video permanently on that is the
 	// expensive mistake terminal.go's default exists to avoid.
 	for name, p := range map[string]worker.Pipeline{
-		"no sampler":  {Detector: &fakeDetector{}, Predictions: &fakePredictionReporter{}, Prompts: testPrompts},
-		"no detector": {Sampler: &fakeSampler{}, Predictions: &fakePredictionReporter{}, Prompts: testPrompts},
-		"no reporter": {Sampler: &fakeSampler{}, Detector: &fakeDetector{}, Prompts: testPrompts},
-		"no prompts":  {Sampler: &fakeSampler{}, Detector: &fakeDetector{}, Predictions: &fakePredictionReporter{}},
+		"no sampler":  {Detector: &fakeDetector{}, Predictions: &fakePredictionReporter{}, Prompts: promptSource(testPrompts...)},
+		"no detector": {Sampler: &fakeSampler{}, Predictions: &fakePredictionReporter{}, Prompts: promptSource(testPrompts...)},
+		"no reporter": {Sampler: &fakeSampler{}, Detector: &fakeDetector{}, Prompts: promptSource(testPrompts...)},
+		// Prompts left nil: the field is a PromptSource now, not a slice, so
+		// "not configured at all" is a nil interface rather than an empty one
+		// — caught by the same collaborator check as the other three.
+		"no prompt source": {Sampler: &fakeSampler{}, Detector: &fakeDetector{}, Predictions: &fakePredictionReporter{}},
+		// Distinct from the above: a PromptSource that is present and answers
+		// successfully, but with nothing active in D1. This is the sharper
+		// case prelabel's own comment on the empty check calls out — not a
+		// missing collaborator, but a roster with nothing turned on.
+		"empty active classes": {
+			Sampler: &fakeSampler{}, Detector: &fakeDetector{}, Predictions: &fakePredictionReporter{},
+			Prompts: promptSource(),
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := p.Work(context.Background(), prelabelJob())
@@ -329,7 +431,7 @@ func TestPrelabelOpensASpanForEachOfItsThreeSteps(t *testing.T) {
 		},
 	}
 	p := worker.Pipeline{
-		Sampler: sampler, Detector: detector, Predictions: &fakePredictionReporter{}, Prompts: testPrompts,
+		Sampler: sampler, Detector: detector, Predictions: &fakePredictionReporter{}, Prompts: promptSource(testPrompts...),
 	}
 
 	if err := p.Work(t.Context(), prelabelJob()); err != nil {
@@ -426,7 +528,7 @@ func TestPrelabelDetectSpanRecordsTheFailureThatAbortedTheJob(t *testing.T) {
 			"frames/x/00000.000.jpg": fmt.Errorf("fetching: %w", worker.ErrObjectMissing),
 		}},
 		Predictions: &fakePredictionReporter{},
-		Prompts:     testPrompts,
+		Prompts:     promptSource(testPrompts...),
 	}
 
 	if err := p.Work(t.Context(), prelabelJob()); err == nil {

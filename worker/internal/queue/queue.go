@@ -558,6 +558,64 @@ func (c *Client) ReportPredictions(ctx context.Context, jobID int, detections De
 	}
 }
 
+// ClassPrompt is one active class as the API returns it (migration 0003's
+// `classes` table, filtered to `active = 1` by `GET /api/classes/active`,
+// M11.5): the wording the detector should match on, and the version stamped
+// onto every prediction it produces.
+//
+// A wire-shaped type of its own rather than worker.ClassPrompt, for the same
+// reason Box, Image and SampleCandidate already are: this package is the
+// wire, and worker already imports it (pipeline.go), so a method here
+// returning a worker type would need the reverse import and create the
+// cycle that direction is not allowed to have. worker.PromptSource's own
+// comment is the fuller version of this argument, and worker.
+// toClassPrompts is where the one conversion into worker.ClassPrompt
+// actually happens.
+type ClassPrompt struct {
+	Name       string
+	Appearance string
+	Version    string
+}
+
+// ActiveClasses lists the classes a prelabel job's detector should currently
+// run against: migration 0003's `classes` table, already filtered to
+// `active = 1` on the API side (apps/api/src/routes/classes.ts) so a
+// deactivated class stops being detected without this worker having to know
+// what "deactivated" means.
+//
+// Scoped to nothing — no video id, no job id, no worker_id — because every
+// prelabel job needs the identical answer (worker.PromptSource's own comment
+// explains why that is also the reason the endpoint carries no worker_id).
+// Called once per prelabel job (pipeline.go's prelabel branch) rather than
+// cached at startup, so a class reworded or (de)activated between two jobs
+// is visible on the very next one with no restart required.
+func (c *Client) ActiveClasses(ctx context.Context) ([]ClassPrompt, error) {
+	resp, err := c.api.ListActiveClasses(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing active classes: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("listing active classes: %w", statusError(resp))
+	}
+
+	var body api.ActiveClasses
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decoding active classes: %w", err)
+	}
+
+	prompts := make([]ClassPrompt, len(body.Classes))
+	for i, class := range body.Classes {
+		prompts[i] = ClassPrompt{
+			Name:       class.Name,
+			Appearance: class.AppearancePrompt,
+			Version:    class.PromptVersion,
+		}
+	}
+	return prompts, nil
+}
+
 // leaseOutcome reads the two lease-bearing endpoints' answers. 404 is the
 // API's single answer for "no job with this id is held by this worker",
 // deliberately not distinguishing a missing job from a reaped one — the
