@@ -9,3 +9,10 @@
 torch==2.13.0
 transformers==5.14.1
 onnx==1.22.0
+
+# No onnxscript here on purpose. torch.onnx.export's *dynamo* path imports it
+# unconditionally and dies with ModuleNotFoundError without it — but
+# export_model.py passes dynamo=False and takes the TorchScript path, which
+# does not, because the dynamo exporter produces a single-prompt-only graph
+# (see that file's comment on the export call). Adding onnxscript would make
+# the build pass by selecting the exporter that is wrong.
