@@ -523,6 +523,112 @@
           "phash"
         ]
       },
+      "PredictionReport": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "predictions": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 34
+          }
+        },
+        "required": [
+          "video_id",
+          "predictions"
+        ]
+      },
+      "ReportPredictionsRequest": {
+        "type": "object",
+        "properties": {
+          "worker_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "carls-ubuntu-1"
+          },
+          "model_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "owlvit-base-patch32.onnx"
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PredictionBox"
+            },
+            "maxItems": 2400
+          }
+        },
+        "required": [
+          "worker_id",
+          "model_id",
+          "predictions"
+        ]
+      },
+      "PredictionBox": {
+        "type": "object",
+        "properties": {
+          "r2_key": {
+            "type": "string",
+            "minLength": 1,
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "class_name": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Paimon"
+          },
+          "x_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.12
+          },
+          "y_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.2
+          },
+          "x_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.5
+          },
+          "y_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.6
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.87
+          },
+          "prompt_version": {
+            "type": "string",
+            "maxLength": 200,
+            "example": "2026-08-08-a"
+          }
+        },
+        "required": [
+          "r2_key",
+          "class_name",
+          "x_min",
+          "y_min",
+          "x_max",
+          "y_max",
+          "confidence",
+          "prompt_version"
+        ]
+      },
       "JobStats": {
         "type": "object",
         "properties": {
@@ -1067,6 +1173,69 @@
           },
           "400": {
             "description": "Malformed job id or body, frames_kept disagreeing with images.length, or a job that is not a chunk",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No job with this id is held by this worker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/predictions": {
+      "post": {
+        "operationId": "reportPredictions",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Report the boxes a prelabel worker's detector proposed",
+        "description": "M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole video's sampled frames in a single report, the same shape `reportImages` established for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE against `predictions` (migration 0003), and unlike `reportImages` there is no `ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather than replacing anything, a gap left open deliberately rather than closed here (see the handler's own comment).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportPredictionsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The prediction rows exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictionReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed job id or body, or a prediction naming an r2_key or class_name that does not exist",
             "content": {
               "application/json": {
                 "schema": {

@@ -1,0 +1,52 @@
+-- Two more columns on `images`: a hand-curated public-sample flag and the
+-- reason a frame entered the labelling pool in the first place (M10.2,
+-- issue #99).
+--
+-- Both nullable and backfilled as null — D1/SQLite only allows one ADD
+-- COLUMN per ALTER TABLE, hence two statements. v1's 2,685 rows predate the
+-- concept of "selected" entirely: they are whatever a chunk job extracted
+-- and deduplicated, with no admin curation step and no selection policy in
+-- force. There is no true value to backfill either column with, and forcing
+-- one would misrepresent history rather than record it.
+--
+-- CONTEXT.md §Q16 is why `selection_reason` lands now rather than when
+-- something first reads it: a frame labelled before this column existed was
+-- chosen by whatever the ingestion pipeline did that day, and that choice
+-- can never be retro-declared unbiased once the fact of how it was made is
+-- gone. Adding the column later only protects frames selected after the
+-- add — the whole point is a column that predates the first frame it needs
+-- to describe, not one that starts being useful whenever someone gets
+-- around to reading it.
+
+-- `public_sample` (§Q25, ROADMAP M14.1): true only for images an admin has
+-- hand-picked to appear on the public verification page. Never set by an
+-- ingestion run or a chunk report — that boundary is what keeps the public
+-- surface a curated sample rather than the dataset with a login page
+-- removed (§7's "no republishing at scale" bound).
+--
+-- Nullable 0/1 INTEGER rather than a three-valued enum. NULL and 0 are
+-- treated identically by every query this column will ever be read by
+-- (`WHERE public_sample = 1`), so a "considered and excluded" state
+-- distinct from "never considered" was weighed and rejected here: unlike
+-- `selection_reason`, nothing about *why* an image is not in the public
+-- sample needs to survive the moment of deciding it, and an admin flow that
+-- wants an explicit rejection later can start writing 0 without a
+-- migration — the CHECK below already allows it. `selection_reason`'s null
+-- is irrecoverable history (see above); this one is just an unset default,
+-- and the fact that it costs nothing to leave headroom for a future 0 is
+-- the whole reason it is not collapsed into a NOT NULL boolean now.
+ALTER TABLE images ADD COLUMN public_sample INTEGER CHECK (public_sample IN (0, 1));
+
+-- `selection_reason` (§Q16): why this frame entered the labelling pool.
+-- `'random'` is the only value v2 ever writes — the uncertain/diverse legs
+-- of the weighted 70/20/10 mix are v4 (ROADMAP: "the column ships, the
+-- weighting does not") — but free text on purpose, not a CHECK enum. A
+-- CHECK naming today's one selector is a constraint that v4's weighting
+-- change, or any selector added after it, would have to edit in the same
+-- migration that adds the selector, coupling this schema to a list that has
+-- no reason to be closed. Nothing reads this column for branching logic
+-- today, only for display and for the eventual random/uncertain/diverse
+-- split of the evaluation pool, so there is no correctness argument for
+-- constraining it — only a documentation one, and this comment does that
+-- without a migration every selector has to pass through.
+ALTER TABLE images ADD COLUMN selection_reason TEXT;
