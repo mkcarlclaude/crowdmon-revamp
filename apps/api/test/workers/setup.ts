@@ -21,13 +21,26 @@ await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
  * reason.
  *
  * Children first: `chunks` and `images` carry foreign keys into `jobs` and
- * `videos`.
+ * `videos`, and migration 0003's labelling tables carry them into `images`
+ * and `classes`.
+ *
+ * The v2 tables are listed here rather than left to whichever file first
+ * touches them. `classes.name` is UNIQUE, so the second test in a file to
+ * seed the same class fails a constraint it never meant to exercise — the
+ * same trap this hook already exists to close for one download job per
+ * video. A per-file `beforeEach` would work only for the file that
+ * remembered to write one.
  */
 beforeEach(async () => {
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM missing_reports"),
+    env.DB.prepare("DELETE FROM verdicts"),
+    env.DB.prepare("DELETE FROM predictions"),
     env.DB.prepare("DELETE FROM images"),
     env.DB.prepare("DELETE FROM chunks"),
     env.DB.prepare("DELETE FROM jobs"),
     env.DB.prepare("DELETE FROM videos"),
+    env.DB.prepare("DELETE FROM classes"),
+    env.DB.prepare("DELETE FROM snapshots"),
   ]);
 });
