@@ -708,11 +708,15 @@ the directory visibly exists. Verified the right way round: the volume came up
       the claim request wearing a new parent. The response has to arrive before anything
       knows which trace to join, so there is no request left to re-parent by then.
 
-### M9.3 — Deadman check
-- [ ] **Dropped from v1 deliberately** on 2026-08-08, not forgotten and not failed.
-      Issue #48 stays open and `CONTEXT.md` §9's open item stays open with it: nothing
-      still reports the collector's own death, and v1 closes with that written down
-      rather than quietly dropped from the done-bar
+### M9.3 — Deadman check — ~~not planned~~
+- [x] **Cancelled on 2026-08-08, not deferred.** Issue #48 closed as not planned, and
+      `CONTEXT.md` §9.5 moved from open item to accepted risk with the reasoning. A dead
+      collector costs visibility, not data; the alert it would buy is a push
+      notification about a system with no users, against a third-party account, a secret
+      and a systemd unit of new surface. The dangerous half — a dead collector looking
+      identical to a healthy idle one — is already closed by `queue_depth` reporting
+      explicit zeros when drained and going absent when nothing exports, which M9.1's
+      zero-fill built for exactly this reason
 
 ### M9.4 — Acceptance run and writeup
 - [x] Full run from a clean queue against a real video — "Archon quest chapter 4 Act 2
