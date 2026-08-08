@@ -4,6 +4,27 @@
  * Split out from index.ts so the tracing config can name these types without
  * importing the Hono app, which imports the tracing config back.
  */
+/**
+ * What `requireAccess` leaves behind for the handlers past it.
+ *
+ * The middleware already verified the assertion and read the email off it, so
+ * a handler that needs to record *who* asked — M12.2's `dryruns.requested_by`,
+ * and M13's verdict identity after it — reads it from here rather than
+ * verifying the token a second time. Declared as part of the app's env type
+ * rather than passed around, because there is exactly one producer and it runs
+ * before every consumer by path prefix.
+ *
+ * Only set on `/api/admin/*`. Everywhere else it is genuinely absent, which is
+ * why the value is typed as possibly undefined rather than as a string the
+ * unauthenticated routes would be lying about.
+ */
+export type Variables = {
+  adminEmail?: string;
+};
+
+/** The app's env: bindings plus whatever middleware has set. */
+export type AppEnv = { Bindings: Bindings; Variables: Variables };
+
 export type Bindings = {
   ENVIRONMENT: string;
 

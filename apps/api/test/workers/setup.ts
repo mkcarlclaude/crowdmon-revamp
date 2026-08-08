@@ -38,6 +38,10 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM predictions"),
     env.DB.prepare("DELETE FROM images"),
     env.DB.prepare("DELETE FROM chunks"),
+    // Before `jobs` and `classes`, both of which it references (migration
+    // 0007). Its `job_id` cascade would handle the first on its own; the
+    // second would not.
+    env.DB.prepare("DELETE FROM dryruns"),
     env.DB.prepare("DELETE FROM jobs"),
     env.DB.prepare("DELETE FROM videos"),
     env.DB.prepare("DELETE FROM classes"),

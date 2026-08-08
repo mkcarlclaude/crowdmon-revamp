@@ -93,6 +93,22 @@ type ImageSampler interface {
 	Sample(ctx context.Context, videoID string) ([]SampledImage, error)
 }
 
+// BoundedImageSampler draws a sample of a caller-named size (M12.2).
+//
+// A separate interface from ImageSampler rather than a widened one, and the
+// distinction is not cosmetic: a prelabel job's budget belongs to the worker's
+// configuration (CROWDMON_PRELABEL_SAMPLE_SIZE), while a dry-run's belongs to
+// the row the API already stamped it on and hands back on the claim. Two
+// callers with genuinely different authority over the same number is what two
+// methods say and one method could not.
+//
+// *sample.Sampler satisfies both, so the two Pipeline fields below are
+// ordinarily the same value — which is fine, and still leaves a test free to
+// stub one without the other.
+type BoundedImageSampler interface {
+	SampleN(ctx context.Context, videoID string, budget int) ([]SampledImage, error)
+}
+
 // ClassPrompt is one class as the detector needs to see it: the wording, and
 // the version of that wording.
 //
@@ -181,6 +197,18 @@ type PredictionReporter interface {
 	ReportPredictions(ctx context.Context, jobID int, detections queue.Detections) error
 }
 
+// DryRunReporter records what a candidate prompt found (M12.2).
+//
+// Separate from PredictionReporter for a stronger reason than the one that
+// separates PredictionReporter from ImageReporter. Those two are different job
+// kinds writing comparable data; this one writes data that is deliberately
+// *not* label data — a dry-run's boxes never become `predictions` rows — and
+// one interface covering both would be the first step towards one call site
+// covering both.
+type DryRunReporter interface {
+	ReportDryRun(ctx context.Context, jobID int, result queue.DryRunResult) error
+}
+
 // Metrics is the chunk pipeline's view of telemetry.FrameMetrics: the four
 // measurements M8.2 asks for.
 //
@@ -222,6 +250,13 @@ type Pipeline struct {
 	// class activated, deactivated or reworded between two jobs is visible on
 	// the very next one, with no restart required.
 	Prompts PromptSource
+	// The dry-run branch's two extra dependencies (M12.2). It reuses Detector
+	// unchanged — the whole point of M11.2's one-method interface is that the
+	// caller decides what prompts go in — but samples through
+	// BoundedImageSampler, because the budget comes off the job rather than
+	// out of this worker's configuration.
+	DryRunSampler BoundedImageSampler
+	DryRuns       DryRunReporter
 	// Extraction is the settings in force, and therefore what gets stamped
 	// onto the rows this pipeline produces (M8.4).
 	Extraction frames.Config
@@ -250,6 +285,8 @@ func (p Pipeline) Work(ctx context.Context, job *api.Job) error {
 		return p.chunk(ctx, job)
 	case api.Prelabel:
 		return p.prelabel(ctx, job)
+	case api.Dryrun:
+		return p.dryrun(ctx, job)
 	default:
 		// Terminal, not retryable: a kind this binary does not understand will
 		// still be unknown on the next attempt. It means the API is ahead of
@@ -772,6 +809,154 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 		return recordErr(span, err)
 	}
 
+	return nil
+}
+
+// dryrun is phase four: run one candidate wording across a small sample of a
+// video's frames and report the boxes, writing nothing to the dataset (M12.2).
+//
+// Structurally the prelabel branch with three things removed, and each removal
+// is the point rather than a simplification. There is no PromptSource call —
+// the wording arrives on the job, because a dry-run is defined by text that is
+// deliberately not what the class currently says, and fetching would run the
+// wrong prompt. There is no `images.selection_reason` stamp — the frames this
+// looked at are not a dataset decision. And the report goes to `dryruns`
+// rather than `predictions`, which is what makes "a dry-run writes nothing"
+// (ROADMAP.md M12.2) a property of the schema instead of a promise.
+func (p Pipeline) dryrun(ctx context.Context, job *api.Job) error {
+	ctx, span := tracer().Start(ctx, "job.dryrun", trace.WithAttributes(
+		attribute.Int("crowdmon.job.id", job.Id),
+		attribute.String("crowdmon.video.id", job.VideoId),
+	))
+	defer span.End()
+
+	if job.Dryrun == nil {
+		// The claim handler retires a dryrun job with no `dryruns` row before
+		// it ever reaches a worker, so this is unreachable rather than merely
+		// unlikely — Terminal anyway, and for chunk's reason: the alternative
+		// is running some other wording and reporting it as this one's result.
+		return recordErr(span, Terminal(fmt.Errorf(
+			"dry-run job %d arrived without a candidate prompt to try", job.Id)))
+	}
+
+	// Retryable, not terminal, exactly as prelabel's own configuration check
+	// is: a worker built without a sampler, a detector or a dry-run reporter
+	// is a deployment that is wrong right now and may be right in a minute.
+	if p.DryRunSampler == nil || p.Detector == nil || p.DryRuns == nil {
+		return recordErr(span, fmt.Errorf(
+			"this worker has no pre-labelling configured: it cannot run the dry-run job %d", job.Id))
+	}
+
+	// One prompt, not the active set. The version is the candidate's own
+	// marker rather than a class's `prompt_version`: nothing this run produces
+	// is stamped onto a row, so there is no regime for a version to name — and
+	// handing the detector the class's current version would attach a real tag
+	// to boxes that did not come from the wording it names.
+	prompts := []ClassPrompt{{
+		Name:       job.Dryrun.ClassName,
+		Appearance: job.Dryrun.AppearancePrompt,
+		Version:    "candidate",
+	}}
+
+	sampled, err := p.sampleN(ctx, job.VideoId, job.Dryrun.SampleSize)
+	if err != nil {
+		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", job.VideoId, err))
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.dryrun.sampled", len(sampled)),
+		attribute.String("crowdmon.dryrun.class", job.Dryrun.ClassName),
+	)
+
+	sampledKeys := make([]string, len(sampled))
+	for i, image := range sampled {
+		sampledKeys[i] = image.Key
+	}
+
+	boxes := make([]queue.DryRunBox, 0, len(sampled))
+	for _, image := range sampled {
+		found, err := p.detect(ctx, image, prompts)
+		if err != nil {
+			if errors.Is(err, ErrObjectMissing) {
+				// Terminal for prelabel's reason: an image row whose object is
+				// gone will be gone on the next poll too.
+				return recordErr(span, Terminal(fmt.Errorf(
+					"dry-run job %d: the image object %s is missing from R2: %w",
+					job.Id, image.Key, err)))
+			}
+			return recordErr(span, fmt.Errorf(
+				"detecting on %s for job %d: %w", image.Key, job.Id, err))
+		}
+
+		// Attribution filled in here rather than trusted from the Detector,
+		// the same rule prelabel follows. The class name and prompt version
+		// the detector echoes back are dropped: this run has exactly one of
+		// each, already on the `dryruns` row.
+		for _, box := range found {
+			boxes = append(boxes, queue.DryRunBox{
+				Key:        image.Key,
+				XMin:       box.XMin,
+				YMin:       box.YMin,
+				XMax:       box.XMax,
+				YMax:       box.YMax,
+				Confidence: box.Confidence,
+			})
+		}
+	}
+
+	span.SetAttributes(attribute.Int("crowdmon.dryrun.boxes", len(boxes)))
+
+	if err := p.reportDryRun(ctx, job.Id, queue.DryRunResult{
+		ModelID:     p.Detector.ModelID(),
+		Boxes:       boxes,
+		SampledKeys: sampledKeys,
+	}); err != nil {
+		if errors.Is(err, queue.ErrRejected) {
+			return recordErr(span, Terminal(err))
+		}
+		return recordErr(span, err)
+	}
+
+	return nil
+}
+
+// sampleN is sample's bounded twin, in its own span for the same reason.
+// dryrun.select, not sample.select: a Tempo query for one job kind's sampling
+// must not also return the other's, the same argument predictions.report makes
+// for not being called images.report.
+func (p Pipeline) sampleN(ctx context.Context, videoID string, budget int) ([]SampledImage, error) {
+	ctx, span := tracer().Start(ctx, "dryrun.select", trace.WithAttributes(
+		attribute.Int("crowdmon.dryrun.budget", budget),
+	))
+	defer span.End()
+
+	sampled, err := p.DryRunSampler.SampleN(ctx, videoID, budget)
+	if err != nil {
+		return nil, recordErr(span, err)
+	}
+
+	span.SetAttributes(attribute.Int("crowdmon.sample.selected", len(sampled)))
+	return sampled, nil
+}
+
+// reportDryRun writes the candidate's boxes inside its own span. dryrun.report,
+// not predictions.report: the two write to different tables with deliberately
+// different meanings, and one span name would make a Tempo query for either
+// ambiguous about which it found.
+func (p Pipeline) reportDryRun(ctx context.Context, jobID int, result queue.DryRunResult) error {
+	ctx, span := tracer().Start(ctx, "dryrun.report", trace.WithAttributes(
+		attribute.String("crowdmon.dryrun.model_id", result.ModelID),
+	))
+	defer span.End()
+
+	if err := p.DryRuns.ReportDryRun(ctx, jobID, result); err != nil {
+		return recordErr(span, err)
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.dryrun.boxes", len(result.Boxes)),
+		attribute.Int("crowdmon.dryrun.sampled", len(result.SampledKeys)),
+	)
 	return nil
 }
 

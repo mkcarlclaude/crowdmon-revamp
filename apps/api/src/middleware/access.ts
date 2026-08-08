@@ -1,6 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import type { Bindings } from "../bindings";
+import type { AppEnv } from "../bindings";
 
 /**
  * Verifies the Cloudflare Access assertion on admin requests.
@@ -47,7 +47,7 @@ function jwks(teamDomain: string) {
   return set;
 }
 
-export const requireAccess = createMiddleware<{ Bindings: Bindings }>(async (c, next) => {
+export const requireAccess = createMiddleware<AppEnv>(async (c, next) => {
   const teamDomain = c.env.ACCESS_TEAM_DOMAIN;
   const aud = c.env.ACCESS_AUD;
   const admins = c.env.ADMIN_EMAILS;
@@ -85,6 +85,11 @@ export const requireAccess = createMiddleware<{ Bindings: Bindings }>(async (c, 
   if (!isAdmin(email, admins)) {
     return c.json({ error: "not an administrator" }, 403);
   }
+
+  // Left for the handlers past this point (see `Variables` in bindings.ts):
+  // the identity is already verified here, and a handler that re-derived it
+  // would either verify the token twice or trust a header nothing checked.
+  c.set("adminEmail", email);
 
   await next();
 });

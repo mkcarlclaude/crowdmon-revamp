@@ -1,9 +1,24 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import type { Bindings } from "./bindings";
+import type { AppEnv } from "./bindings";
 import { requireAccess } from "./middleware/access";
 import { nameSpanAfterRoute } from "./middleware/trace-route";
 import { openApiConfig } from "./openapi";
+import {
+  createClassHandler,
+  createClassRoute,
+  listClassesHandler,
+  listClassesRoute,
+  updateClassHandler,
+  updateClassRoute,
+} from "./routes/admin-classes";
+import {
+  createDryRunHandler,
+  createDryRunRoute,
+  listDryRunsHandler,
+  listDryRunsRoute,
+} from "./routes/admin-dryruns";
+import { getImageHandler, getImageRoute } from "./routes/admin-images";
 import { listJobsHandler, listJobsRoute } from "./routes/admin-jobs";
 import { adminLoginHandler, adminLoginRoute } from "./routes/admin-login";
 import { listActiveClassesHandler, listActiveClassesRoute } from "./routes/classes";
@@ -21,12 +36,19 @@ import {
   jobStatsRoute,
   listVideoImagesHandler,
   listVideoImagesRoute,
+  reportDryRunHandler,
+  reportDryRunRoute,
   reportImagesHandler,
   reportImagesRoute,
   reportPredictionsHandler,
   reportPredictionsRoute,
 } from "./routes/jobs";
-import { submitVideoHandler, submitVideoRoute } from "./routes/videos";
+import {
+  listVideosHandler,
+  listVideosRoute,
+  submitVideoHandler,
+  submitVideoRoute,
+} from "./routes/videos";
 
 /**
  * The routes, with no knowledge of how the Worker is bootstrapped.
@@ -40,7 +62,7 @@ import { submitVideoHandler, submitVideoRoute } from "./routes/videos";
  * behave exactly as before — the tracing middleware below still sees every
  * route, matched or not.
  */
-export const app = new OpenAPIHono<{ Bindings: Bindings }>({
+export const app = new OpenAPIHono<AppEnv>({
   // Without this, a validation failure returns zod's raw error payload, which
   // has its own shape — clients would need one parser for validation errors
   // and another for every other failure. Registered once on the app rather
@@ -101,6 +123,14 @@ app.openapi(reportPredictionsRoute, reportPredictionsHandler);
 app.openapi(listVideoImagesRoute, listVideoImagesHandler);
 app.openapi(jobStatsRoute, jobStatsHandler);
 app.openapi(listActiveClassesRoute, listActiveClassesHandler);
+app.openapi(listClassesRoute, listClassesHandler);
+app.openapi(createClassRoute, createClassHandler);
+app.openapi(updateClassRoute, updateClassHandler);
+app.openapi(listVideosRoute, listVideosHandler);
+app.openapi(createDryRunRoute, createDryRunHandler);
+app.openapi(listDryRunsRoute, listDryRunsHandler);
+app.openapi(getImageRoute, getImageHandler);
+app.openapi(reportDryRunRoute, reportDryRunHandler);
 
 // Serves the same document the build artifact contains, from the same config.
 // A deployed Worker that describes itself is worth one route: it answers "what

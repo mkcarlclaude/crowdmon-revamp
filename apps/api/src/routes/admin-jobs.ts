@@ -1,5 +1,5 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
-import type { Bindings } from "../bindings";
+import type { AppEnv } from "../bindings";
 import { errorResponse, JobList, JobListQuery } from "../schemas";
 
 export const listJobsRoute = createRoute({
@@ -27,7 +27,7 @@ export const listJobsRoute = createRoute({
 /** The shape D1 returns. Flat, because SQLite has no nested rows. */
 interface JobRow {
   id: number;
-  kind: "download" | "chunk";
+  kind: "download" | "chunk" | "prelabel" | "dryrun";
   video_id: string;
   video_url: string;
   status: "pending" | "claimed" | "done" | "failed";
@@ -45,9 +45,7 @@ interface JobRow {
 
 const DEFAULT_LIMIT = 50;
 
-export const listJobsHandler: RouteHandler<typeof listJobsRoute, { Bindings: Bindings }> = async (
-  c,
-) => {
+export const listJobsHandler: RouteHandler<typeof listJobsRoute, AppEnv> = async (c) => {
   const { status, limit } = c.req.valid("query");
 
   // One query with a JOIN and a LEFT JOIN rather than a jobs query followed by

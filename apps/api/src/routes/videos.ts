@@ -1,6 +1,12 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
-import type { Bindings } from "../bindings";
-import { errorResponse, SubmitVideoRequest, VideoSubmission } from "../schemas";
+import type { AppEnv } from "../bindings";
+import {
+  AdminVideoList,
+  errorResponse,
+  SubmitVideoRequest,
+  VIDEO_PICKER_LIMIT,
+  VideoSubmission,
+} from "../schemas";
 import { currentTraceparent } from "../tracing";
 import { youtubeVideoId } from "../youtube";
 
@@ -41,10 +47,7 @@ export const submitVideoRoute = createRoute({
   },
 });
 
-export const submitVideoHandler: RouteHandler<
-  typeof submitVideoRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const submitVideoHandler: RouteHandler<typeof submitVideoRoute, AppEnv> = async (c) => {
   const { url } = c.req.valid("json");
 
   const videoId = youtubeVideoId(url);
@@ -83,4 +86,51 @@ export const submitVideoHandler: RouteHandler<
   }
 
   return c.json({ video_id: videoId, job_id: job.id }, 201);
+};
+
+export const listVideosRoute = createRoute({
+  method: "get",
+  path: "/api/admin/videos",
+  operationId: "listVideos",
+  tags: ["admin"],
+  summary: "Submitted videos and how many frames each has",
+  description:
+    "What the dry-run form picks from (M12.2). `image_count` rather than a boolean, " +
+    "because a video still being extracted has some frames and will have more, and how " +
+    "many there are decides how meaningful a 50-frame sample off it is. Requires a " +
+    "Cloudflare Access assertion.",
+  responses: {
+    200: {
+      description: "Videos, newest first",
+      content: { "application/json": { schema: AdminVideoList } },
+    },
+    401: errorResponse("Missing or invalid Access assertion"),
+    403: errorResponse("A verified identity that is not an administrator"),
+    503: errorResponse("Admin access is not configured on this deployment"),
+  },
+});
+
+export const listVideosHandler: RouteHandler<typeof listVideosRoute, AppEnv> = async (c) => {
+  // A correlated subquery over the already-limited rows, not a `LEFT JOIN
+  // images ... GROUP BY`. The join form applies `LIMIT` after aggregating, so
+  // it scans every row in `images` — 2,685 for one v1 video, and growing per
+  // video — to produce fifty counts on a request the Admin page makes on every
+  // mount. This form counts within `idx_images_identity`'s leading column for
+  // fifty videos and touches nothing else.
+  //
+  // A count rather than an existence check, and NULL never appears: a video
+  // whose extraction has not started reads zero rather than dropping out of
+  // the list, because the dry-run form has to be able to say why it cannot be
+  // run against that video.
+  const { results } = await c.env.DB.prepare(
+    `SELECT v.id, v.title, v.created_at,
+            (SELECT COUNT(*) FROM images i WHERE i.video_id = v.id) AS image_count
+       FROM videos v
+      ORDER BY v.created_at DESC, v.id DESC
+      LIMIT ?`,
+  )
+    .bind(VIDEO_PICKER_LIMIT)
+    .all<{ id: string; title: string | null; created_at: number; image_count: number }>();
+
+  return c.json({ videos: results }, 200);
 };

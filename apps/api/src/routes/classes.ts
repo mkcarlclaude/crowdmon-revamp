@@ -1,5 +1,5 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
-import type { Bindings } from "../bindings";
+import type { AppEnv } from "../bindings";
 import { ActiveClasses } from "../schemas";
 
 /**
@@ -62,10 +62,9 @@ export const listActiveClassesRoute = createRoute({
   },
 });
 
-export const listActiveClassesHandler: RouteHandler<
-  typeof listActiveClassesRoute,
-  { Bindings: Bindings }
-> = async (c) => {
+export const listActiveClassesHandler: RouteHandler<typeof listActiveClassesRoute, AppEnv> = async (
+  c,
+) => {
   // Ordered by name rather than left at SQLite's default row order: the Go
   // worker's `boxesByClass` (worker/internal/worker/pipeline.go) already
   // sorts its own span attribute by name so two spans over the same active

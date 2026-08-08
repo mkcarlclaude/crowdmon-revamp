@@ -1,5 +1,5 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
-import type { Bindings } from "../bindings";
+import type { AppEnv } from "../bindings";
 import { errorResponse } from "../schemas";
 
 /**
@@ -46,9 +46,7 @@ export const adminLoginRoute = createRoute({
   },
 });
 
-export const adminLoginHandler: RouteHandler<typeof adminLoginRoute, { Bindings: Bindings }> = (
-  c,
-) =>
+export const adminLoginHandler: RouteHandler<typeof adminLoginRoute, AppEnv> = (c) =>
   // A fixed internal path, never a `redirect_url` parameter off the query
   // string. Honouring caller-supplied targets here would turn the one endpoint
   // guaranteed to be reached with a freshly minted session into an open

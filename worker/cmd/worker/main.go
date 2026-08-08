@@ -197,10 +197,19 @@ func run(ctx context.Context) error {
 		Detector:    detector,
 		Predictions: jobs,
 		Prompts:     jobs,
-		Extraction:  frames.Config{DedupThreshold: cfg.DedupThreshold},
-		Metrics:     metrics,
-		Logger:      logger,
-		WorkerID:    cfg.WorkerID,
+		// M12.2's dry-run branch. The same sampler value, through its bounded
+		// method: a dry-run's budget arrives on the job (the API stamped it on
+		// `dryruns.sample_size`) rather than coming from this process's
+		// configuration, so `Budget` here is only the fallback SampleN uses if
+		// a job ever arrives asking for none. The detector is shared
+		// unchanged — M11.2's interface takes the prompts as an argument,
+		// which is exactly what makes running a candidate one free.
+		DryRunSampler: sample.Sampler{Images: jobs, Budget: cfg.PrelabelSampleSize},
+		DryRuns:       jobs,
+		Extraction:    frames.Config{DedupThreshold: cfg.DedupThreshold},
+		Metrics:       metrics,
+		Logger:        logger,
+		WorkerID:      cfg.WorkerID,
 	}
 
 	runner := worker.Runner{
@@ -225,17 +234,19 @@ func run(ctx context.Context) error {
 }
 
 // queueDepthCounts adapts queue.Client.Stats to the shape
-// telemetry.NewQueueDepthGauge's callback wants: twelve fixed (status, kind)
+// telemetry.NewQueueDepthGauge's callback wants: sixteen fixed (status, kind)
 // points, always present. jobs.Stats already zero-fills every combination —
 // the API does that once, on the D1 side, rather than leaving each caller to
 // reinvent it (apps/api/src/schemas.ts's JobStats comment) — so this
 // function's only job is renaming that fixed struct into the flat slice
 // telemetry stays decoupled from queue's types by asking for.
 //
-// Twelve, not the eight this comment used to say: `prelabel` is a third kind
-// as of M11.1, and queue.StatusCounts grew a Prelabel field for it at the
-// same time — but that field sat unread here until M11.4, decoded off the
-// wire and then silently dropped on the way into this slice. The zero-fill
+// Sixteen, not the eight this comment used to say: `prelabel` is a third kind
+// as of M11.1 and `dryrun` a fourth as of M12.2, and queue.StatusCounts grew a
+// field for each — but the Prelabel one sat unread here until M11.4, decoded
+// off the wire and then silently dropped on the way into this slice. The
+// dryrun rows below landed with the kind rather than a milestone after it,
+// which is the whole lesson of that gap. The zero-fill
 // promise apps/api/src/schemas.ts and jobs.Stats both make ends exactly at
 // this function's door if the door does not open for the third kind too: a
 // drained prelabel queue and a worker that has never reported it look
@@ -252,15 +263,19 @@ func queueDepthCounts(jobs *queue.Client) telemetry.QueueDepthFetcher {
 			{Status: "pending", Kind: "download", Count: int64(stats.Pending.Download)},
 			{Status: "pending", Kind: "chunk", Count: int64(stats.Pending.Chunk)},
 			{Status: "pending", Kind: "prelabel", Count: int64(stats.Pending.Prelabel)},
+			{Status: "pending", Kind: "dryrun", Count: int64(stats.Pending.Dryrun)},
 			{Status: "claimed", Kind: "download", Count: int64(stats.Claimed.Download)},
 			{Status: "claimed", Kind: "chunk", Count: int64(stats.Claimed.Chunk)},
 			{Status: "claimed", Kind: "prelabel", Count: int64(stats.Claimed.Prelabel)},
+			{Status: "claimed", Kind: "dryrun", Count: int64(stats.Claimed.Dryrun)},
 			{Status: "done", Kind: "download", Count: int64(stats.Done.Download)},
 			{Status: "done", Kind: "chunk", Count: int64(stats.Done.Chunk)},
 			{Status: "done", Kind: "prelabel", Count: int64(stats.Done.Prelabel)},
+			{Status: "done", Kind: "dryrun", Count: int64(stats.Done.Dryrun)},
 			{Status: "failed", Kind: "download", Count: int64(stats.Failed.Download)},
 			{Status: "failed", Kind: "chunk", Count: int64(stats.Failed.Chunk)},
 			{Status: "failed", Kind: "prelabel", Count: int64(stats.Failed.Prelabel)},
+			{Status: "failed", Kind: "dryrun", Count: int64(stats.Failed.Dryrun)},
 		}, nil
 	}
 }

@@ -1,6 +1,6 @@
 import { trace } from "@opentelemetry/api";
 import { createMiddleware } from "hono/factory";
-import type { Bindings } from "../bindings";
+import type { AppEnv } from "../bindings";
 
 /**
  * Names the request span after the route that actually matched.
@@ -15,7 +15,7 @@ import type { Bindings } from "../bindings";
  * routing has run. The span is still open at that point — it is closed by the
  * instrumentation wrapper outside this middleware.
  */
-export const nameSpanAfterRoute = createMiddleware<{ Bindings: Bindings }>(async (c, next) => {
+export const nameSpanAfterRoute = createMiddleware<AppEnv>(async (c, next) => {
   await next();
 
   const span = trace.getActiveSpan();
