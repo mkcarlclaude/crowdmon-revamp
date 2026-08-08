@@ -1,0 +1,11 @@
+# Builder-stage only (Dockerfile). torch and onnx never reach the runtime
+# image — see README.md's "Why torch never reaches the runtime image."
+#
+# Installed against PyTorch's own CPU wheel index (Dockerfile's --index-url),
+# not PyPI's default: PyPI's plain `torch` wheel bundles CUDA, which on this
+# box's Maxwell GPU is dead weight the CPU-only decision (README.md,
+# CONTEXT.md §12) has no use for and which would roughly triple this stage's
+# download and layer size for nothing this image ever runs.
+torch==2.13.0
+transformers==5.14.1
+onnx==1.22.0

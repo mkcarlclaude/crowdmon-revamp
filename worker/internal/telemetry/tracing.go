@@ -113,10 +113,52 @@ func setupTracing(ctx context.Context, res *resource.Resource, cfg config.Config
 		sdktrace.WithResource(res),
 		// Batched, not synchronous: a job's spans must not pay a network round
 		// trip each, and the worker is long-lived enough for a batcher to be
-		// the obvious shape. Sampling stays at the default of "record
-		// everything" — CONTEXT.md §9.4 leaves the sampling posture open, and
-		// this worker's span volume is a few per job.
+		// the obvious shape.
 		sdktrace.WithBatcher(exporter),
+		// CONTEXT.md §9.4's decision, made concrete: sdktrace.AlwaysSample(),
+		// spelled out rather than left as the SDK default it happens to equal
+		// today. Two things had to be true before this could be a decision
+		// instead of an accident, and M11.4 is what made both true —
+		// sample.select, image.detect and predictions.report are the first
+		// spans in this worker whose whole value is being rare (one prelabel
+		// job per video, M11.3's budget bounding image.detect to a couple
+		// hundred per job) and specific (the box counts, the model id, the
+		// class breakdown a promotion decision gets reviewed against). A
+		// ratio sampler set globally would thin those exactly as hard as it
+		// thins job.claimed or video.probe, and there is no volume problem on
+		// this worker to justify thinning anything yet — CONTEXT.md §Q20 sizes
+		// this worker's entire request budget in the hundreds to low
+		// thousands per day, nowhere near Tempo's 7-day retention window
+		// becoming a real constraint on a box shared with unrelated projects
+		// (CONTEXT.md §2).
+		//
+		// Plain AlwaysSample, not ParentBased(AlwaysSample()) — the SDK's own
+		// default, and the one this replaces. The difference only shows up on
+		// a span with a remote parent, which for this process means exactly
+		// one thing: withStoredTraceContext (pipeline.go) adopting a
+		// traceparent this worker did not mint, stored on the job row by
+		// whichever apps/api request created it. ParentBased would inherit
+		// that parent's sampled flag — a decision some other process made,
+		// for reasons that have nothing to do with what this worker is about
+		// to do with the job — and a false there would silently drop
+		// job.prelabel and everything under it. Flywheel spans are exactly
+		// the data this milestone exists to keep; deferring to a flag this
+		// worker does not control is how they would go missing without
+		// anyone here deciding that.
+		//
+		// The threshold for revisiting: this stops being viable the moment
+		// job throughput (submissions, not the sample budget inside one
+		// prelabel job) is high enough that Tempo ingest volume becomes a
+		// real cost on that shared box, or the day a genuinely high-rate,
+		// low-value span category is added here — a client span per outbound
+		// HTTP call, say, which queue.go's tracingTransport deliberately does
+		// not add today precisely because nothing here produces that
+		// category yet (see its own comment). If that day comes, the fix is
+		// a Sampler that inspects the span name — always-sample anything
+		// under job.prelabel's tree, ratio-sample the rest — not a single
+		// TraceIdRatioBased applied uniformly, which is the mistake this
+		// comment exists to head off.
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 	)
 	otel.SetTracerProvider(provider)
 

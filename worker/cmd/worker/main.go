@@ -18,8 +18,10 @@ import (
 	"time"
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/detect"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/frames"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/sample"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/telemetry"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/video"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/worker"
@@ -81,6 +83,10 @@ func run(ctx context.Context) error {
 		"logs_export", cfg.LogsEnabled(),
 		"metrics_export", cfg.MetricsEnabled(),
 		"r2_bucket", cfg.R2Bucket,
+		// True here only means the sidecar is configured, not yet reachable —
+		// the "pre-labelling configured" log a few lines below carries the
+		// model id once detect.New has actually confirmed that.
+		"detector_configured", cfg.DetectorEnabled(),
 		// The effective threshold, resolved through frames.Config rather than
 		// logged as the raw config value: a worker that left it unset would
 		// otherwise report "0", which is not the number it will deduplicate at.
@@ -108,6 +114,30 @@ func run(ctx context.Context) error {
 	s3Client, err := frames.NewClient(ctx, cfg.R2AccountID, cfg.R2AccessKeyID, cfg.R2SecretAccessKey)
 	if err != nil {
 		return err
+	}
+
+	// Nil when CROWDMON_DETECTOR_BASE_URL is unset, which the pipeline already
+	// treats as "pre-labelling is not configured" rather than a crash
+	// (pipeline.go's prelabel branch) — the same shape metrics has just above.
+	// That is the only path a nil Detector may take: config that is *present*
+	// but points at a sidecar detect.New could never reach gets returned as a
+	// startup error instead, below, for the same reason UploadsEnabled()
+	// fails closed rather than silently skipping R2 — a worker that thinks it
+	// can pre-label and cannot would burn every prelabel job's attempt
+	// ceiling one flaky poll at a time instead of failing once, loudly, at
+	// the one moment an operator is watching this container come up.
+	var detector worker.Detector
+	if cfg.DetectorEnabled() {
+		detectorClient, err := detect.New(ctx, cfg.DetectorBaseURL)
+		if err != nil {
+			return fmt.Errorf(
+				"CROWDMON_DETECTOR_BASE_URL is set to %s but the sidecar never answered: %w",
+				cfg.DetectorBaseURL, err)
+		}
+		detector = detectorClient
+
+		logger.InfoContext(ctx, "pre-labelling configured",
+			"detector_base_url", cfg.DetectorBaseURL, "model_id", detectorClient.ModelID())
 	}
 
 	// Nil when no metrics endpoint is configured, which the pipeline treats as
@@ -145,13 +175,32 @@ func run(ctx context.Context) error {
 		Extractor:  frames.Extractor{},
 		Deduper:    frames.Deduper{},
 		Uploader:   frames.Uploader{Client: s3Client, Bucket: cfg.R2Bucket},
-		// The same client as Queue. Two fields because they belong to the two
-		// job kinds, not because there are two connections.
-		Images:     jobs,
-		Extraction: frames.Config{DedupThreshold: cfg.DedupThreshold},
-		Metrics:    metrics,
-		Logger:     logger,
-		WorkerID:   cfg.WorkerID,
+		// The same client as Queue. Separate fields because they belong to
+		// different job kinds, not because there are multiple connections —
+		// Images serves chunk jobs and the prelabel sampler's candidate-pool
+		// read, Predictions serves prelabel reports, and *queue.Client
+		// satisfies all of them.
+		Images: jobs,
+		// The four prelabel dependencies, now all present: M11.3's sampler,
+		// M11.2's detector, the prediction reporter, and — as of M11.5 — the
+		// prompt source. Detector is nil exactly when
+		// CROWDMON_DETECTOR_BASE_URL is unset (above), and pipeline.go treats
+		// that as a retryable misconfiguration rather than a crash — a worker
+		// without a detector still runs download and chunk jobs unchanged.
+		// Prompts is the same *queue.Client as Queue, Images and Predictions:
+		// worker.PromptSource's ActiveClasses fetches migration 0003's
+		// `classes` table straight from D1 rather than any copy this binary
+		// would otherwise have to carry — see that interface's own comment
+		// for why a worker-side copy of the wording is the drift this
+		// milestone closes rather than leaves for M12.
+		Sampler:     sample.Sampler{Images: jobs, Budget: cfg.PrelabelSampleSize},
+		Detector:    detector,
+		Predictions: jobs,
+		Prompts:     jobs,
+		Extraction:  frames.Config{DedupThreshold: cfg.DedupThreshold},
+		Metrics:     metrics,
+		Logger:      logger,
+		WorkerID:    cfg.WorkerID,
 	}
 
 	runner := worker.Runner{
@@ -176,12 +225,22 @@ func run(ctx context.Context) error {
 }
 
 // queueDepthCounts adapts queue.Client.Stats to the shape
-// telemetry.NewQueueDepthGauge's callback wants: eight fixed (status, kind)
+// telemetry.NewQueueDepthGauge's callback wants: twelve fixed (status, kind)
 // points, always present. jobs.Stats already zero-fills every combination —
 // the API does that once, on the D1 side, rather than leaving each caller to
 // reinvent it (apps/api/src/schemas.ts's JobStats comment) — so this
 // function's only job is renaming that fixed struct into the flat slice
 // telemetry stays decoupled from queue's types by asking for.
+//
+// Twelve, not the eight this comment used to say: `prelabel` is a third kind
+// as of M11.1, and queue.StatusCounts grew a Prelabel field for it at the
+// same time — but that field sat unread here until M11.4, decoded off the
+// wire and then silently dropped on the way into this slice. The zero-fill
+// promise apps/api/src/schemas.ts and jobs.Stats both make ends exactly at
+// this function's door if the door does not open for the third kind too: a
+// drained prelabel queue and a worker that has never reported it look
+// identical in Prometheus, which is the one failure NewQueueDepthGauge's own
+// doc comment says this metric exists to rule out.
 func queueDepthCounts(jobs *queue.Client) telemetry.QueueDepthFetcher {
 	return func(ctx context.Context) ([]telemetry.QueueCount, error) {
 		stats, err := jobs.Stats(ctx)
@@ -192,12 +251,16 @@ func queueDepthCounts(jobs *queue.Client) telemetry.QueueDepthFetcher {
 		return []telemetry.QueueCount{
 			{Status: "pending", Kind: "download", Count: int64(stats.Pending.Download)},
 			{Status: "pending", Kind: "chunk", Count: int64(stats.Pending.Chunk)},
+			{Status: "pending", Kind: "prelabel", Count: int64(stats.Pending.Prelabel)},
 			{Status: "claimed", Kind: "download", Count: int64(stats.Claimed.Download)},
 			{Status: "claimed", Kind: "chunk", Count: int64(stats.Claimed.Chunk)},
+			{Status: "claimed", Kind: "prelabel", Count: int64(stats.Claimed.Prelabel)},
 			{Status: "done", Kind: "download", Count: int64(stats.Done.Download)},
 			{Status: "done", Kind: "chunk", Count: int64(stats.Done.Chunk)},
+			{Status: "done", Kind: "prelabel", Count: int64(stats.Done.Prelabel)},
 			{Status: "failed", Kind: "download", Count: int64(stats.Failed.Download)},
 			{Status: "failed", Kind: "chunk", Count: int64(stats.Failed.Chunk)},
+			{Status: "failed", Kind: "prelabel", Count: int64(stats.Failed.Prelabel)},
 		}, nil
 	}
 }

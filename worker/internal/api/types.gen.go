@@ -68,6 +68,7 @@ func (e HealthResponseStatus) Valid() bool {
 const (
 	Chunk    JobKind = "chunk"
 	Download JobKind = "download"
+	Prelabel JobKind = "prelabel"
 )
 
 // Valid indicates whether the value is a known member of the JobKind enum.
@@ -76,6 +77,8 @@ func (e JobKind) Valid() bool {
 	case Chunk:
 		return true
 	case Download:
+		return true
+	case Prelabel:
 		return true
 	default:
 		return false
@@ -104,6 +107,11 @@ func (e JobStatus) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// ActiveClasses defines model for ActiveClasses.
+type ActiveClasses struct {
+	Classes []PrelabelClass `json:"classes"`
 }
 
 // AdminChunkWork defines model for AdminChunkWork.
@@ -315,6 +323,9 @@ type JobStatusCounts struct {
 
 	// Download Example: 1
 	Download int `json:"download"`
+
+	// Prelabel Example: 1
+	Prelabel int `json:"prelabel"`
 }
 
 // PredictionBox defines model for PredictionBox.
@@ -353,6 +364,18 @@ type PredictionReport struct {
 	VideoId string `json:"video_id"`
 }
 
+// PrelabelClass defines model for PrelabelClass.
+type PrelabelClass struct {
+	// AppearancePrompt Example: a small white-haired floating fairy companion with a dark crown and a white cape
+	AppearancePrompt string `json:"appearance_prompt"`
+
+	// Name Example: Paimon
+	Name string `json:"name"`
+
+	// PromptVersion Example: 2026-08-08-a
+	PromptVersion string `json:"prompt_version"`
+}
+
 // ReportImagesRequest defines model for ReportImagesRequest.
 type ReportImagesRequest struct {
 	// ConfigVersion Example: 2026-08-01-a
@@ -375,8 +398,9 @@ type ReportImagesRequest struct {
 // ReportPredictionsRequest defines model for ReportPredictionsRequest.
 type ReportPredictionsRequest struct {
 	// ModelId Example: owlvit-base-patch32.onnx
-	ModelId     string          `json:"model_id"`
-	Predictions []PredictionBox `json:"predictions"`
+	ModelId       string          `json:"model_id"`
+	Predictions   []PredictionBox `json:"predictions"`
+	SampledImages []string        `json:"sampled_images"`
 
 	// WorkerId Example: carls-ubuntu-1
 	WorkerId string `json:"worker_id"`
@@ -397,6 +421,23 @@ type ValidationIssue struct {
 	Path string `json:"path"`
 }
 
+// VideoImage defines model for VideoImage.
+type VideoImage struct {
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// TimestampSeconds Example: 42
+	TimestampSeconds float32 `json:"timestamp_seconds"`
+}
+
+// VideoImages defines model for VideoImages.
+type VideoImages struct {
+	Images []VideoImage `json:"images"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
 // VideoSubmission defines model for VideoSubmission.
 type VideoSubmission struct {
 	// JobId Example: 1
@@ -410,6 +451,11 @@ type VideoSubmission struct {
 type ListJobsParams struct {
 	Status *JobStatus `form:"status,omitempty" json:"status,omitempty"`
 	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListVideoImagesParams defines parameters for ListVideoImages.
+type ListVideoImagesParams struct {
+	WorkerId string `form:"worker_id" json:"worker_id"`
 }
 
 // SubmitVideoJSONRequestBody defines body for SubmitVideo for application/json ContentType.
@@ -539,6 +585,13 @@ type ClientInterface interface {
 	// Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 	SubmitVideo(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListActiveClasses The classes a prelabel job's detector currently runs against
+	//
+	// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
+	//
+	// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
+	ListActiveClasses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ClaimJobWithBody Claim the next pending job
 	//
 	// Atomic: the claim is a single `UPDATE ... WHERE status='pending' ... RETURNING`, so two workers polling at once cannot take the same row.
@@ -650,6 +703,13 @@ type ClientInterface interface {
 	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
 	ReportPredictions(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListVideoImages The candidate pool a prelabel job's sampler draws from
+	//
+	// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
+	//
+	// Corresponds with GET /api/videos/{video_id}/images (the `ListVideoImages` operationId).
+	ListVideoImages(ctx context.Context, videoId string, params *ListVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetHealth Liveness and deployment identity
 	//
 	// Corresponds with GET /health (the `GetHealth` operationId).
@@ -718,6 +778,23 @@ func (c *Client) SubmitVideoWithBody(ctx context.Context, contentType string, bo
 // Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 func (c *Client) SubmitVideo(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSubmitVideoRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListActiveClasses The classes a prelabel job's detector currently runs against
+//
+// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
+//
+// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
+func (c *Client) ListActiveClasses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListActiveClassesRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -969,6 +1046,23 @@ func (c *Client) ReportPredictions(ctx context.Context, id int, body ReportPredi
 	return c.Client.Do(req)
 }
 
+// ListVideoImages The candidate pool a prelabel job's sampler draws from
+//
+// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
+//
+// Corresponds with GET /api/videos/{video_id}/images (the `ListVideoImages` operationId).
+func (c *Client) ListVideoImages(ctx context.Context, videoId string, params *ListVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVideoImagesRequest(c.Server, videoId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetHealth Liveness and deployment identity
 //
 // Corresponds with GET /health (the `GetHealth` operationId).
@@ -1113,6 +1207,33 @@ func NewSubmitVideoRequestWithBody(server string, contentType string, body io.Re
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListActiveClassesRequest constructs an http.Request for the ListActiveClasses method
+func NewListActiveClassesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/classes/active")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1419,6 +1540,63 @@ func NewReportPredictionsRequestWithBody(server string, id int, contentType stri
 	return req, nil
 }
 
+// NewListVideoImagesRequest constructs an http.Request for the ListVideoImages method
+func NewListVideoImagesRequest(server string, videoId string, params *ListVideoImagesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "video_id", videoId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/videos/%s/images", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "worker_id", params.WorkerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -1525,6 +1703,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 	SubmitVideoWithResponse(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitVideoResponse, error)
+
+	// ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
+	//
+	// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
+	ListActiveClassesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListActiveClassesResponse, error)
 
 	// ClaimJobWithBodyWithResponse Claim the next pending job
 	//
@@ -1638,6 +1825,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
 	ReportPredictionsWithResponse(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportPredictionsResponse, error)
+
+	// ListVideoImagesWithResponse The candidate pool a prelabel job's sampler draws from
+	//
+	// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/videos/{video_id}/images (the `ListVideoImages` operationId).
+	ListVideoImagesWithResponse(ctx context.Context, videoId string, params *ListVideoImagesParams, reqEditors ...RequestEditorFn) (*ListVideoImagesResponse, error)
 
 	// GetHealthWithResponse Liveness and deployment identity
 	//
@@ -1848,6 +2044,47 @@ func (r SubmitVideoResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SubmitVideoResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListActiveClassesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ActiveClasses
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListActiveClassesResponse) GetJSON200() *ActiveClasses {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListActiveClassesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListActiveClassesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListActiveClassesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListActiveClassesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2204,6 +2441,61 @@ func (r ReportPredictionsResponse) ContentType() string {
 	return ""
 }
 
+type ListVideoImagesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VideoImages
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListVideoImagesResponse) GetJSON200() *VideoImages {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListVideoImagesResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListVideoImagesResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ListVideoImagesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListVideoImagesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListVideoImagesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListVideoImagesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2303,6 +2595,21 @@ func (c *ClientWithResponses) SubmitVideoWithResponse(ctx context.Context, body 
 		return nil, err
 	}
 	return ParseSubmitVideoResponse(rsp)
+}
+
+// ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
+//
+// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
+func (c *ClientWithResponses) ListActiveClassesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListActiveClassesResponse, error) {
+	rsp, err := c.ListActiveClasses(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListActiveClassesResponse(rsp)
 }
 
 // ClaimJobWithBodyWithResponse Claim the next pending job
@@ -2496,6 +2803,21 @@ func (c *ClientWithResponses) ReportPredictionsWithResponse(ctx context.Context,
 	return ParseReportPredictionsResponse(rsp)
 }
 
+// ListVideoImagesWithResponse The candidate pool a prelabel job's sampler draws from
+//
+// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/videos/{video_id}/images (the `ListVideoImages` operationId).
+func (c *ClientWithResponses) ListVideoImagesWithResponse(ctx context.Context, videoId string, params *ListVideoImagesParams, reqEditors ...RequestEditorFn) (*ListVideoImagesResponse, error) {
+	rsp, err := c.ListVideoImages(ctx, videoId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVideoImagesResponse(rsp)
+}
+
 // GetHealthWithResponse Liveness and deployment identity
 //
 // Returns a wrapper object for the known response body format(s).
@@ -2674,6 +2996,32 @@ func ParseSubmitVideoResponse(rsp *http.Response) (*SubmitVideoResponse, error) 
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListActiveClassesResponse parses an HTTP response from a ListActiveClassesWithResponse call
+func ParseListActiveClassesResponse(rsp *http.Response) (*ListActiveClassesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListActiveClassesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ActiveClasses
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
@@ -2910,6 +3258,46 @@ func ParseReportPredictionsResponse(rsp *http.Response) (*ReportPredictionsRespo
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PredictionReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListVideoImagesResponse parses an HTTP response from a ListVideoImagesWithResponse call
+func ParseListVideoImagesResponse(rsp *http.Response) (*ListVideoImagesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListVideoImagesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VideoImages
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

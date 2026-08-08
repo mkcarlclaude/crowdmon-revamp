@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { app } from "../../src/app";
-import { MAX_PREDICTIONS_PER_JOB } from "../../src/schemas";
+import { MAX_PREDICTIONS_PER_JOB, MAX_SAMPLED_IMAGES_PER_JOB } from "../../src/schemas";
 import { seedVideo } from "./seed";
 
 /**
@@ -9,22 +9,21 @@ import { seedVideo } from "./seed";
  * detector's boxes to, in the shape `/api/jobs/{id}/images` established for
  * chunk workers — one call per job, not one per box.
  *
- * `predictions` has no submit endpoint of its own to seed through — the
- * `prelabel` job kind this endpoint exists for does not land until M11.1
- * (see `reportPredictionsHandler`'s own comment on why there is no job-kind
- * check yet) — so a claimed `download` job stands in as "a lease this worker
- * holds" throughout, the least amount of seeding that still proves the lease
- * check.
+ * `predictions` has no submit endpoint of its own to seed through — nothing
+ * enqueues a `prelabel` job on its own timeline the way `submitVideo` does
+ * for a download — so every test here writes a claimed `prelabel` job by
+ * hand, the same way `seed.ts`'s `seedClaimedJob` stands in for a claim
+ * nothing here calls.
  */
 
-/** A job already held by `workerId`, needing no `chunks` row (unlike `reportImages`'s target). */
+/** A prelabel job already held by `workerId`, needing no `chunks` row (unlike `reportImages`'s target). */
 async function seedHeldJob(videoId: string, workerId = "w1"): Promise<number> {
   await seedVideo(videoId);
   const at = Math.floor(Date.now() / 1000);
 
   const row = await env.DB.prepare(
     `INSERT INTO jobs (kind, video_id, status, attempts, claimed_by, claimed_at, heartbeat_at)
-          VALUES ('download', ?, 'claimed', 1, ?, ?, ?)
+          VALUES ('prelabel', ?, 'claimed', 1, ?, ?, ?)
        RETURNING id`,
   )
     .bind(videoId, workerId, at, at)
@@ -86,6 +85,11 @@ const reported = (overrides: Record<string, unknown> = {}) => ({
   worker_id: "w1",
   model_id: "owlvit-base-patch32.onnx",
   predictions: [box()],
+  // Empty by default: every test above M11.3 exercises `predictions` and has
+  // no opinion on sampling, and a non-empty default here would have to name a
+  // real, seeded r2_key or turn every one of them into an "unknown r2_key"
+  // 400 the moment the unified lookup below starts validating this array too.
+  sampled_images: [] as string[],
   ...overrides,
 });
 
@@ -207,6 +211,34 @@ describe("POST /api/jobs/{id}/predictions", () => {
     expect(count?.n).toBe(0);
   });
 
+  it("rejects reporting predictions against a non-prelabel job, and writes nothing", async () => {
+    // M11.1 (migration 0005): before `prelabel` existed there was nothing to
+    // check a job's kind against here, and any held lease qualified. A
+    // download job's lease must not double as permission to write prediction
+    // rows now that there is a real kind to hold it to.
+    await seedVideo("kkkkkkkkkkk");
+    const at = Math.floor(Date.now() / 1000);
+    const row = await env.DB.prepare(
+      `INSERT INTO jobs (kind, video_id, status, attempts, claimed_by, claimed_at, heartbeat_at)
+            VALUES ('download', ?, 'claimed', 1, 'w1', ?, ?)
+         RETURNING id`,
+    )
+      .bind("kkkkkkkkkkk", at, at)
+      .first<{ id: number }>();
+    await seedClass("Paimon");
+
+    const res = await reportPredictions(row?.id ?? 0, reported());
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/only a prelabel job/);
+
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM predictions").first<{
+      n: number;
+    }>();
+    expect(count?.n).toBe(0);
+  });
+
   it("rejects an r2_key that does not exist, and writes nothing", async () => {
     const jobId = await seedHeldJob("ddddddddddd");
     await seedClass("Paimon");
@@ -313,5 +345,141 @@ describe("POST /api/jobs/{id}/predictions", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { issues?: { path: string }[] };
     expect(body.issues?.map((i) => i.path)).toEqual(["predictions.0.y_max"]);
+  });
+});
+
+/**
+ * The selection stamp (M11.3): `images.selection_reason` gets written here,
+ * in the same batch as the boxes, for every r2_key the sampler drew — not
+ * only the ones that ended up with a prediction. See `reportPredictionsHandler`'s
+ * own comment for why the stamp lands with the report rather than at the
+ * moment `Sample` drew the frames.
+ */
+describe("POST /api/jobs/{id}/predictions — the sample's selection stamp", () => {
+  function selectionReason(videoId: string) {
+    return env.DB.prepare(
+      "SELECT r2_key, selection_reason FROM images WHERE video_id = ? ORDER BY timestamp_seconds",
+    )
+      .bind(videoId)
+      .all<{ r2_key: string; selection_reason: string | null }>();
+  }
+
+  it("stamps every sampled r2_key as 'random', alongside the boxes it produced", async () => {
+    const jobId = await seedHeldJob("lllllllllll");
+    await seedImage("lllllllllll", "lllllllllll/0000000.jpg", 1);
+    await seedImage("lllllllllll", "lllllllllll/0000001.jpg", 2);
+    await seedClass("Paimon");
+
+    const res = await reportPredictions(
+      jobId,
+      reported({
+        predictions: [box({ r2_key: "lllllllllll/0000000.jpg" })],
+        sampled_images: ["lllllllllll/0000000.jpg", "lllllllllll/0000001.jpg"],
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const { results } = await selectionReason("lllllllllll");
+    expect(results).toEqual([
+      { r2_key: "lllllllllll/0000000.jpg", selection_reason: "random" },
+      { r2_key: "lllllllllll/0000001.jpg", selection_reason: "random" },
+    ]);
+  });
+
+  it("stamps the sample even when the detector found nothing on any of it", async () => {
+    // A real, common M11.3 outcome: the whole sample came back with zero
+    // boxes. `predictions` is empty, but the frames were still looked at, and
+    // `selection_reason` records that regardless of what the detector saw.
+    const jobId = await seedHeldJob("mmmmmmmmmmm");
+    await seedImage("mmmmmmmmmmm", "mmmmmmmmmmm/0000000.jpg", 1);
+
+    const res = await reportPredictions(
+      jobId,
+      reported({ predictions: [], sampled_images: ["mmmmmmmmmmm/0000000.jpg"] }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ video_id: "mmmmmmmmmmm", predictions: 0 });
+    const { results } = await selectionReason("mmmmmmmmmmm");
+    expect(results).toEqual([{ r2_key: "mmmmmmmmmmm/0000000.jpg", selection_reason: "random" }]);
+  });
+
+  it("leaves an unsampled row's selection_reason untouched", async () => {
+    // M11.3's own requirement: frames the budget did not draw keep their rows
+    // and objects, available to a later pass — which this column's NULL
+    // default is what "available" looks like in the data.
+    const jobId = await seedHeldJob("nnnnnnnnnnn");
+    await seedImage("nnnnnnnnnnn", "nnnnnnnnnnn/0000000.jpg", 1);
+    await seedImage("nnnnnnnnnnn", "nnnnnnnnnnn/0000001.jpg", 2);
+
+    await reportPredictions(
+      jobId,
+      reported({ predictions: [], sampled_images: ["nnnnnnnnnnn/0000000.jpg"] }),
+    );
+
+    const { results } = await selectionReason("nnnnnnnnnnn");
+    expect(results).toEqual([
+      { r2_key: "nnnnnnnnnnn/0000000.jpg", selection_reason: "random" },
+      { r2_key: "nnnnnnnnnnn/0000001.jpg", selection_reason: null },
+    ]);
+  });
+
+  it("stamps a sample naming more distinct keys than one query may bind", async () => {
+    // The same D1_MAX_BOUND_PARAMS boundary the predictions lookup is tested
+    // against above, exercised here for the stamp's own chunked UPDATE.
+    // M11.3's 200-image default sample sits past this on its own.
+    const jobId = await seedHeldJob("ooooooooooo");
+    const keys = Array.from(
+      { length: 150 },
+      (_, i) => `ooooooooooo/${String(i).padStart(7, "0")}.jpg`,
+    );
+    for (const [i, key] of keys.entries()) await seedImage("ooooooooooo", key, i + 1);
+
+    const res = await reportPredictions(jobId, reported({ predictions: [], sampled_images: keys }));
+
+    expect(res.status).toBe(200);
+    const { results } = await selectionReason("ooooooooooo");
+    expect(results.every((row) => row.selection_reason === "random")).toBe(true);
+    expect(results).toHaveLength(150);
+  });
+
+  it("rejects an unknown r2_key in sampled_images, and writes nothing", async () => {
+    const jobId = await seedHeldJob("ppppppppppp");
+    await seedClass("Paimon");
+
+    const res = await reportPredictions(
+      jobId,
+      reported({
+        predictions: [box({ r2_key: "ppppppppppp/does-exist.jpg" })],
+        sampled_images: ["ppppppppppp/does-exist.jpg", "ppppppppppp/does-not-exist.jpg"],
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/unknown r2_key/);
+    expect(body.error).toMatch(/does-not-exist\.jpg/);
+
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM predictions").first<{
+      n: number;
+    }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("rejects a sampled_images array past its bound, naming the limit", async () => {
+    const jobId = await seedHeldJob("qqqqqqqqqqq");
+    const tooMany = Array.from(
+      { length: MAX_SAMPLED_IMAGES_PER_JOB + 1 },
+      (_, i) => `qqqqqqqqqqq/${i}.jpg`,
+    );
+
+    const res = await reportPredictions(
+      jobId,
+      reported({ predictions: [], sampled_images: tooMany }),
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { issues?: { path: string }[] };
+    expect(body.issues?.map((i) => i.path)).toEqual(["sampled_images"]);
   });
 });

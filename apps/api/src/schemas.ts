@@ -80,8 +80,8 @@ export const VideoSubmission = z
   })
   .openapi("VideoSubmission");
 
-/** Mirrors the `kind` CHECK constraint in migration 0001. */
-export const JobKind = z.enum(["download", "chunk"]).openapi("JobKind");
+/** Mirrors the `kind` CHECK constraint, widened by migration 0005 (M11.1). */
+export const JobKind = z.enum(["download", "chunk", "prelabel"]).openapi("JobKind");
 
 /**
  * Identifies the caller holding a lease.
@@ -387,6 +387,12 @@ const JobStatusCounts = z
   .object({
     download: z.int().nonnegative().openapi({ example: 1 }),
     chunk: z.int().nonnegative().openapi({ example: 14 }),
+    // M11.1: the third job kind. Added here rather than left for the queue
+    // gauge to infer, for the same reason the other two are named fields and
+    // not an open map — the Go worker's generated struct has to have a field
+    // to read a prelabel count off, not just whatever keys happened to come
+    // back.
+    prelabel: z.int().nonnegative().openapi({ example: 1 }),
   })
   .openapi("JobStatusCounts");
 
@@ -399,16 +405,17 @@ const JobStatusCounts = z
  * (worker/internal/telemetry/metrics.go) — this endpoint exists for that
  * poll and has no other caller.
  *
- * Fixed shape — eight named fields, four statuses times two kinds — rather
- * than the array of rows `SELECT status, kind, COUNT(*) ... GROUP BY status,
- * kind` naturally produces. That query returns only combinations with at
- * least one row, so a drained `pending` bucket is *absent* from the result
- * set, not present at zero. Handing that straight to the Go worker would
- * make an empty queue and a worker that stopped reporting look identical in
- * Prometheus — the one distinction the dashboard's queue-depth panel exists
- * to show. The zero-fill happens here, in the one place that already knows
- * all eight combinations exist, so the gauge callback on the other end of
- * the wire never has to guess which ones it did not hear about.
+ * Fixed shape — twelve named fields, four statuses times three kinds (M11.1
+ * added `prelabel` alongside `download` and `chunk`) — rather than the array
+ * of rows `SELECT status, kind, COUNT(*) ... GROUP BY status, kind` naturally
+ * produces. That query returns only combinations with at least one row, so a
+ * drained `pending` bucket is *absent* from the result set, not present at
+ * zero. Handing that straight to the Go worker would make an empty queue and
+ * a worker that stopped reporting look identical in Prometheus — the one
+ * distinction the dashboard's queue-depth panel exists to show. The
+ * zero-fill happens here, in the one place that already knows all twelve
+ * combinations exist, so the gauge callback on the other end of the wire
+ * never has to guess which ones it did not hear about.
  */
 export const JobStats = z
   .object({
@@ -422,18 +429,99 @@ export const JobStats = z
 /**
  * The bound on `ReportPredictionsRequest.predictions`.
  *
- * M11.3 caps a prelabel job's timeline sample at 200 images, and CONTEXT.md
- * §12 puts the whole dataset at "roughly 4-6 characters total" — round that
- * up to 6 classes. Doubled again for headroom against a class detected more
- * than once on the same frame (two background characters of the same kind
- * is plausible; the doubling is not meant to cover much more than that) —
- * the same idiom `ReportImagesRequest.images` uses `SEGMENT_SECONDS * 2`
- * for. One job is one report ("one call per job, not one per box"), so the
- * whole video's worth of boxes has to clear this bound in a single request;
- * an oversized one is a 400 naming the limit here, not a batch that fails
- * partway through after the worker already ran the detector.
+ * M11.3 defaults a prelabel job's timeline sample to 200 images (configurable
+ * through the worker's environment — `worker/internal/config/config.go`), and
+ * CONTEXT.md §12 puts the whole dataset at "roughly 4-6 characters total" —
+ * round that up to 6 classes. Doubled again for headroom against a class
+ * detected more than once on the same frame (two background characters of the
+ * same kind is plausible; the doubling is not meant to cover much more than
+ * that) — the same idiom `ReportImagesRequest.images` uses
+ * `SEGMENT_SECONDS * 2` for. One job is one report ("one call per job, not
+ * one per box"), so the whole video's worth of boxes has to clear this bound
+ * in a single request; an oversized one is a 400 naming the limit here, not a
+ * batch that fails partway through after the worker already ran the
+ * detector. Left at the 200-image assumption rather than tied to the
+ * configurable budget: this is a ceiling on what one request may carry, not a
+ * restatement of whatever a deployment happens to have configured, and an
+ * operator who raises the budget meaningfully is past the point this bound
+ * exists to catch.
  */
 export const MAX_PREDICTIONS_PER_JOB = 200 * 6 * 2;
+
+/**
+ * The bound on `ReportPredictionsRequest.sampled_images`.
+ *
+ * One entry per image the sampler drew, regardless of whether the detector
+ * found anything on it — unlike `predictions`, this array never multiplies by
+ * class count, so it does not share `MAX_PREDICTIONS_PER_JOB`'s reasoning.
+ * 5x the 200-image default is generous enough that no sane reconfiguration of
+ * `CROWDMON_PRELABEL_SAMPLE_SIZE` trips it, while still rejecting outright a
+ * worker whose configured budget is a typo rather than silently accepting and
+ * processing whatever it sends.
+ */
+export const MAX_SAMPLED_IMAGES_PER_JOB = 200 * 5;
+
+/**
+ * The `{video_id}` path parameter, for `listVideoImagesRoute` — the one
+ * worker-facing route in this file scoped by video rather than by job id
+ * (see that route's own comment for why). `videos.id` is a bare TEXT primary
+ * key with no format of its own, unlike `JobIdParam`'s integer, so there is
+ * nothing to parse or transform here beyond requiring it non-empty.
+ */
+export const VideoIdParam = z.object({
+  video_id: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: "video_id", in: "path" }, example: "dQw4w9WgXcQ" }),
+});
+
+/**
+ * `worker_id` as a query parameter rather than a body field: `listVideoImages`
+ * is the one worker-facing read in this file (`jobStats` is a dashboard read
+ * with no caller identity to check), and a GET here carries no body for it to
+ * live in the way every other route's `worker_id` does.
+ */
+export const ListVideoImagesQuery = z.object({
+  worker_id: workerId.openapi({ param: { name: "worker_id", in: "query" } }),
+});
+
+/**
+ * One row of `images` as `listVideoImages` reads it back — just enough for
+ * `ImageSampler` (worker/internal/worker/pipeline.go, M11.3) to draw its
+ * bounded, timeline-spread subset from: the `r2_key` `Detect` will fetch and
+ * the timestamp the spread is computed over.
+ *
+ * Deliberately not `ImageFrame`: that schema is the chunk worker's *write* —
+ * carries `phash`, and its own docblock describes it as "a frame the chunk
+ * worker reports" — and reusing it here would describe this response as a
+ * frame being written when it is the opposite direction, a frame being read
+ * back for a different job kind entirely.
+ */
+const VideoImage = z
+  .object({
+    r2_key: z.string().min(1).openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    timestamp_seconds: z.number().nonnegative().openapi({ example: 42 }),
+  })
+  .openapi("VideoImage");
+
+/**
+ * Named `VideoImages`, not after the operation: oapi-codegen owns the
+ * `<OperationId>Response` namespace, and the operation is `listVideoImages`.
+ *
+ * Bounded by `MAX_VIDEO_SECONDS`, not by the prelabel sample size — this is
+ * the whole candidate pool the sampler draws *from* (every row `reportImages`
+ * has ever written for the video), not the budget-limited subset it draws
+ * *out*. Extraction runs at 1fps and `FanOutRequest.duration_seconds` is
+ * capped at `MAX_VIDEO_SECONDS`, so no video can ever have produced more
+ * `images` rows than that — dedup only removes rows, never adds them — which
+ * makes this a hard ceiling from the extraction rate rather than a guess.
+ */
+export const VideoImages = z
+  .object({
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    images: z.array(VideoImage).max(MAX_VIDEO_SECONDS),
+  })
+  .openapi("VideoImages");
 
 /**
  * One model-proposed box, as a prelabel worker reports it.
@@ -509,6 +597,21 @@ export const ReportPredictionsRequest = z
     worker_id: workerId,
     model_id: z.string().min(1).max(200).openapi({ example: "owlvit-base-patch32.onnx" }),
     predictions: z.array(PredictionBox).max(MAX_PREDICTIONS_PER_JOB),
+    // Every r2_key the sampler drew for this job (M11.3), whether or not the
+    // detector found a box on it — a detector finding nothing is a real
+    // outcome (this file's own `TestPrelabelReportsAnEmptySampleWithoutFailing`
+    // equivalent on the API side is the empty-report test in
+    // predictions.test.ts), so `predictions` alone can never say which frames
+    // were even looked at. Required rather than optional-and-defaulted-to-`[]`:
+    // a prelabel job that cannot say what it sampled is a worker bug, not a
+    // legitimate "I don't know" — the same argument `ReportImagesRequest.
+    // frames_kept` makes for being checked rather than trusted blindly.
+    //
+    // This is where `images.selection_reason` (migration 0004, M10.2) gets
+    // written — see `reportPredictionsHandler`'s own comment for why that
+    // stamp happens here, together with the boxes, rather than at the moment
+    // the sample was drawn.
+    sampled_images: z.array(z.string().min(1)).max(MAX_SAMPLED_IMAGES_PER_JOB),
   })
   .openapi("ReportPredictionsRequest");
 
@@ -523,6 +626,57 @@ export const PredictionReport = z
     predictions: z.int().nonnegative().openapi({ example: 34 }),
   })
   .openapi("PredictionReport");
+
+/**
+ * One active class as the prelabel worker needs to see it: the wording the
+ * detector matches on, and the version stamped onto every prediction it
+ * produces (migration 0003's `classes` table).
+ *
+ * Mirrors `worker.ClassPrompt` (worker/internal/worker/pipeline.go) field for
+ * field — `name`, `appearance_prompt`/`Appearance`, `prompt_version`/
+ * `Version` — which is the point: this is exactly what that struct needs and
+ * nothing else. No `id`, no `active`, no timestamps: a worker never needs a
+ * class's row id, and it never needs to be told a returned row is active
+ * because the query is what guarantees that (see `listActiveClassesRoute`'s
+ * own comment).
+ */
+const PrelabelClass = z
+  .object({
+    name: z.string().min(1).openapi({ example: "Paimon" }),
+    appearance_prompt: z.string().min(1).openapi({
+      example: "a small white-haired floating fairy companion with a dark crown and a white cape",
+    }),
+    prompt_version: z.string().max(200).openapi({ example: "2026-08-08-a" }),
+  })
+  .openapi("PrelabelClass");
+
+/**
+ * The bound on `ActiveClasses.classes`.
+ *
+ * 5x the 6-class assumption `MAX_PREDICTIONS_PER_JOB` already rounds
+ * CONTEXT.md §12's "roughly 4-6 characters total" up to — the same headroom
+ * `MAX_SAMPLED_IMAGES_PER_JOB` gives its own 200-image default. Generous
+ * enough that M12's roster growth (adding a class without a deploy is the
+ * entire point of that milestone) does not trip it, while still catching a
+ * runaway seed migration before the mismatch it would cause is silent:
+ * `queue.Client.ActiveClasses` feeds this list straight into
+ * `worker.Pipeline`'s detector loop, and `MAX_PREDICTIONS_PER_JOB`'s ceiling
+ * on one report is only correctly sized while the number of classes it
+ * multiplies against stays near the assumption it was derived from.
+ */
+export const MAX_ACTIVE_CLASSES = 6 * 5;
+
+/**
+ * Named `ActiveClasses`, not after the operation: oapi-codegen owns the
+ * `<OperationId>Response` namespace, and the operation is `listActiveClasses`
+ * — the same reason `ImageReport` and `VideoImages` are not named after
+ * theirs.
+ */
+export const ActiveClasses = z
+  .object({
+    classes: z.array(PrelabelClass).max(MAX_ACTIVE_CLASSES),
+  })
+  .openapi("ActiveClasses");
 
 export const JobListQuery = z.object({
   status: JobStatus.optional().openapi({ param: { name: "status", in: "query" } }),

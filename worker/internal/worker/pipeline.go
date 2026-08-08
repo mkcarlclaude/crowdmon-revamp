@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -69,6 +70,117 @@ type ImageReporter interface {
 	ReportImages(ctx context.Context, jobID int, extraction queue.Extraction) error
 }
 
+// SampledImage is one frame the prelabel job will run the detector over.
+//
+// Carries the R2 key rather than a local path: what is on this box after a
+// chunk job finished is a temp directory that has already been cleaned up, so
+// a prelabel job's input is the object, not a file. Turning one into a
+// readable path is the Detector implementation's problem (M11.2), which is
+// where the sidecar's fetch-or-mount decision belongs.
+type SampledImage struct {
+	Key              string
+	TimestampSeconds float64
+}
+
+// ImageSampler chooses which of a video's frames get pre-labelled.
+//
+// The seam M11.3 fills: bounded sampling drawn across the whole timeline
+// rather than the first N, with the budget in force stamped onto what it
+// produces. Declared here because the prelabel branch cannot be written
+// without naming its input, and stubbed in tests until M11.3 lands — the same
+// arrangement frames.Deduper's injectable hash has.
+type ImageSampler interface {
+	Sample(ctx context.Context, videoID string) ([]SampledImage, error)
+}
+
+// ClassPrompt is one class as the detector needs to see it: the wording, and
+// the version of that wording.
+//
+// Version travels with the prompt rather than being looked up when the boxes
+// are written, because it describes the text that actually ran. Editing a
+// prompt between a detector run and its report would otherwise stamp the new
+// version onto boxes the old wording produced — the two-regimes-inside-one-
+// class failure migration 0003's prompt_version exists to prevent.
+type ClassPrompt struct {
+	Name       string
+	Appearance string
+	Version    string
+}
+
+// PromptSource fetches the classes a prelabel job's detector should
+// currently run against — name, appearance wording, and the version stamped
+// onto every prediction it produces (migration 0003's `classes` table, read
+// through `GET /api/classes/active`, M11.5).
+//
+// This is what replaced Pipeline's old static `Prompts []ClassPrompt` field.
+// That field was configuration an operator typed in by hand, and D1 already
+// has its own copy — migration 0006 seeded five real rows into `classes` —
+// so two copies of the same wording is exactly the drift
+// `predictions.prompt_version` exists to prevent (migration 0003's own
+// comment on that column): a reworded migration with an un-updated worker
+// would silently stamp a version describing different text than the one
+// that actually ran, and nothing in the data would catch it. Fetching
+// removes the second copy entirely rather than trying to keep the two in
+// sync.
+//
+// One method, in the same spirit as ImageSampler, Detector and
+// PredictionReporter: it lets a test substitute a fixed table without a D1
+// round trip. Returns queue.ClassPrompt rather than this package's own
+// ClassPrompt, and that is why *queue.Client can satisfy it directly the way
+// it satisfies ImageReporter and PredictionReporter (whose signatures are
+// also declared purely in queue's own types): ImageSampler and Detector, by
+// contrast, are declared in terms of *this* package's types (SampledImage,
+// ClassPrompt) and need an adapter package (sample, detect) in between,
+// because queue cannot import worker without creating the cycle worker's own
+// import of queue already forbids in the other direction. The conversion
+// into this package's ClassPrompt happens once, at prelabel's own call site
+// (toClassPrompts, below) — the one place that actually needs the local
+// type.
+type PromptSource interface {
+	ActiveClasses(ctx context.Context) ([]queue.ClassPrompt, error)
+}
+
+// toClassPrompts converts PromptSource's wire-shaped result into this
+// package's own ClassPrompt, the type Detector.Detect and boxesByClass
+// already take. A loop rather than a shared type, for PromptSource's own
+// reason: queue.ClassPrompt and ClassPrompt cannot be the same type without
+// queue importing worker.
+func toClassPrompts(fetched []queue.ClassPrompt) []ClassPrompt {
+	prompts := make([]ClassPrompt, len(fetched))
+	for i, f := range fetched {
+		prompts[i] = ClassPrompt{Name: f.Name, Appearance: f.Appearance, Version: f.Version}
+	}
+	return prompts
+}
+
+// Detector proposes boxes for the given prompts on one image.
+//
+// The one-method interface CONTEXT.md §12 commits to, and the whole reason
+// the model is a swap rather than a commitment: production talks to an ONNX
+// open-vocabulary model behind a sidecar (M11.2), tests substitute a table of
+// known boxes, and no test needs a model file, an ONNX runtime or a GPU.
+//
+// Returns queue.Box values with Key left unset — the caller knows which image
+// it asked about and fills it in, so an implementation cannot get the
+// attribution wrong.
+type Detector interface {
+	Detect(ctx context.Context, image SampledImage, prompts []ClassPrompt) ([]queue.Box, error)
+	// ModelID identifies what Detect is running, recorded on every prediction
+	// so that swapping the model is visible in the data rather than inferred
+	// from dates (M11.2).
+	ModelID() string
+}
+
+// PredictionReporter records a prelabel job's boxes (M10.3's endpoint).
+//
+// Separate from ImageReporter although one *queue.Client satisfies both, for
+// the reason ImageReporter is separate from FanOuter: they belong to
+// different job kinds, and a test for either path would otherwise have to
+// stub a method it will never call.
+type PredictionReporter interface {
+	ReportPredictions(ctx context.Context, jobID int, detections queue.Detections) error
+}
+
 // Metrics is the chunk pipeline's view of telemetry.FrameMetrics: the four
 // measurements M8.2 asks for.
 //
@@ -97,6 +209,19 @@ type Pipeline struct {
 	Deduper    FrameDeduper
 	Uploader   FrameUploader
 	Images     ImageReporter
+	// The prelabel branch's three dependencies (M11.1). Sampler and Detector
+	// are nil until M11.3 and M11.2 land, which prelabel treats as a
+	// misconfiguration rather than a crash — see its own comment.
+	Sampler     ImageSampler
+	Detector    Detector
+	Predictions PredictionReporter
+	// Prompts fetches the active classes the detector should run against
+	// (M11.5). D1 is the single source of the wording — see PromptSource's
+	// own comment for why a second, worker-side copy is not an option — so
+	// this is called once per prelabel job rather than cached at startup: a
+	// class activated, deactivated or reworded between two jobs is visible on
+	// the very next one, with no restart required.
+	Prompts PromptSource
 	// Extraction is the settings in force, and therefore what gets stamped
 	// onto the rows this pipeline produces (M8.4).
 	Extraction frames.Config
@@ -123,6 +248,8 @@ func (p Pipeline) Work(ctx context.Context, job *api.Job) error {
 		return p.download(ctx, job)
 	case api.Chunk:
 		return p.chunk(ctx, job)
+	case api.Prelabel:
+		return p.prelabel(ctx, job)
 	default:
 		// Terminal, not retryable: a kind this binary does not understand will
 		// still be unknown on the next attempt. It means the API is ahead of
@@ -505,6 +632,258 @@ func (p Pipeline) report(
 	span.SetAttributes(attribute.Int("crowdmon.images.rows", len(images)))
 
 	return nil
+}
+
+// prelabel is phase three: run the detector across a sample of the video's
+// frames and report the boxes (M11.1's plumbing).
+//
+// One job per video, not per chunk, and this is where that pays off — the
+// sample is drawn across the whole timeline by p.Sampler (M11.3), which no
+// chunk job could assemble because it only ever sees its own sixty seconds.
+//
+// Unlike chunk, this branch has no affinity constraint: its input is R2
+// objects rather than a source video on local disk, so it can run on any box
+// that can reach the bucket. That is a property of the job kind and not an
+// accident of the implementation, which is why nothing here calls p.Store.
+func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
+	ctx, span := tracer().Start(ctx, "job.prelabel", trace.WithAttributes(
+		attribute.Int("crowdmon.job.id", job.Id),
+		attribute.String("crowdmon.video.id", job.VideoId),
+	))
+	defer span.End()
+
+	// Retryable, not terminal, and the distinction is the whole of terminal.go's
+	// argument. A worker built without a sampler, a detector or a prompt
+	// source is a deployment that is wrong right now and may be right in a
+	// minute, once the binary the operator meant to ship is running: burning
+	// the video permanently on that would be the expensive mistake, and
+	// leaving the job claimed costs one lease window.
+	if p.Sampler == nil || p.Detector == nil || p.Predictions == nil || p.Prompts == nil {
+		return recordErr(span, fmt.Errorf(
+			"this worker has no pre-labelling configured: it cannot run the prelabel job %d", job.Id))
+	}
+
+	// Fetched fresh for this job rather than cached (PromptSource's own
+	// comment on Pipeline.Prompts explains why), and any error here defaults
+	// retryable per terminal.go's own rule — a GET with no lease and no body
+	// has no request-shaped failure for the API to reject, so there is no
+	// case here that mirrors reportPredictions' queue.ErrRejected below.
+	fetched, err := p.Prompts.ActiveClasses(ctx)
+	if err != nil {
+		return recordErr(span, fmt.Errorf("fetching active classes for job %d: %w", job.Id, err))
+	}
+	prompts := toClassPrompts(fetched)
+
+	if len(prompts) == 0 {
+		// Also retryable, and for a sharper reason than the above: an empty
+		// active set means nothing in `classes` is turned on yet (or a
+		// migration removed the last row), not a video that cannot be
+		// labelled. Reporting zero boxes instead would be worse than failing
+		// — it would be indistinguishable in the data from a detector that
+		// genuinely found nothing.
+		return recordErr(span, fmt.Errorf(
+			"no active class prompts: prelabel job %d has nothing to detect", job.Id))
+	}
+
+	sampled, err := p.sample(ctx, job.VideoId)
+	if err != nil {
+		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", job.VideoId, err))
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.prelabel.sampled", len(sampled)),
+		attribute.Int("crowdmon.prelabel.classes", len(prompts)),
+	)
+
+	// Collected up front, before a single Detect call runs, and reported
+	// unconditionally alongside whatever boxes come out of the loop below
+	// (M11.3). This is the budget the sample actually drew — every frame
+	// Detect is about to be asked about, whether or not it ends up with a
+	// box — and it is what apps/api/src/routes/jobs.ts's
+	// reportPredictionsHandler stamps images.selection_reason from. Built
+	// here rather than inside the loop so a job that fails partway through
+	// detection (ErrObjectMissing, a lost lease) never reaches
+	// ReportPredictions at all and so never stamps a sample it did not
+	// finish looking at — see that handler's own comment for the full
+	// argument.
+	sampledKeys := make([]string, len(sampled))
+	for i, image := range sampled {
+		sampledKeys[i] = image.Key
+	}
+
+	boxes := make([]queue.Box, 0, len(sampled))
+	for _, image := range sampled {
+		found, err := p.detect(ctx, image, prompts)
+		if err != nil {
+			if errors.Is(err, ErrObjectMissing) {
+				// Terminal, in the same spirit as the affinity guard in chunk:
+				// an image row whose object is gone will be gone on every
+				// subsequent poll too, so re-queueing hands the same broken
+				// video out forever. Named rather than folded into a generic
+				// failure, because the operator reading it needs to know the
+				// dataset has a row with no bytes behind it — that is a
+				// repair, not a retry.
+				return recordErr(span, Terminal(fmt.Errorf(
+					"prelabel job %d: the image object %s is missing from R2: %w",
+					job.Id, image.Key, err)))
+			}
+			// Everything else defaults to retryable, per terminal.go. A
+			// sidecar that is down, a timeout, a transport error: all of them
+			// are worth another attempt, and none of them is the video's
+			// fault.
+			return recordErr(span, fmt.Errorf(
+				"detecting on %s for job %d: %w", image.Key, job.Id, err))
+		}
+
+		// Attribution is filled in here rather than trusted from the Detector,
+		// so an implementation cannot mislabel which image a box came from.
+		for i := range found {
+			found[i].Key = image.Key
+		}
+		boxes = append(boxes, found...)
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.prelabel.boxes", len(boxes)),
+		// The per-image detect.* spans already carry this breakdown one image
+		// at a time; this is the same fact rolled up to the job, for the
+		// reader who wants "what did this video turn up" without opening
+		// every child span to add it by hand. Every configured class is
+		// listed even at zero — see boxesByClass's own comment on why a class
+		// with nothing found must not look like a class nobody asked about.
+		attribute.StringSlice("crowdmon.prelabel.boxes_by_class", boxesByClass(prompts, boxes)),
+	)
+
+	// Reported before Complete, the ordering ReportImages established: a
+	// report on a lease this worker still holds is what makes the 404
+	// meaningful.
+	if err := p.reportPredictions(ctx, job.Id, queue.Detections{
+		ModelID:     p.Detector.ModelID(),
+		Boxes:       boxes,
+		SampledKeys: sampledKeys,
+	}); err != nil {
+		if errors.Is(err, queue.ErrRejected) {
+			// The contract refused it — a key or class the API could not
+			// resolve, a box outside [0, 1], a batch past the per-job bound.
+			// Identical on the next attempt, so it is this worker's bug and
+			// retrying only burns attempts.
+			return recordErr(span, Terminal(err))
+		}
+		return recordErr(span, err)
+	}
+
+	return nil
+}
+
+// sample draws the job's bounded, timeline-spread frame set (M11.3) inside
+// its own span — the first of the three the prelabel branch needed to become
+// the "middle worth naming" CONTEXT.md §9.3 asked for and never got until
+// this one landed. Mirrors extract/dedup/upload/report's shape in the chunk
+// branch above: one collaborator call, one span, attributes set only on the
+// success path so a failed call leaves nothing half-true on the span.
+func (p Pipeline) sample(ctx context.Context, videoID string) ([]SampledImage, error) {
+	ctx, span := tracer().Start(ctx, "sample.select")
+	defer span.End()
+
+	sampled, err := p.Sampler.Sample(ctx, videoID)
+	if err != nil {
+		return nil, recordErr(span, err)
+	}
+
+	span.SetAttributes(attribute.Int("crowdmon.sample.selected", len(sampled)))
+	return sampled, nil
+}
+
+// detect runs one image through the configured prompts inside its own span —
+// the second of the three, and the one the prelabel loop opens up to a couple
+// hundred times per job (M11.3's budget). That volume is the point, not a
+// cost to apologise for: CONTEXT.md §9.4 is the sampling-posture argument for
+// why a span this rare and this specific must not be thinned by a ratio
+// sampler aimed at trimming somebody else's noise.
+//
+// image.detect, not job.prelabel.detect or detect.image: singular "image"
+// distinguishes a call scoped to the one frame Detect just ran on from
+// images.report's plural, which reports the whole set chunk work produced —
+// the same singular/plural split that already separates SampledImage (one)
+// from queue.Extraction.Images (many).
+func (p Pipeline) detect(ctx context.Context, image SampledImage, prompts []ClassPrompt) ([]queue.Box, error) {
+	ctx, span := tracer().Start(ctx, "image.detect", trace.WithAttributes(
+		attribute.String("crowdmon.image.key", image.Key),
+		attribute.Int("crowdmon.detect.classes", len(prompts)),
+	))
+	defer span.End()
+
+	found, err := p.Detector.Detect(ctx, image, prompts)
+	if err != nil {
+		return nil, recordErr(span, err)
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.detect.boxes", len(found)),
+		attribute.StringSlice("crowdmon.detect.boxes_by_class", boxesByClass(prompts, found)),
+	)
+	return found, nil
+}
+
+// reportPredictions writes a prelabel job's boxes inside its own span — the
+// third of the three, and the one that turns a detector run into a durable
+// row. predictions.report, not images.report: a different job kind reports
+// through PredictionReporter for the same reason it is a separate interface
+// from ImageReporter (that interface's own doc comment), and two spans
+// sharing one name would make a Tempo query for either ambiguous about which
+// job kind it was looking at.
+func (p Pipeline) reportPredictions(ctx context.Context, jobID int, detections queue.Detections) error {
+	ctx, span := tracer().Start(ctx, "predictions.report", trace.WithAttributes(
+		attribute.String("crowdmon.predictions.model_id", detections.ModelID),
+	))
+	defer span.End()
+
+	if err := p.Predictions.ReportPredictions(ctx, jobID, detections); err != nil {
+		return recordErr(span, err)
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.predictions.boxes", len(detections.Boxes)),
+		attribute.Int("crowdmon.predictions.sampled", len(detections.SampledKeys)),
+	)
+	return nil
+}
+
+// boxesByClass counts found's boxes against every one of prompts, not merely
+// the classes that produced one. A class prompt ran and matched nothing is a
+// real result — the same "a detector finding nothing is a real outcome" rule
+// prelabel's own doc comment already states for a whole image — and folding
+// it into absence would make "this class was never checked" indistinguishable
+// from "this class was checked and the answer was none," which is exactly the
+// distinction an operator staring at a span needs the most.
+//
+// A []string of "name=count" pairs rather than two parallel slices: OTel span
+// attributes have no map type, and a pair of same-length arrays keyed by
+// index is a footgun the moment either one is edited without the other — this
+// keeps each fact self-contained. Sorted by name so two spans over the same
+// prompt set render identically regardless of the fetched slice's iteration
+// order (which, since M11.5, is the API's `ORDER BY name` — stable, but not
+// a guarantee this function should have to trust).
+func boxesByClass(prompts []ClassPrompt, found []queue.Box) []string {
+	counts := make(map[string]int, len(prompts))
+	for _, prompt := range prompts {
+		counts[prompt.Name] = 0
+	}
+	for _, box := range found {
+		counts[box.ClassName]++
+	}
+
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]string, len(names))
+	for i, name := range names {
+		out[i] = fmt.Sprintf("%s=%d", name, counts[name])
+	}
+	return out
 }
 
 // prune clears expired source videos, and never fails the job it runs inside.

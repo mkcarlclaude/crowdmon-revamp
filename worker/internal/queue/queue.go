@@ -139,6 +139,12 @@ func (c *Client) Claim(ctx context.Context) (*api.Job, error) {
 type StatusCounts struct {
 	Download int
 	Chunk    int
+	// Prelabel is M11.1's third kind. Named here rather than left out because
+	// the generated struct already carries the field: a count the API zero-
+	// fills and sends would otherwise be decoded and silently dropped, and
+	// "the stats endpoint needs no special-casing to see the new kind" would
+	// be true of the API and false of the gauge reading it.
+	Prelabel int
 }
 
 // Stats is what the queue looked like the moment this was read: job counts
@@ -172,11 +178,15 @@ func (c *Client) Stats(ctx context.Context) (Stats, error) {
 		return Stats{}, fmt.Errorf("decoding job stats: %w", err)
 	}
 
+	counts := func(c api.JobStatusCounts) StatusCounts {
+		return StatusCounts{Download: c.Download, Chunk: c.Chunk, Prelabel: c.Prelabel}
+	}
+
 	return Stats{
-		Pending: StatusCounts{Download: stats.Pending.Download, Chunk: stats.Pending.Chunk},
-		Claimed: StatusCounts{Download: stats.Claimed.Download, Chunk: stats.Claimed.Chunk},
-		Done:    StatusCounts{Download: stats.Done.Download, Chunk: stats.Done.Chunk},
-		Failed:  StatusCounts{Download: stats.Failed.Download, Chunk: stats.Failed.Chunk},
+		Pending: counts(stats.Pending),
+		Claimed: counts(stats.Claimed),
+		Done:    counts(stats.Done),
+		Failed:  counts(stats.Failed),
 	}, nil
 }
 
@@ -308,6 +318,58 @@ type Image struct {
 	PHash string
 }
 
+// SampleCandidate is one row of `images` as ListVideoImages reads it back —
+// the wire's VideoImage, renamed for the reason Image is (this package is the
+// wire, and worker/internal/sample should not have to import the generated
+// api package just to read a key and a timestamp off it).
+type SampleCandidate struct {
+	Key              string
+	TimestampSeconds float64
+}
+
+// Images lists every row `images` holds for a video — the pool a prelabel
+// job's sampler draws its bounded, timeline-spread subset from (M11.3).
+//
+// Scoped by video id rather than a job id the way every other call in this
+// file is, because that is all worker.ImageSampler.Sample is ever handed
+// (pipeline.go's own comment on the interface explains why: the sample is
+// drawn once per video, not once per job). The API's lease check follows
+// suit — see reportImagesRoute's sibling, listVideoImagesRoute, in
+// apps/api/src/routes/jobs.ts for how it proves this worker holds *a*
+// prelabel job for this video without a job id to check against.
+func (c *Client) Images(ctx context.Context, videoID string) ([]SampleCandidate, error) {
+	resp, err := c.api.ListVideoImages(ctx, videoID, &api.ListVideoImagesParams{WorkerId: c.workerID})
+	if err != nil {
+		return nil, fmt.Errorf("listing images for %s: %w", videoID, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var page api.VideoImages
+		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+			return nil, fmt.Errorf("decoding the image pool for %s: %w", videoID, err)
+		}
+		candidates := make([]SampleCandidate, len(page.Images))
+		for i, image := range page.Images {
+			candidates[i] = SampleCandidate{
+				Key:              image.R2Key,
+				TimestampSeconds: float64(image.TimestampSeconds),
+			}
+		}
+		return candidates, nil
+	case http.StatusNotFound:
+		// No prelabel job for this video is held by this worker — the reaper
+		// took it back, or Sample is being called for a video this worker was
+		// never handed. Same vocabulary as every other lease-checked call:
+		// the caller's response is to stop, not to retry against a lease it
+		// does not hold.
+		return nil, fmt.Errorf("listing images for %s: %w", videoID, ErrLeaseLost)
+	default:
+		return nil, fmt.Errorf("listing images for %s: %w", videoID, statusError(resp))
+	}
+}
+
 // Extraction is everything a finished chunk has to report: the counts the
 // dedup ratio is computed from, the rows themselves, and the provenance that
 // makes both interpretable later.
@@ -380,6 +442,178 @@ func (c *Client) ReportImages(ctx context.Context, jobID int, extraction Extract
 	default:
 		return fmt.Errorf("reporting the images for job %d: %w", jobID, statusError(resp))
 	}
+}
+
+// Box is one model-proposed detection, as the prelabel pipeline hands it to
+// the API (M11.1's plumbing; M11.2 is what produces one).
+//
+// Coordinates are normalized to [0, 1], matching migration 0003's CHECK
+// constraints and the detector's own output. Deliberately not pixels: the
+// image rows carry no width or height, so a pixel box would only mean
+// something alongside a frame this struct does not have.
+type Box struct {
+	// Key is the R2 object key of the image the box was found on — the same
+	// handle Image.Key uses, and for the same reason. The worker knows the
+	// object it ran the detector over; it has never been told the row id the
+	// API assigned it.
+	Key string
+	// ClassName is classes.name, resolved to a class_id by the API. Same
+	// reasoning as Key: no endpoint hands this worker a class_id.
+	ClassName              string
+	XMin, YMin, XMax, YMax float64
+	Confidence             float64
+	// PromptVersion is the wording in force for this box's class when the
+	// detector ran. Per box, not per report, because one report spans classes
+	// and each carries its own prompt version (migration 0003).
+	PromptVersion string
+}
+
+// Detections is everything one finished prelabel job reports: the boxes, the
+// model that proposed them, and every image the sample actually drew.
+type Detections struct {
+	// ModelID identifies the detector, stamped onto every row in the batch so
+	// that swapping the model is visible in the data rather than inferred from
+	// dates (M11.2). One report is one detector run, so it lives here rather
+	// than on each box.
+	ModelID string
+	Boxes   []Box
+	// SampledKeys is every image the sampler drew for this job (M11.3),
+	// whether or not the detector found a box on it — a detector finding
+	// nothing is a real outcome, so Boxes alone cannot say which frames were
+	// even looked at. This is what the API stamps `images.selection_reason`
+	// from (apps/api/src/routes/jobs.ts's reportPredictionsHandler explains
+	// why that stamp is written here, with the report, rather than at the
+	// moment Sample drew the frames).
+	SampledKeys []string
+}
+
+// ReportPredictions records a prelabel job's boxes.
+//
+// One call carrying the whole video's detections rather than one per box, for
+// the reason ReportImages is one call per chunk: the API writes them as a
+// single D1 batch, and a partial write would leave rows whose provenance is
+// only half-recorded.
+//
+// Called before Complete, deliberately — the same ordering ReportImages uses,
+// and for the same reason: reporting on a lease this worker still holds is
+// what makes the 404 meaningful.
+func (c *Client) ReportPredictions(ctx context.Context, jobID int, detections Detections) error {
+	boxes := make([]api.PredictionBox, len(detections.Boxes))
+	for i, box := range detections.Boxes {
+		boxes[i] = api.PredictionBox{
+			R2Key:     box.Key,
+			ClassName: box.ClassName,
+			// float32 on the wire for the reason ImageFrame.TimestampSeconds
+			// is: the contract says `number` and oapi-codegen renders that as
+			// the narrower type. Harmless for a coordinate in [0, 1], where
+			// float32 carries about seven significant digits — far past the
+			// precision any detector's box is meaningful to.
+			XMin:          float32(box.XMin),
+			YMin:          float32(box.YMin),
+			XMax:          float32(box.XMax),
+			YMax:          float32(box.YMax),
+			Confidence:    float32(box.Confidence),
+			PromptVersion: box.PromptVersion,
+		}
+	}
+
+	// Never nil on the wire, even for an empty sample: the contract declares
+	// `sampled_images` required (schemas.ts's own comment on the field
+	// explains why "I don't know what I sampled" is not a legitimate answer),
+	// and a nil slice still marshals to `[]` via encoding/json, so this is
+	// belt-and-braces rather than load-bearing — but SampledKeys being nil is
+	// the common shape a zero-value Detections{} produces, and there is no
+	// reason to depend on json.Marshal's nil-slice behaviour when naming the
+	// intent costs one line.
+	sampledKeys := detections.SampledKeys
+	if sampledKeys == nil {
+		sampledKeys = []string{}
+	}
+
+	resp, err := c.api.ReportPredictions(ctx, jobID, api.ReportPredictionsJSONRequestBody{
+		WorkerId:      c.workerID,
+		ModelId:       detections.ModelID,
+		Predictions:   boxes,
+		SampledImages: sampledKeys,
+	})
+	if err != nil {
+		return fmt.Errorf("reporting the predictions for job %d: %w", jobID, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusNotFound:
+		return fmt.Errorf("reporting the predictions for job %d: %w", jobID, ErrLeaseLost)
+	case http.StatusBadRequest:
+		// An r2_key or class_name the API could not resolve, a box outside
+		// [0, 1], a batch past the per-job bound, or a job that is not a
+		// prelabel job. Every one of those is this worker's bug and will be
+		// identical on the next attempt, so it joins the fan-out's and the
+		// image report's 400 rather than being left for the reaper.
+		return fmt.Errorf("reporting the predictions for job %d: %w: %s", jobID, ErrRejected, statusError(resp))
+	default:
+		return fmt.Errorf("reporting the predictions for job %d: %w", jobID, statusError(resp))
+	}
+}
+
+// ClassPrompt is one active class as the API returns it (migration 0003's
+// `classes` table, filtered to `active = 1` by `GET /api/classes/active`,
+// M11.5): the wording the detector should match on, and the version stamped
+// onto every prediction it produces.
+//
+// A wire-shaped type of its own rather than worker.ClassPrompt, for the same
+// reason Box, Image and SampleCandidate already are: this package is the
+// wire, and worker already imports it (pipeline.go), so a method here
+// returning a worker type would need the reverse import and create the
+// cycle that direction is not allowed to have. worker.PromptSource's own
+// comment is the fuller version of this argument, and worker.
+// toClassPrompts is where the one conversion into worker.ClassPrompt
+// actually happens.
+type ClassPrompt struct {
+	Name       string
+	Appearance string
+	Version    string
+}
+
+// ActiveClasses lists the classes a prelabel job's detector should currently
+// run against: migration 0003's `classes` table, already filtered to
+// `active = 1` on the API side (apps/api/src/routes/classes.ts) so a
+// deactivated class stops being detected without this worker having to know
+// what "deactivated" means.
+//
+// Scoped to nothing — no video id, no job id, no worker_id — because every
+// prelabel job needs the identical answer (worker.PromptSource's own comment
+// explains why that is also the reason the endpoint carries no worker_id).
+// Called once per prelabel job (pipeline.go's prelabel branch) rather than
+// cached at startup, so a class reworded or (de)activated between two jobs
+// is visible on the very next one with no restart required.
+func (c *Client) ActiveClasses(ctx context.Context) ([]ClassPrompt, error) {
+	resp, err := c.api.ListActiveClasses(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing active classes: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("listing active classes: %w", statusError(resp))
+	}
+
+	var body api.ActiveClasses
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decoding active classes: %w", err)
+	}
+
+	prompts := make([]ClassPrompt, len(body.Classes))
+	for i, class := range body.Classes {
+		prompts[i] = ClassPrompt{
+			Name:       class.Name,
+			Appearance: class.AppearancePrompt,
+			Version:    class.PromptVersion,
+		}
+	}
+	return prompts, nil
 }
 
 // leaseOutcome reads the two lease-bearing endpoints' answers. 404 is the

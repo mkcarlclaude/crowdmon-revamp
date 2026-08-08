@@ -13,10 +13,13 @@ import {
   Job,
   JobIdParam,
   JobStats,
+  ListVideoImagesQuery,
   PredictionReport,
   ReportImagesRequest,
   ReportPredictionsRequest,
   SEGMENT_SECONDS,
+  VideoIdParam,
+  VideoImages,
 } from "../schemas";
 
 /**
@@ -207,6 +210,37 @@ export const reportPredictionsRoute = createRoute({
   },
 });
 
+export const listVideoImagesRoute = createRoute({
+  method: "get",
+  path: "/api/videos/{video_id}/images",
+  operationId: "listVideoImages",
+  tags: ["jobs"],
+  summary: "The candidate pool a prelabel job's sampler draws from",
+  description:
+    "M11.3: every row `reportImages` has written for this video, oldest timestamp " +
+    "first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) " +
+    "draws its bounded, timeline-spread subset from. Scoped by video id rather than by " +
+    "job id, unlike every other worker-facing route in this file: `Sample`'s signature " +
+    "is handed only a video id (it is called once per video, not once per job — the " +
+    "same reason `prelabel` is one job per video rather than one per chunk), so the " +
+    "lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead " +
+    "of a job's primary key. That partial unique index already guarantees at most one " +
+    "held prelabel job per video, which is exactly the lease this read needs to prove — " +
+    "the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, " +
+    "just proved through a different column. No Access assertion and no credential " +
+    "beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` " +
+    "(`jobStatsRoute`'s own comment explains why that boundary is where it is).",
+  request: { params: VideoIdParam, query: ListVideoImagesQuery },
+  responses: {
+    200: {
+      description: "Every image row for this video",
+      content: { "application/json": { schema: VideoImages } },
+    },
+    400: errorResponse("Malformed video id or worker id"),
+    404: errorResponse("No prelabel job for this video is held by this worker"),
+  },
+});
+
 export const jobStatsRoute = createRoute({
   method: "get",
   path: "/api/jobs/stats",
@@ -241,7 +275,7 @@ export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, { Bindings: Bin
     "SELECT status, kind, COUNT(*) AS count FROM jobs GROUP BY status, kind",
   ).all<{
     status: "pending" | "claimed" | "done" | "failed";
-    kind: "download" | "chunk";
+    kind: "download" | "chunk" | "prelabel";
     count: number;
   }>();
 
@@ -249,12 +283,14 @@ export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, { Bindings: Bin
   // overwrite it. This is the zero-fill `JobStats`' own comment (schemas.ts)
   // promises the Go worker's gauge callback it will never have to do itself —
   // seeing this shape is what lets that callback report a drained queue as
-  // eight zeros instead of eight absences.
+  // twelve zeros instead of twelve absences. `GROUP BY status, kind` itself
+  // needed no change for `prelabel` to show up in `results` — only this
+  // literal, naming every combination up front, has to grow with the kind.
   const counts = {
-    pending: { download: 0, chunk: 0 },
-    claimed: { download: 0, chunk: 0 },
-    done: { download: 0, chunk: 0 },
-    failed: { download: 0, chunk: 0 },
+    pending: { download: 0, chunk: 0, prelabel: 0 },
+    claimed: { download: 0, chunk: 0, prelabel: 0 },
+    done: { download: 0, chunk: 0, prelabel: 0 },
+    failed: { download: 0, chunk: 0, prelabel: 0 },
   };
 
   for (const row of results) {
@@ -292,7 +328,7 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
     .bind(worker_id, claimedAt, claimedAt, claimedAt)
     .first<{
       id: number;
-      kind: "download" | "chunk";
+      kind: "download" | "chunk" | "prelabel";
       video_id: string;
       attempts: number;
       // Whatever the row that created this job stamped onto it (M9.2) — the
@@ -418,7 +454,7 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: B
   // done — the same outcome M7.3 exists to make safe.
   const job = await c.env.DB.prepare(`SELECT kind, video_id FROM jobs WHERE ${HELD_BY}`)
     .bind(id, worker_id)
-    .first<{ kind: "download" | "chunk"; video_id: string }>();
+    .first<{ kind: "download" | "chunk" | "prelabel"; video_id: string }>();
 
   if (!job) return notHeldByCaller(c);
 
@@ -530,7 +566,7 @@ export const reportImagesHandler: RouteHandler<
   )
     .bind(id, worker_id)
     .first<{
-      kind: "download" | "chunk";
+      kind: "download" | "chunk" | "prelabel";
       video_id: string;
       start_seconds: number | null;
       end_seconds: number | null;
@@ -662,27 +698,36 @@ export const reportPredictionsHandler: RouteHandler<
   { Bindings: Bindings }
 > = async (c) => {
   const { id } = c.req.valid("param");
-  const { worker_id, model_id, predictions } = c.req.valid("json");
+  const { worker_id, model_id, predictions, sampled_images } = c.req.valid("json");
 
   // Same lease check as every other write on a held job (heartbeat, complete,
   // fanout, report-images): a request that only knew a job id could write
   // prediction rows against somebody else's job.
-  //
-  // No job-kind check accompanies this the way `reportImages` rejects a
-  // non-chunk job: migration 0001's `jobs.kind` CHECK only allows `download`
-  // and `chunk` today, and the `prelabel` kind this endpoint exists for does
-  // not land until M11.1. There is nothing to assert against yet, so any
-  // held lease qualifies — the same as heartbeat and complete.
-  const job = await c.env.DB.prepare(`SELECT video_id FROM jobs WHERE ${HELD_BY}`)
+  const job = await c.env.DB.prepare(`SELECT kind, video_id FROM jobs WHERE ${HELD_BY}`)
     .bind(id, worker_id)
-    .first<{ video_id: string }>();
+    .first<{ kind: "download" | "chunk" | "prelabel"; video_id: string }>();
 
   if (!job) return notHeldByCaller(c);
 
-  // An empty report is well-formed (a detector finding nothing is a real
-  // outcome, not an error) and skipping straight to the answer avoids an
-  // `IN ()` with no placeholders below, which is invalid SQL.
-  if (predictions.length === 0) {
+  // M11.1 (migration 0005) is what makes this check possible: `jobs.kind`
+  // admitted only `download` and `chunk` before it, so there was nothing to
+  // assert `prelabel` against and any held lease qualified. 400, not 404, for
+  // the same reason `reportImages` answers a wrong-kind request this way: the
+  // lease is genuine and the worker is who it says it is, and what is wrong
+  // is the request — a 404 would send it hunting for a lost lease it still
+  // holds.
+  if (job.kind !== "prelabel") {
+    return c.json({ error: "only a prelabel job can report predictions" }, 400);
+  }
+
+  // A genuinely empty report is well-formed (a detector finding nothing is a
+  // real outcome, not an error) and skipping straight to the answer avoids an
+  // `IN ()` with no placeholders below, which is invalid SQL. Both arrays have
+  // to be empty for this to fire: `predictions` alone being empty is the
+  // common case (M11.3's whole sample can come back with nothing detected),
+  // but `sampled_images` still needs its stamp written in that case, so only
+  // "nothing was sampled and nothing was found" short-circuits here.
+  if (predictions.length === 0 && sampled_images.length === 0) {
     return c.json({ video_id: job.video_id, predictions: 0 }, 200);
   }
 
@@ -695,11 +740,19 @@ export const reportPredictionsHandler: RouteHandler<
   // names which one, instead of a D1 constraint failure with no field to
   // point at.
   //
+  // `r2Keys` is the union of `predictions`' and `sampled_images`' keys, not
+  // just the former: `sampled_images` gets no insert of its own (the stamp
+  // below is an UPDATE against rows that already exist), but a worker naming
+  // an r2_key that does not exist is exactly as much a bug there as it is in
+  // `predictions`, and folding the two into one lookup means one unified
+  // "unknown r2_key" 400 covers both instead of the stamp silently no-op'ing
+  // on a typo'd key.
+  //
   // Images are scoped to `job.video_id`, the same way `reportImages` reads
   // `video_id` off the held job rather than the body: an r2_key that is real
   // but belongs to a different video must not resolve here, or a worker
   // could write predictions against a video it was never assigned.
-  const r2Keys = [...new Set(predictions.map((p) => p.r2_key))];
+  const r2Keys = [...new Set([...predictions.map((p) => p.r2_key), ...sampled_images])];
   const classNames = [...new Set(predictions.map((p) => p.class_name))];
 
   // Chunked against D1_MAX_BOUND_PARAMS. The image lookup reserves one
@@ -739,24 +792,50 @@ export const reportPredictionsHandler: RouteHandler<
     return c.json({ error: parts.join("; ") }, 400);
   }
 
-  // One batch: every row lands or none does. `predictions` is never read
-  // back by anything that tolerates a partial write, and the goal here is
-  // the same one M8.4 states for `images` — a failure partway through must
-  // not leave rows whose provenance (`model_id`, `prompt_version`) is only
-  // half-recorded.
+  // One batch: every row and every stamp lands together or none does.
   //
-  // Insert-only, and deliberately without `reportImages`' `ON CONFLICT`: a
-  // prelabel job reaped mid-report and re-run writes its boxes a second time
-  // as new rows. There is no natural key to collide on the way `images` has
-  // `(video_id, timestamp_seconds)` — the same detector on the same frame
-  // legitimately proposes several boxes, so "one row per (image, class)"
-  // would be a constraint on the data, not a statement about re-runs. Left
-  // open rather than guessed at here: the reaper cannot retire a `prelabel`
-  // job until M11.1 makes the kind exist, so there is no path that produces
-  // a duplicate yet, and M11.1 is where the re-run story has to be answered
-  // with the job lifecycle in front of it.
-  await c.env.DB.batch(
-    predictions.map((prediction) =>
+  // `sampled_images`' stamp — `images.selection_reason = 'random'` (M11.3;
+  // `'random'` is the only value v2 ever writes, CONTEXT.md §Q16) — is
+  // written here, in the same batch as the boxes, and deliberately not back
+  // in `Sample`'s own read or in a call of its own issued the moment the
+  // sample was drawn. Three things are true at once: sampling happens before
+  // detection, so at selection time this handler cannot yet know the job
+  // will finish; a prelabel job can fail (a missing object, a lost lease, a
+  // detector timeout) after sampling but before this call ever arrives; and
+  // `Sample` deterministically redraws the same frames for the same video on
+  // a retry (worker/internal/sample's own comment on why). Stamping at
+  // selection time would mean a job that samples and then fails leaves
+  // `selection_reason` set on rows whose "entry into the pool" never actually
+  // produced anything — and worse, if `Sample` were ever non-deterministic, a
+  // reap-and-rerun could stamp two different partial samples on top of each
+  // other. Stamping here instead means the stamp exists exactly when the
+  // dataset is honest about it: a row reads `selection_reason = 'random'`
+  // only once a real, complete prelabel run looked at it, the same way
+  // `images.dedup_threshold` is stamped when `reportImages` runs — after
+  // extraction and dedup finished — and not the instant ffmpeg wrote a frame
+  // to disk.
+  //
+  // Insert-only for `predictions`, and deliberately without `reportImages`'
+  // `ON CONFLICT`: a prelabel job reaped mid-report and re-run writes its
+  // boxes a second time as new rows. There is no natural key to collide on
+  // the way `images` has `(video_id, timestamp_seconds)` — the same detector
+  // on the same frame legitimately proposes several boxes, so "one row per
+  // (image, class)" would be a constraint on the data, not a statement about
+  // re-runs. Still left open rather than guessed at here even though M11.1
+  // (migration 0005) is what makes `prelabel` a real, reapable job kind: a
+  // re-run genuinely duplicating a whole video's boxes is a dataset-quality
+  // question for whichever milestone first reads `predictions` for training
+  // or review, not a correctness question this insert-only endpoint can
+  // answer on its own — answering it here would mean guessing at a dedup rule
+  // (nearest box? latest `model_id`? every row kept and left for a query to
+  // filter?) with no reader yet to say which one is right.
+  //
+  // The stamp UPDATE, by contrast, is naturally idempotent: it always sets
+  // the same literal, `'random'`, so a re-run restamping the same
+  // deterministically-redrawn keys is a no-op in every way that matters,
+  // unlike an insert that would duplicate.
+  const statements = [
+    ...predictions.map((prediction) =>
       c.env.DB.prepare(
         `INSERT INTO predictions
               (image_id, class_id, x_min, y_min, x_max, y_max, confidence, prompt_version, model_id)
@@ -773,9 +852,49 @@ export const reportPredictionsHandler: RouteHandler<
         model_id,
       ),
     ),
-  );
+    ...chunkForBinding(sampled_images, 1).map((keys) =>
+      c.env.DB.prepare(
+        `UPDATE images SET selection_reason = 'random'
+          WHERE video_id = ? AND r2_key IN (${placeholders(keys)})`,
+      ).bind(job.video_id, ...keys),
+    ),
+  ];
+
+  await c.env.DB.batch(statements);
 
   return c.json({ video_id: job.video_id, predictions: predictions.length }, 200);
+};
+
+export const listVideoImagesHandler: RouteHandler<
+  typeof listVideoImagesRoute,
+  { Bindings: Bindings }
+> = async (c) => {
+  const { video_id } = c.req.valid("param");
+  const { worker_id } = c.req.valid("query");
+
+  // idx_jobs_one_prelabel_per_video (migration 0005) is what makes this a
+  // real lease check rather than an approximation of one: at most one
+  // prelabel job can ever be 'claimed' for a given video, so finding a row
+  // here is exactly as strong a guarantee as HELD_BY gives every job-id-scoped
+  // route in this file, even though no primary key enters this query.
+  const held = await c.env.DB.prepare(
+    `SELECT 1 FROM jobs
+      WHERE video_id = ? AND kind = 'prelabel' AND status = 'claimed' AND claimed_by = ?`,
+  )
+    .bind(video_id, worker_id)
+    .first();
+
+  if (!held) {
+    return c.json({ error: "no prelabel job for this video is held by this worker" }, 404);
+  }
+
+  const { results } = await c.env.DB.prepare(
+    "SELECT r2_key, timestamp_seconds FROM images WHERE video_id = ? ORDER BY timestamp_seconds",
+  )
+    .bind(video_id)
+    .all<{ r2_key: string; timestamp_seconds: number }>();
+
+  return c.json({ video_id, images: results }, 200);
 };
 
 /** A job whose worker reported it as unrecoverable, rather than one the reaper retired. */
@@ -814,7 +933,7 @@ const TRACER = "crowdmon.jobs";
  */
 function recordJobFailed(job: {
   id: number;
-  kind: "download" | "chunk";
+  kind: "download" | "chunk" | "prelabel";
   video_id: string;
   attempts: number;
   failure_reason: string | null;
@@ -844,28 +963,113 @@ export const completeJobHandler: RouteHandler<
   const { id } = c.req.valid("param");
   const { worker_id, status, failure_reason } = c.req.valid("json");
 
+  const at = now();
+
+  // The trace this completion request arrived inside (M9.2), forwarded onto
+  // the prelabel job the second statement below may create — the same idiom
+  // `fanOutJobHandler` uses for the chunk jobs it creates. Whichever chunk's
+  // completion happens to be the one that finds every sibling done is, by
+  // construction, the request the enqueue decision was made inside; which
+  // chunk that turns out to be is arbitrary, but the trace it forwards is not
+  // — it is genuinely the request that caused the prelabel job to exist.
+  const traceparent = c.req.header("traceparent") ?? null;
+
+  // Two statements, one batch, one transaction (D1 wraps `batch()` in one):
+  // the completion write and the video's prelabel-enqueue check have to land
+  // together or not at all. Done as two separate round trips instead, a crash
+  // between them could complete a video's last chunk and never learn it was
+  // the last one — the exact gap M8.4 already closed for a chunk's own rows
+  // and its `config_version` stamp, reopened here if this pair were not
+  // atomic too.
+  //
   // `claimed_by` is cleared on the way out so a finished row cannot be
   // mistaken for a held one, and the reaper's partial index stops covering it.
   //
   // `RETURNING` rather than the bare `.run()` this used before M9.1: the
   // failure span needs the job's kind, video id and attempts, and none of
   // them were otherwise in scope here. `HELD_BY` still names exactly one row
-  // by primary key, so switching to `.first()` changes nothing about how a
-  // worker that does not hold the lease is told apart from one that does —
-  // both remain "no row came back."
-  const job = await c.env.DB.prepare(
-    `UPDATE jobs
-        SET status         = ?,
-            failure_reason = ?,
-            claimed_by     = NULL,
-            heartbeat_at   = NULL,
-            updated_at     = ?
-      WHERE ${HELD_BY}
-  RETURNING kind, video_id, attempts`,
-  )
-    .bind(status, status === "failed" ? (failure_reason ?? null) : null, now(), id, worker_id)
-    .first<{ kind: "download" | "chunk"; video_id: string; attempts: number }>();
+  // by primary key, so reading it via `RETURNING` inside a batch changes
+  // nothing about how a worker that does not hold the lease is told apart
+  // from one that does — both remain "no row came back."
+  const results = await c.env.DB.batch<{
+    kind: "download" | "chunk" | "prelabel";
+    video_id: string;
+    attempts: number;
+  }>([
+    c.env.DB.prepare(
+      `UPDATE jobs
+          SET status         = ?,
+              failure_reason = ?,
+              claimed_by     = NULL,
+              heartbeat_at   = NULL,
+              updated_at     = ?
+        WHERE ${HELD_BY}
+    RETURNING kind, video_id, attempts`,
+    ).bind(status, status === "failed" ? (failure_reason ?? null) : null, at, id, worker_id),
 
+    // M11.1: the video's one prelabel job, enqueued the instant its last
+    // chunk finishes — not one per chunk, because a sample drawn across the
+    // whole timeline (M11.3) cannot be assembled by any single chunk job,
+    // which only ever sees its own sixty seconds.
+    //
+    // Guarded entirely in SQL, as a `WHERE` on a `SELECT` feeding the
+    // `INSERT`, rather than a JS `if` deciding whether to include this
+    // statement — the same idiom `fanOutJobHandler`'s per-segment inserts
+    // use, and for the same reason: it lets this statement run
+    // unconditionally as the batch's second half regardless of what `id`
+    // turned out to name, and still do nothing when it should.
+    //   - `j.kind = 'chunk' AND j.status = 'done'` reads job `id`'s row as
+    //     the UPDATE above just left it — the two statements share one
+    //     transaction, so this one sees that write. True only when the row
+    //     just completed really was a chunk job reported done; false for a
+    //     download or prelabel completion, and false when the UPDATE matched
+    //     no row at all (an unheld or nonexistent job leaves `status`
+    //     unchanged, and a job already sitting at some other status was
+    //     never 'claimed' in the first place).
+    //   - the first `NOT EXISTS` is "every chunk job for this video is now
+    //     done". It can only become true on the completion that finishes the
+    //     *last* one: every earlier chunk's own completion still finds at
+    //     least one sibling short of 'done' — itself, before this
+    //     transaction — and this whole statement is a no-op for it.
+    //   - the second `NOT EXISTS` is what keeps "the last chunk enqueues it"
+    //     from enqueuing twice under the reap-and-rerun case M11.1 flags: a
+    //     chunk that was already the video's last one, then reaped and
+    //     completed again, would otherwise see the same "all done" state on
+    //     its second completion and try to insert a second prelabel job.
+    //     `idx_jobs_one_prelabel_per_video` (migration 0005) is the schema
+    //     backstop if this guard were ever wrong — the design constraint is
+    //     that the handler must not be trusted alone — but a genuine
+    //     collision there would fail the whole batch, rolling back the
+    //     chunk's own completion along with it, so this guard is what is
+    //     meant to keep that backstop from ever actually having to fire
+    //     rather than a redundant restatement of it. A worker that lost this
+    //     race sees its completion answered exactly as if it had won: the
+    //     duplicate enqueue attempt is silently a no-op, not an error routed
+    //     back to a caller who did nothing wrong — reporting a chunk done is
+    //     not the worker's fault just because another chunk's completion
+    //     happened to close out the video first.
+    c.env.DB.prepare(
+      `INSERT INTO jobs (kind, video_id, traceparent)
+            SELECT 'prelabel', j.video_id, ?
+              FROM jobs j
+             WHERE j.id = ?
+               AND j.kind = 'chunk'
+               AND j.status = 'done'
+               AND NOT EXISTS (
+                 SELECT 1 FROM jobs c
+                  WHERE c.video_id = j.video_id AND c.kind = 'chunk' AND c.status != 'done'
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM jobs p WHERE p.video_id = j.video_id AND p.kind = 'prelabel'
+               )`,
+    ).bind(traceparent, id),
+  ]);
+
+  // Indexed twice, both optionally: `batch()` is typed as returning a result
+  // per statement, but nothing in the type says how many, and the inner
+  // `results` is empty exactly when the UPDATE matched no row — which is the
+  // unheld-lease case the next line turns into a 404.
+  const job = results[0]?.results[0];
   if (!job) return notHeldByCaller(c);
 
   // Only a reported failure gets a span. A reported success is not an event

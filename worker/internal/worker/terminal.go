@@ -2,6 +2,16 @@ package worker
 
 import "errors"
 
+// ErrObjectMissing says an image row points at an R2 object that is not
+// there. A Detector returns it (wrapped, however it likes) and the prelabel
+// branch turns it into a Terminal failure.
+//
+// A sentinel rather than the prelabel branch inspecting an S3 404 itself: the
+// branch must not know what storage the Detector talks to, which is the whole
+// point of the interface being one method. This is the vocabulary the two
+// share for the one failure whose classification the caller cannot guess.
+var ErrObjectMissing = errors.New("the image object is missing from storage")
+
 // Terminal marks a failure that retrying cannot fix: a deleted video, a
 // private one, a source file that is not on this box.
 //

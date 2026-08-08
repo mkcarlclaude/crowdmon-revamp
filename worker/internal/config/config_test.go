@@ -277,6 +277,61 @@ func TestLoadReadsAPositiveDedupThreshold(t *testing.T) {
 	}
 }
 
+// PrelabelSampleSize defaults to zero — "let sample.Sampler decide" — rather
+// than a number restated here, the same idiom DedupThreshold uses for
+// frames.Config (M11.3).
+func TestLoadDefaultsPrelabelSampleSize(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_PRELABEL_SAMPLE_SIZE", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+
+	if cfg.PrelabelSampleSize != 0 {
+		t.Errorf("PrelabelSampleSize = %d, want 0 (sample.Sampler decides)", cfg.PrelabelSampleSize)
+	}
+}
+
+// A malformed size has to fail loudly, for the same reason a malformed
+// CROWDMON_DEDUP_THRESHOLD does: falling back to zero on a parse error would
+// look identical to "unconfigured," and the two mean different things once
+// sample.Sampler.Budget is in the picture.
+func TestLoadRejectsAnUnparseablePrelabelSampleSize(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_PRELABEL_SAMPLE_SIZE", "not-a-number")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a non-integer CROWDMON_PRELABEL_SAMPLE_SIZE")
+	}
+}
+
+// Negative is rejected too: sample.Sampler.Budget would otherwise treat it
+// the same as the default a typo'd zero produces, and the operator would have
+// no way to tell "unconfigured" and "configured incorrectly" apart.
+func TestLoadRejectsANegativePrelabelSampleSize(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_PRELABEL_SAMPLE_SIZE", "-1")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a negative CROWDMON_PRELABEL_SAMPLE_SIZE")
+	}
+}
+
+func TestLoadReadsAPositivePrelabelSampleSize(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_PRELABEL_SAMPLE_SIZE", "500")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+	if cfg.PrelabelSampleSize != 500 {
+		t.Errorf("PrelabelSampleSize = %d, want 500", cfg.PrelabelSampleSize)
+	}
+}
+
 // R2 is fail-closed on partial configuration (M8.3): a chunk job that
 // silently skipped its upload because one of three required values was
 // missing would report success while writing nothing to R2.
@@ -306,6 +361,38 @@ func TestLoadRejectsPartialR2Credentials(t *testing.T) {
 				t.Fatalf("expected an error for partial R2 credentials (%s)", tc.name)
 			}
 		})
+	}
+}
+
+// The detector is optional exactly as tracing and R2 uploads are (M11.2): a
+// worker with no CROWDMON_DETECTOR_BASE_URL still has to run download and
+// chunk jobs, so an unset value must not be an error.
+func TestLoadTreatsTheDetectorAsOptional(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_DETECTOR_BASE_URL", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+	if cfg.DetectorEnabled() {
+		t.Error("DetectorEnabled() = true with no detector base url configured")
+	}
+}
+
+func TestLoadCarriesTheDetectorBaseURL(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_DETECTOR_BASE_URL", "http://crowdmon-detector:8080")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+	if !cfg.DetectorEnabled() {
+		t.Error("DetectorEnabled() = false with a detector base url configured")
+	}
+	if cfg.DetectorBaseURL != "http://crowdmon-detector:8080" {
+		t.Errorf("DetectorBaseURL = %q, want http://crowdmon-detector:8080", cfg.DetectorBaseURL)
 	}
 }
 

@@ -110,6 +110,15 @@ type Config struct {
 	// authenticates it to itself.
 	R2AccessKeyID     string
 	R2SecretAccessKey string
+	// DetectorBaseURL is the pre-labelling sidecar's origin (M11.2). Empty
+	// disables prelabel exactly as an unset OTLPEndpoint disables tracing:
+	// Pipeline.Detector stays nil, and a prelabel job fails with the
+	// already-established "no pre-labelling configured" retryable error
+	// (pipeline.go) rather than never being attempted. No fail-closed
+	// combination check is needed the way R2's three values and the Access
+	// pair get one — this is a single value with nothing else it must agree
+	// with.
+	DetectorBaseURL string
 	// DedupThreshold is passed straight through to frames.Config.
 	// DedupThreshold. Zero means "let the frames package decide"
 	// (frames.DefaultDedupThreshold) rather than a number restated here:
@@ -119,6 +128,16 @@ type Config struct {
 	// edited tomorrow is to have exactly one of them own the number. This
 	// package owns the environment variable name; frames owns the value.
 	DedupThreshold int
+	// PrelabelSampleSize is passed straight through to sample.Sampler.Budget
+	// (M11.3). Zero means "let the sample package decide"
+	// (sample.DefaultBudget) rather than a number restated here — the same
+	// argument DedupThreshold makes for frames, and for the same reason:
+	// config does not import sample, so exactly one package owns the default
+	// and this one owns only the environment variable name. Pool size is
+	// governed by what a human can verify and by what the box's CPU can run
+	// in a night, not by what ffmpeg can produce, which is why this exists as
+	// a setting at all rather than a constant sample.Sampler bakes in.
+	PrelabelSampleSize int
 }
 
 // TracingEnabled reports whether an exporter should be built. Config answers
@@ -141,6 +160,11 @@ func (c Config) MetricsEnabled() bool { return c.OTLPMetricsEndpoint != "" }
 // two or set alongside them.
 func (c Config) UploadsEnabled() bool { return c.R2AccountID != "" }
 
+// DetectorEnabled reports whether a detect.Client should be built. Mirrors
+// UploadsEnabled and TracingEnabled: the presence of the one value this
+// feature needs is the whole test.
+func (c Config) DetectorEnabled() bool { return c.DetectorBaseURL != "" }
+
 // Load reads configuration from the environment, applying defaults where a
 // missing value is not an error. It returns an error rather than exiting so
 // callers decide how a misconfigured worker should fail.
@@ -160,6 +184,7 @@ func Load() (Config, error) {
 		R2Bucket:            envOrDefault("CROWDMON_R2_BUCKET", DefaultR2Bucket),
 		R2AccessKeyID:       os.Getenv("CROWDMON_R2_ACCESS_KEY_ID"),
 		R2SecretAccessKey:   os.Getenv("CROWDMON_R2_SECRET_ACCESS_KEY"),
+		DetectorBaseURL:     os.Getenv("CROWDMON_DETECTOR_BASE_URL"),
 	}
 
 	if cfg.APIBaseURL == "" {
@@ -201,6 +226,25 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("CROWDMON_DEDUP_THRESHOLD must not be negative, got %d", threshold)
 		}
 		cfg.DedupThreshold = threshold
+	}
+
+	// Parsed and range-checked for the same reason CROWDMON_DEDUP_THRESHOLD
+	// is: a parse failure falling back to the zero value would make
+	// CROWDMON_PRELABEL_SAMPLE_SIZE=banana behave identically to leaving it
+	// unset, and zero already means "use sample.DefaultBudget" — an operator
+	// who set it to something never gets told their something was wrong. A
+	// negative value is rejected for the mirror-image reason: it would
+	// silently collapse to the same default an absent value produces, and
+	// the two mean different things.
+	if raw := os.Getenv("CROWDMON_PRELABEL_SAMPLE_SIZE"); raw != "" {
+		size, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("CROWDMON_PRELABEL_SAMPLE_SIZE is not an integer: %w", err)
+		}
+		if size < 0 {
+			return Config{}, fmt.Errorf("CROWDMON_PRELABEL_SAMPLE_SIZE must not be negative, got %d", size)
+		}
+		cfg.PrelabelSampleSize = size
 	}
 
 	// R2 is fail-closed on partial configuration, the same argument as the

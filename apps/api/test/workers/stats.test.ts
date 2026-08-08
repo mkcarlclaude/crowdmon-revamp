@@ -12,15 +12,15 @@ describe("GET /api/jobs/stats", () => {
     const res = await stats();
 
     expect(res.status).toBe(200);
-    // Every one of the eight combinations is present at zero rather than
+    // Every one of the twelve combinations is present at zero rather than
     // missing — this is the shape the Go worker's queue.depth gauge callback
     // depends on to tell a drained queue apart from a worker that stopped
     // reporting (schemas.ts's JobStats comment).
     expect(await res.json()).toEqual({
-      pending: { download: 0, chunk: 0 },
-      claimed: { download: 0, chunk: 0 },
-      done: { download: 0, chunk: 0 },
-      failed: { download: 0, chunk: 0 },
+      pending: { download: 0, chunk: 0, prelabel: 0 },
+      claimed: { download: 0, chunk: 0, prelabel: 0 },
+      done: { download: 0, chunk: 0, prelabel: 0 },
+      failed: { download: 0, chunk: 0, prelabel: 0 },
     });
   });
 
@@ -28,8 +28,10 @@ describe("GET /api/jobs/stats", () => {
     await seedVideo("aaaaaaaaaaa");
     await seedVideo("bbbbbbbbbbb");
     await seedVideo("ccccccccccc");
-    // One download per video (idx_jobs_one_download_per_video), so each
-    // status below needs its own video row; chunk jobs carry no such limit.
+    // One download (and, since migration 0005, one prelabel) per video —
+    // idx_jobs_one_download_per_video and idx_jobs_one_prelabel_per_video —
+    // so each status below needs its own video row; chunk jobs carry no such
+    // limit.
     await env.DB.prepare(
       `INSERT INTO jobs (kind, video_id, status) VALUES
         ('download', 'aaaaaaaaaaa', 'pending'),
@@ -37,16 +39,17 @@ describe("GET /api/jobs/stats", () => {
         ('chunk',    'aaaaaaaaaaa', 'pending'),
         ('download', 'bbbbbbbbbbb', 'claimed'),
         ('chunk',    'bbbbbbbbbbb', 'done'),
+        ('prelabel', 'bbbbbbbbbbb', 'pending'),
         ('download', 'ccccccccccc', 'failed')`,
     ).run();
 
     const res = await stats();
 
     expect(await res.json()).toEqual({
-      pending: { download: 1, chunk: 2 },
-      claimed: { download: 1, chunk: 0 },
-      done: { download: 0, chunk: 1 },
-      failed: { download: 1, chunk: 0 },
+      pending: { download: 1, chunk: 2, prelabel: 1 },
+      claimed: { download: 1, chunk: 0, prelabel: 0 },
+      done: { download: 0, chunk: 1, prelabel: 0 },
+      failed: { download: 1, chunk: 0, prelabel: 0 },
     });
   });
 
