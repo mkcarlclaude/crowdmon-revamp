@@ -139,6 +139,12 @@ func (c *Client) Claim(ctx context.Context) (*api.Job, error) {
 type StatusCounts struct {
 	Download int
 	Chunk    int
+	// Prelabel is M11.1's third kind. Named here rather than left out because
+	// the generated struct already carries the field: a count the API zero-
+	// fills and sends would otherwise be decoded and silently dropped, and
+	// "the stats endpoint needs no special-casing to see the new kind" would
+	// be true of the API and false of the gauge reading it.
+	Prelabel int
 }
 
 // Stats is what the queue looked like the moment this was read: job counts
@@ -172,11 +178,15 @@ func (c *Client) Stats(ctx context.Context) (Stats, error) {
 		return Stats{}, fmt.Errorf("decoding job stats: %w", err)
 	}
 
+	counts := func(c api.JobStatusCounts) StatusCounts {
+		return StatusCounts{Download: c.Download, Chunk: c.Chunk, Prelabel: c.Prelabel}
+	}
+
 	return Stats{
-		Pending: StatusCounts{Download: stats.Pending.Download, Chunk: stats.Pending.Chunk},
-		Claimed: StatusCounts{Download: stats.Claimed.Download, Chunk: stats.Claimed.Chunk},
-		Done:    StatusCounts{Download: stats.Done.Download, Chunk: stats.Done.Chunk},
-		Failed:  StatusCounts{Download: stats.Failed.Download, Chunk: stats.Failed.Chunk},
+		Pending: counts(stats.Pending),
+		Claimed: counts(stats.Claimed),
+		Done:    counts(stats.Done),
+		Failed:  counts(stats.Failed),
 	}, nil
 }
 
@@ -379,6 +389,98 @@ func (c *Client) ReportImages(ctx context.Context, jobID int, extraction Extract
 		return fmt.Errorf("reporting the images for job %d: %w: %s", jobID, ErrRejected, statusError(resp))
 	default:
 		return fmt.Errorf("reporting the images for job %d: %w", jobID, statusError(resp))
+	}
+}
+
+// Box is one model-proposed detection, as the prelabel pipeline hands it to
+// the API (M11.1's plumbing; M11.2 is what produces one).
+//
+// Coordinates are normalized to [0, 1], matching migration 0003's CHECK
+// constraints and the detector's own output. Deliberately not pixels: the
+// image rows carry no width or height, so a pixel box would only mean
+// something alongside a frame this struct does not have.
+type Box struct {
+	// Key is the R2 object key of the image the box was found on — the same
+	// handle Image.Key uses, and for the same reason. The worker knows the
+	// object it ran the detector over; it has never been told the row id the
+	// API assigned it.
+	Key string
+	// ClassName is classes.name, resolved to a class_id by the API. Same
+	// reasoning as Key: no endpoint hands this worker a class_id.
+	ClassName              string
+	XMin, YMin, XMax, YMax float64
+	Confidence             float64
+	// PromptVersion is the wording in force for this box's class when the
+	// detector ran. Per box, not per report, because one report spans classes
+	// and each carries its own prompt version (migration 0003).
+	PromptVersion string
+}
+
+// Detections is everything one finished prelabel job reports: the boxes, and
+// the model that proposed them.
+type Detections struct {
+	// ModelID identifies the detector, stamped onto every row in the batch so
+	// that swapping the model is visible in the data rather than inferred from
+	// dates (M11.2). One report is one detector run, so it lives here rather
+	// than on each box.
+	ModelID string
+	Boxes   []Box
+}
+
+// ReportPredictions records a prelabel job's boxes.
+//
+// One call carrying the whole video's detections rather than one per box, for
+// the reason ReportImages is one call per chunk: the API writes them as a
+// single D1 batch, and a partial write would leave rows whose provenance is
+// only half-recorded.
+//
+// Called before Complete, deliberately — the same ordering ReportImages uses,
+// and for the same reason: reporting on a lease this worker still holds is
+// what makes the 404 meaningful.
+func (c *Client) ReportPredictions(ctx context.Context, jobID int, detections Detections) error {
+	boxes := make([]api.PredictionBox, len(detections.Boxes))
+	for i, box := range detections.Boxes {
+		boxes[i] = api.PredictionBox{
+			R2Key:     box.Key,
+			ClassName: box.ClassName,
+			// float32 on the wire for the reason ImageFrame.TimestampSeconds
+			// is: the contract says `number` and oapi-codegen renders that as
+			// the narrower type. Harmless for a coordinate in [0, 1], where
+			// float32 carries about seven significant digits — far past the
+			// precision any detector's box is meaningful to.
+			XMin:          float32(box.XMin),
+			YMin:          float32(box.YMin),
+			XMax:          float32(box.XMax),
+			YMax:          float32(box.YMax),
+			Confidence:    float32(box.Confidence),
+			PromptVersion: box.PromptVersion,
+		}
+	}
+
+	resp, err := c.api.ReportPredictions(ctx, jobID, api.ReportPredictionsJSONRequestBody{
+		WorkerId:    c.workerID,
+		ModelId:     detections.ModelID,
+		Predictions: boxes,
+	})
+	if err != nil {
+		return fmt.Errorf("reporting the predictions for job %d: %w", jobID, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusNotFound:
+		return fmt.Errorf("reporting the predictions for job %d: %w", jobID, ErrLeaseLost)
+	case http.StatusBadRequest:
+		// An r2_key or class_name the API could not resolve, a box outside
+		// [0, 1], a batch past the per-job bound, or a job that is not a
+		// prelabel job. Every one of those is this worker's bug and will be
+		// identical on the next attempt, so it joins the fan-out's and the
+		// image report's 400 rather than being left for the reaper.
+		return fmt.Errorf("reporting the predictions for job %d: %w: %s", jobID, ErrRejected, statusError(resp))
+	default:
+		return fmt.Errorf("reporting the predictions for job %d: %w", jobID, statusError(resp))
 	}
 }
 

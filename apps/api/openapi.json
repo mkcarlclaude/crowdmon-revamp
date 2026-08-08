@@ -205,7 +205,8 @@
         "type": "string",
         "enum": [
           "download",
-          "chunk"
+          "chunk",
+          "prelabel"
         ]
       },
       "JobStatus": {
@@ -664,11 +665,17 @@
             "type": "integer",
             "minimum": 0,
             "example": 14
+          },
+          "prelabel": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 1
           }
         },
         "required": [
           "download",
-          "chunk"
+          "chunk",
+          "prelabel"
         ]
       }
     },

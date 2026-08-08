@@ -68,6 +68,7 @@ func (e HealthResponseStatus) Valid() bool {
 const (
 	Chunk    JobKind = "chunk"
 	Download JobKind = "download"
+	Prelabel JobKind = "prelabel"
 )
 
 // Valid indicates whether the value is a known member of the JobKind enum.
@@ -76,6 +77,8 @@ func (e JobKind) Valid() bool {
 	case Chunk:
 		return true
 	case Download:
+		return true
+	case Prelabel:
 		return true
 	default:
 		return false
@@ -315,6 +318,9 @@ type JobStatusCounts struct {
 
 	// Download Example: 1
 	Download int `json:"download"`
+
+	// Prelabel Example: 1
+	Prelabel int `json:"prelabel"`
 }
 
 // PredictionBox defines model for PredictionBox.

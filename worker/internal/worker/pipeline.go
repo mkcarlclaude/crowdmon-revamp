@@ -69,6 +69,71 @@ type ImageReporter interface {
 	ReportImages(ctx context.Context, jobID int, extraction queue.Extraction) error
 }
 
+// SampledImage is one frame the prelabel job will run the detector over.
+//
+// Carries the R2 key rather than a local path: what is on this box after a
+// chunk job finished is a temp directory that has already been cleaned up, so
+// a prelabel job's input is the object, not a file. Turning one into a
+// readable path is the Detector implementation's problem (M11.2), which is
+// where the sidecar's fetch-or-mount decision belongs.
+type SampledImage struct {
+	Key              string
+	TimestampSeconds float64
+}
+
+// ImageSampler chooses which of a video's frames get pre-labelled.
+//
+// The seam M11.3 fills: bounded sampling drawn across the whole timeline
+// rather than the first N, with the budget in force stamped onto what it
+// produces. Declared here because the prelabel branch cannot be written
+// without naming its input, and stubbed in tests until M11.3 lands — the same
+// arrangement frames.Deduper's injectable hash has.
+type ImageSampler interface {
+	Sample(ctx context.Context, videoID string) ([]SampledImage, error)
+}
+
+// ClassPrompt is one class as the detector needs to see it: the wording, and
+// the version of that wording.
+//
+// Version travels with the prompt rather than being looked up when the boxes
+// are written, because it describes the text that actually ran. Editing a
+// prompt between a detector run and its report would otherwise stamp the new
+// version onto boxes the old wording produced — the two-regimes-inside-one-
+// class failure migration 0003's prompt_version exists to prevent.
+type ClassPrompt struct {
+	Name       string
+	Appearance string
+	Version    string
+}
+
+// Detector proposes boxes for the given prompts on one image.
+//
+// The one-method interface CONTEXT.md §12 commits to, and the whole reason
+// the model is a swap rather than a commitment: production talks to an ONNX
+// open-vocabulary model behind a sidecar (M11.2), tests substitute a table of
+// known boxes, and no test needs a model file, an ONNX runtime or a GPU.
+//
+// Returns queue.Box values with Key left unset — the caller knows which image
+// it asked about and fills it in, so an implementation cannot get the
+// attribution wrong.
+type Detector interface {
+	Detect(ctx context.Context, image SampledImage, prompts []ClassPrompt) ([]queue.Box, error)
+	// ModelID identifies what Detect is running, recorded on every prediction
+	// so that swapping the model is visible in the data rather than inferred
+	// from dates (M11.2).
+	ModelID() string
+}
+
+// PredictionReporter records a prelabel job's boxes (M10.3's endpoint).
+//
+// Separate from ImageReporter although one *queue.Client satisfies both, for
+// the reason ImageReporter is separate from FanOuter: they belong to
+// different job kinds, and a test for either path would otherwise have to
+// stub a method it will never call.
+type PredictionReporter interface {
+	ReportPredictions(ctx context.Context, jobID int, detections queue.Detections) error
+}
+
 // Metrics is the chunk pipeline's view of telemetry.FrameMetrics: the four
 // measurements M8.2 asks for.
 //
@@ -97,6 +162,18 @@ type Pipeline struct {
 	Deduper    FrameDeduper
 	Uploader   FrameUploader
 	Images     ImageReporter
+	// The prelabel branch's three dependencies (M11.1). Sampler and Detector
+	// are nil until M11.3 and M11.2 land, which prelabel treats as a
+	// misconfiguration rather than a crash — see its own comment.
+	Sampler     ImageSampler
+	Detector    Detector
+	Predictions PredictionReporter
+	// Prompts is the active classes the detector runs against. Held on the
+	// pipeline rather than fetched per job because M12 is what makes classes
+	// editable without a deploy; until then they are seeded by hand and this
+	// is configuration, exactly as ROADMAP.md M11 says ("M11 reads prompts
+	// that were seeded by hand"). M12 replaces this field with a fetch.
+	Prompts []ClassPrompt
 	// Extraction is the settings in force, and therefore what gets stamped
 	// onto the rows this pipeline produces (M8.4).
 	Extraction frames.Config
@@ -123,6 +200,8 @@ func (p Pipeline) Work(ctx context.Context, job *api.Job) error {
 		return p.download(ctx, job)
 	case api.Chunk:
 		return p.chunk(ctx, job)
+	case api.Prelabel:
+		return p.prelabel(ctx, job)
 	default:
 		// Terminal, not retryable: a kind this binary does not understand will
 		// still be unknown on the next attempt. It means the API is ahead of
@@ -503,6 +582,110 @@ func (p Pipeline) report(
 	}
 
 	span.SetAttributes(attribute.Int("crowdmon.images.rows", len(images)))
+
+	return nil
+}
+
+// prelabel is phase three: run the detector across a sample of the video's
+// frames and report the boxes (M11.1's plumbing).
+//
+// One job per video, not per chunk, and this is where that pays off — the
+// sample is drawn across the whole timeline by p.Sampler (M11.3), which no
+// chunk job could assemble because it only ever sees its own sixty seconds.
+//
+// Unlike chunk, this branch has no affinity constraint: its input is R2
+// objects rather than a source video on local disk, so it can run on any box
+// that can reach the bucket. That is a property of the job kind and not an
+// accident of the implementation, which is why nothing here calls p.Store.
+func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
+	ctx, span := tracer().Start(ctx, "job.prelabel", trace.WithAttributes(
+		attribute.Int("crowdmon.job.id", job.Id),
+		attribute.String("crowdmon.video.id", job.VideoId),
+	))
+	defer span.End()
+
+	// Retryable, not terminal, and the distinction is the whole of terminal.go's
+	// argument. A worker built without a sampler or a detector is a deployment
+	// that is wrong right now and may be right in a minute, once the binary the
+	// operator meant to ship is running: burning the video permanently on that
+	// would be the expensive mistake, and leaving the job claimed costs one
+	// lease window.
+	if p.Sampler == nil || p.Detector == nil || p.Predictions == nil {
+		return recordErr(span, fmt.Errorf(
+			"this worker has no pre-labelling configured: it cannot run the prelabel job %d", job.Id))
+	}
+
+	if len(p.Prompts) == 0 {
+		// Also retryable, and for a sharper reason than the above: until M12
+		// the prompts are seeded by hand, so an empty set is a box that has
+		// not been configured yet rather than a video that cannot be labelled.
+		// Reporting zero boxes instead would be worse than failing — it would
+		// be indistinguishable in the data from a detector that genuinely
+		// found nothing.
+		return recordErr(span, fmt.Errorf(
+			"this worker has no class prompts configured: prelabel job %d has nothing to detect", job.Id))
+	}
+
+	sampled, err := p.Sampler.Sample(ctx, job.VideoId)
+	if err != nil {
+		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", job.VideoId, err))
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.prelabel.sampled", len(sampled)),
+		attribute.Int("crowdmon.prelabel.classes", len(p.Prompts)),
+	)
+
+	boxes := make([]queue.Box, 0, len(sampled))
+	for _, image := range sampled {
+		found, err := p.Detector.Detect(ctx, image, p.Prompts)
+		if err != nil {
+			if errors.Is(err, ErrObjectMissing) {
+				// Terminal, in the same spirit as the affinity guard in chunk:
+				// an image row whose object is gone will be gone on every
+				// subsequent poll too, so re-queueing hands the same broken
+				// video out forever. Named rather than folded into a generic
+				// failure, because the operator reading it needs to know the
+				// dataset has a row with no bytes behind it — that is a
+				// repair, not a retry.
+				return recordErr(span, Terminal(fmt.Errorf(
+					"prelabel job %d: the image object %s is missing from R2: %w",
+					job.Id, image.Key, err)))
+			}
+			// Everything else defaults to retryable, per terminal.go. A
+			// sidecar that is down, a timeout, a transport error: all of them
+			// are worth another attempt, and none of them is the video's
+			// fault.
+			return recordErr(span, fmt.Errorf(
+				"detecting on %s for job %d: %w", image.Key, job.Id, err))
+		}
+
+		// Attribution is filled in here rather than trusted from the Detector,
+		// so an implementation cannot mislabel which image a box came from.
+		for i := range found {
+			found[i].Key = image.Key
+		}
+		boxes = append(boxes, found...)
+	}
+
+	span.SetAttributes(attribute.Int("crowdmon.prelabel.boxes", len(boxes)))
+
+	// Reported before Complete, the ordering ReportImages established: a
+	// report on a lease this worker still holds is what makes the 404
+	// meaningful.
+	if err := p.Predictions.ReportPredictions(ctx, job.Id, queue.Detections{
+		ModelID: p.Detector.ModelID(),
+		Boxes:   boxes,
+	}); err != nil {
+		if errors.Is(err, queue.ErrRejected) {
+			// The contract refused it — a key or class the API could not
+			// resolve, a box outside [0, 1], a batch past the per-job bound.
+			// Identical on the next attempt, so it is this worker's bug and
+			// retrying only burns attempts.
+			return recordErr(span, Terminal(err))
+		}
+		return recordErr(span, err)
+	}
 
 	return nil
 }

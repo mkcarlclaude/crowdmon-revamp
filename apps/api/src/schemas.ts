@@ -80,8 +80,8 @@ export const VideoSubmission = z
   })
   .openapi("VideoSubmission");
 
-/** Mirrors the `kind` CHECK constraint in migration 0001. */
-export const JobKind = z.enum(["download", "chunk"]).openapi("JobKind");
+/** Mirrors the `kind` CHECK constraint, widened by migration 0005 (M11.1). */
+export const JobKind = z.enum(["download", "chunk", "prelabel"]).openapi("JobKind");
 
 /**
  * Identifies the caller holding a lease.
@@ -387,6 +387,12 @@ const JobStatusCounts = z
   .object({
     download: z.int().nonnegative().openapi({ example: 1 }),
     chunk: z.int().nonnegative().openapi({ example: 14 }),
+    // M11.1: the third job kind. Added here rather than left for the queue
+    // gauge to infer, for the same reason the other two are named fields and
+    // not an open map — the Go worker's generated struct has to have a field
+    // to read a prelabel count off, not just whatever keys happened to come
+    // back.
+    prelabel: z.int().nonnegative().openapi({ example: 1 }),
   })
   .openapi("JobStatusCounts");
 

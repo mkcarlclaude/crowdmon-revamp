@@ -9,22 +9,21 @@ import { seedVideo } from "./seed";
  * detector's boxes to, in the shape `/api/jobs/{id}/images` established for
  * chunk workers — one call per job, not one per box.
  *
- * `predictions` has no submit endpoint of its own to seed through — the
- * `prelabel` job kind this endpoint exists for does not land until M11.1
- * (see `reportPredictionsHandler`'s own comment on why there is no job-kind
- * check yet) — so a claimed `download` job stands in as "a lease this worker
- * holds" throughout, the least amount of seeding that still proves the lease
- * check.
+ * `predictions` has no submit endpoint of its own to seed through — nothing
+ * enqueues a `prelabel` job on its own timeline the way `submitVideo` does
+ * for a download — so every test here writes a claimed `prelabel` job by
+ * hand, the same way `seed.ts`'s `seedClaimedJob` stands in for a claim
+ * nothing here calls.
  */
 
-/** A job already held by `workerId`, needing no `chunks` row (unlike `reportImages`'s target). */
+/** A prelabel job already held by `workerId`, needing no `chunks` row (unlike `reportImages`'s target). */
 async function seedHeldJob(videoId: string, workerId = "w1"): Promise<number> {
   await seedVideo(videoId);
   const at = Math.floor(Date.now() / 1000);
 
   const row = await env.DB.prepare(
     `INSERT INTO jobs (kind, video_id, status, attempts, claimed_by, claimed_at, heartbeat_at)
-          VALUES ('download', ?, 'claimed', 1, ?, ?, ?)
+          VALUES ('prelabel', ?, 'claimed', 1, ?, ?, ?)
        RETURNING id`,
   )
     .bind(videoId, workerId, at, at)
@@ -201,6 +200,34 @@ describe("POST /api/jobs/{id}/predictions", () => {
     const res = await reportPredictions(jobId, reported({ worker_id: "w1" }));
 
     expect(res.status).toBe(404);
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM predictions").first<{
+      n: number;
+    }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("rejects reporting predictions against a non-prelabel job, and writes nothing", async () => {
+    // M11.1 (migration 0005): before `prelabel` existed there was nothing to
+    // check a job's kind against here, and any held lease qualified. A
+    // download job's lease must not double as permission to write prediction
+    // rows now that there is a real kind to hold it to.
+    await seedVideo("kkkkkkkkkkk");
+    const at = Math.floor(Date.now() / 1000);
+    const row = await env.DB.prepare(
+      `INSERT INTO jobs (kind, video_id, status, attempts, claimed_by, claimed_at, heartbeat_at)
+            VALUES ('download', ?, 'claimed', 1, 'w1', ?, ?)
+         RETURNING id`,
+    )
+      .bind("kkkkkkkkkkk", at, at)
+      .first<{ id: number }>();
+    await seedClass("Paimon");
+
+    const res = await reportPredictions(row?.id ?? 0, reported());
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/only a prelabel job/);
+
     const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM predictions").first<{
       n: number;
     }>();
