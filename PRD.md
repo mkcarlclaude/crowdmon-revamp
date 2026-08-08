@@ -1,7 +1,8 @@
-# Crowdmon 2026 — Product Requirements (v1)
+# Crowdmon 2026 — Product Requirements
 
-**Status:** approved scope, not started
-**Last updated:** 2026-08-01
+**Status:** v1 delivered 2026-08-08, all eight success criteria verified · v2 scope
+approved (§9), not started
+**Last updated:** 2026-08-08
 **Design record:** [`CONTEXT.md`](CONTEXT.md) — 26 locked decisions, rejected options, rationale
 **Delivery plan:** [`ROADMAP.md`](ROADMAP.md) — milestones and issues
 
@@ -42,16 +43,18 @@ real-time model the foundation model cannot be.
 | **Free tier only** | No Cloudflare Queues, no Workers Paid plan. Queue is a D1 table. |
 | **Cloud survives home downtime** | Pull topology. Home is never a synchronous dependency. |
 | **YouTube blocks datacenter IPs** | Extraction must run from the home connection. |
-| **No GPU worth training on at home** | Training is manual and batch on Kaggle. Auto-retrain is ruled out by physics, not preference. |
+| **No GPU worth training on at home** | Training is manual and batch. Auto-retrain is ruled out by physics, not preference. **Amended for v2:** training moves to the home box in v4/v5 rather than Kaggle — CPU-only and slow by choice, which is affordable because nothing waits on it. See §9. |
 | **Open-ended timeline, burnout is real** | Every milestone must be independently shippable and a valid stopping point. |
 
-## 4. v1 scope
+## 4. v1 scope — delivered
 
 ### Done-claim
 
 > A YouTube URL goes in, extraction is visibly running, OTel has data, and images land in R2.
 
 Falsifiable. Everything in v1 serves this sentence; everything that does not is v2.
+
+The v2 sentence, and the scope it cuts, is §9.
 
 ### In scope
 
@@ -80,7 +83,12 @@ D1 rows and R2 objects. The observability work is therefore load-bearing rather 
 decorative — which is the correct outcome given the goal in §2, and prevents the common
 failure of deferring instrumentation until it never lands.
 
-## 5. Success criteria
+## 5. Success criteria — all met
+
+Verified on 2026-08-08 against one real run: "Archon quest chapter 4 Act 2 (part 2)",
+5,812s, 97 segments, submitted through the dashboard. The evidence for each criterion is
+tabulated in [`README.md`](README.md#acceptance-run-2026-08-08), beside the claim it
+proves rather than here.
 
 v1 is done when all of the following are true:
 
@@ -123,3 +131,91 @@ unrelated to v1 delivery:
 
 - Grafana auth hardening — org allowlist not yet configured as defence in depth.
 - The monitoring stack compose is not version-controlled.
+
+---
+
+## 9. v2 scope
+
+**Status:** approved, not started. Tracked as
+[issue #89](https://github.com/mkcarlclaude/crowdmon-revamp/issues/89). Design decisions
+and their rejected alternatives are in `CONTEXT.md` §12.
+
+### Problem
+
+v1 ends with deduplicated frames in R2 and matching rows in D1, and nothing can be done
+with them. There is no way to say what is in an image, no way to get labelled data out,
+and therefore no reason to submit a second video — the pipeline produces an ever-growing
+pile of unlabelled JPEGs.
+
+2023 failed at this same point from the opposite direction: it had an annotation UI where
+every box was drawn from scratch, so hour ten of labelling cost exactly what hour one
+cost. Drawing does not scale to one person. What is missing is the step that makes
+labelling cheap — a model proposing boxes and a human ruling on them.
+
+### Done-claim
+
+> A submitted video becomes pre-labelled frames with no human trigger, verified through
+> this platform's own UI — public to anyone, authoritative for an admin — and exported as
+> a dataset snapshot with a split manifest.
+
+Falsifiable, and it is the whole of the completion test — v2 has no separate criteria
+list. Each clause has an observation that kills it:
+
+| Clause | Proven false by |
+|---|---|
+| *with no human trigger* | A submitted video whose frames are extracted but not pre-labelled until something is run by hand |
+| *pre-labelled frames* | A video whose sample produces no predictions, or predictions from a prompt not recorded on the rows |
+| *public to anyone* | The public page loading with no image, no verify action, or demanding a login |
+| *authoritative for an admin* | An anonymous verdict appearing inside a snapshot |
+| *dataset snapshot* | A snapshot that cannot be listed, or one whose inclusion policy is not recorded on it |
+| *with a split manifest* | A manifest missing, or a frozen-evaluation-pool image appearing in the train split |
+
+### In scope
+
+- `prelabel` as a fourth job kind on the existing queue, enqueued behind extraction
+- Zero-shot open-vocabulary detection on the home box, behind a one-method interface
+- A bounded sample per video — default 200 frames, drawn randomly across the timeline
+- Class list as a table of appearance prompts, five active, prompt stamped on its output
+- Immutable prediction rows carrying box, class, confidence and prompt version
+- Verify-only UI — accept, adjust, reject — mounted twice from one component
+- Public unauthenticated verification over a hand-curated sample pool, rate limited
+- Append-only verdicts tagged by source, anonymous ones recorded and never promoted
+- Admin-only missing-object reports, so recall failures are recorded rather than invisible
+- Dataset snapshots to R2 with a split manifest and a recorded inclusion policy
+- `selection_reason` on images, so a frozen evaluation pool exists before it is needed
+
+### Explicitly out of scope for v2
+
+Training of any kind, on any machine · model registry · a distilled detector · in-browser
+inference · public detector demo · Google OAuth, sessions, any annotator tier between
+admin and anonymous · consensus resolution, agreement scoring, trust weighting ·
+leaderboards · weighted 70/20/10 active-learning selection · a public statistics surface
+· more than five active classes · any measurement of detector accuracy.
+
+### Consequence: accuracy is not the deliverable
+
+The platform is the product; the detector is an input to it. No criterion in v2 mentions
+model quality, and none should — a bootstrap model that pre-labels badly produces more
+work for the verification UI, which is the thing being built, not a failure of it.
+
+This is also why the frozen evaluation pool ships as a flag with no weighting behind it.
+It costs one column and one exclusion rule now, and it cannot be added later: every image
+labelled before it exists was selected by a biased rule, so it can never be retro-declared
+an unbiased sample.
+
+### Consequence: checks are internal
+
+v2 is verified by the operator, not by a stranger. A public statistics surface would have
+closed that gap and was deliberately not taken — so the export half of the done-claim
+rests on the repository's account of it, exactly as v1's did.
+
+### Known risks
+
+| Risk | Mitigation |
+|---|---|
+| **Verify-only cannot see a missed object** | Structural, not a bug: a frame with no pre-label never enters the pool, so false negatives are invisible and look identical to absence. Admin-only missing-object reports give them somewhere to go, and the report rate per class is the number that says whether a prompt works. |
+| **A weak prompt starves its class** | Class list is a table, prompts validated against ~50 frames before activation, prompt version stamped on every prediction. A bad prompt is a row edit, not a deploy. |
+| **CPU-only inference is too slow** | Bounded sampling is the mitigation: 200 frames per video, not the ~2,700 a full video yields. Detection sits behind a one-method interface so the model is a one-file swap, and the 940MX is worth re-measuring before being written off. |
+| **Untrusted input contaminates the dataset** | Anonymous verdicts are recorded and never promoted. That is what keeps consensus resolution, agreement scoring and trust weighting out of scope — admitting untrusted labels is what would force all three. |
+| **Public frame serving becomes the gallery §7 rejected** | Curated pool rather than the bucket, one short-lived signed URL per request with no enumeration, rate limiting, `noindex`. The distinction is a schema flag, not a paragraph. |
+| **Pool grows faster than a human can consume it** | The per-video budget is the governor: pool size is bounded by verification throughput, not by extraction rate. Unsampled frames keep their rows and wait. |
