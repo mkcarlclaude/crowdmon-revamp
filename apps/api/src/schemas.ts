@@ -419,6 +419,111 @@ export const JobStats = z
   })
   .openapi("JobStats");
 
+/**
+ * The bound on `ReportPredictionsRequest.predictions`.
+ *
+ * M11.3 caps a prelabel job's timeline sample at 200 images, and CONTEXT.md
+ * §12 puts the whole dataset at "roughly 4-6 characters total" — round that
+ * up to 6 classes. Doubled again for headroom against a class detected more
+ * than once on the same frame (two background characters of the same kind
+ * is plausible; the doubling is not meant to cover much more than that) —
+ * the same idiom `ReportImagesRequest.images` uses `SEGMENT_SECONDS * 2`
+ * for. One job is one report ("one call per job, not one per box"), so the
+ * whole video's worth of boxes has to clear this bound in a single request;
+ * an oversized one is a 400 naming the limit here, not a batch that fails
+ * partway through after the worker already ran the detector.
+ */
+export const MAX_PREDICTIONS_PER_JOB = 200 * 6 * 2;
+
+/**
+ * One model-proposed box, as a prelabel worker reports it.
+ *
+ * References its image by `r2_key`, the same handle `ImageFrame.r2_key`
+ * uses and for the same reason: the worker knows the object it operated on,
+ * not the row `reportImages` assigned it — `ImageReport` never echoes image
+ * ids back, so `image_id` is not a value the worker could supply even if
+ * this schema asked for one. References its class by `classes.name` rather
+ * than `class_id` for the matching reason: no route this milestone adds
+ * hands out a `class_id`, and `name` is the class's own natural key
+ * (migration 0003's `UNIQUE`). The handler resolves both against D1 and
+ * answers an unresolvable reference with a 400 naming it, rather than
+ * letting a bad reference surface as a foreign-key failure with no field to
+ * point at.
+ *
+ * `prompt_version` travels with each box rather than with the request as a
+ * whole (contrast `model_id` on `ReportPredictionsRequest` below):
+ * `classes.prompt_version` is a property of the class, not of the report,
+ * and one report can carry boxes for more than one class — each stamped
+ * with whichever wording was in force for it when the detector ran
+ * (migration 0003: "provenance is stamped, not inferred").
+ *
+ * The coordinate and confidence bounds mirror migration 0003's CHECK
+ * constraints exactly, so a malformed box is a clean 400 from this schema
+ * rather than a D1 constraint error the worker would have to parse to
+ * understand. `x_max >= x_min` and `y_max >= y_min` are cross-field and so
+ * cannot be expressed as a bound on either coordinate alone; the two
+ * `.superRefine` checks below are what the individual `.min()`/`.max()`
+ * calls cannot cover.
+ */
+const PredictionBox = z
+  .object({
+    r2_key: z.string().min(1).openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    class_name: z.string().min(1).openapi({ example: "Paimon" }),
+    x_min: z.number().min(0).max(1).openapi({ example: 0.12 }),
+    y_min: z.number().min(0).max(1).openapi({ example: 0.2 }),
+    x_max: z.number().min(0).max(1).openapi({ example: 0.5 }),
+    y_max: z.number().min(0).max(1).openapi({ example: 0.6 }),
+    confidence: z.number().min(0).max(1).openapi({ example: 0.87 }),
+    prompt_version: z.string().max(200).openapi({ example: "2026-08-08-a" }),
+  })
+  .superRefine((box, ctx) => {
+    if (box.x_max < box.x_min) {
+      ctx.addIssue({ code: "custom", message: "x_max must be >= x_min", path: ["x_max"] });
+    }
+    if (box.y_max < box.y_min) {
+      ctx.addIssue({ code: "custom", message: "y_max must be >= y_min", path: ["y_max"] });
+    }
+  })
+  .openapi("PredictionBox");
+
+/**
+ * What a prelabel worker reports after running the detector across its
+ * video's sampled frames (M11.2's one-method interface, landing after this
+ * milestone) — one call per job, not one per box, the same as
+ * `ReportImagesRequest` is one call per chunk and not one per frame.
+ *
+ * `worker_id` is here for the same reason it is on heartbeat, complete,
+ * fanout and report-images: this is a write on a lease, and a request that
+ * only knew a job id could write prediction rows against somebody else's
+ * job.
+ *
+ * `model_id` is top-level and stamped onto every row in the batch, the same
+ * idiom `ReportImagesRequest.dedup_threshold` uses: one report is one
+ * detector run (M11.2: "model identifier recorded on every prediction, so
+ * swapping the model is visible in the data"), so there is exactly one
+ * value for the whole request to carry — contrast `prompt_version` above,
+ * which varies per class and so travels with each box instead.
+ */
+export const ReportPredictionsRequest = z
+  .object({
+    worker_id: workerId,
+    model_id: z.string().min(1).max(200).openapi({ example: "owlvit-base-patch32.onnx" }),
+    predictions: z.array(PredictionBox).max(MAX_PREDICTIONS_PER_JOB),
+  })
+  .openapi("ReportPredictionsRequest");
+
+/**
+ * Named `PredictionReport`, not after the operation: oapi-codegen owns the
+ * `<OperationId>Response` namespace, and the operation is `reportPredictions`
+ * — the same reason `ImageReport` is not `ReportImagesResponse`.
+ */
+export const PredictionReport = z
+  .object({
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    predictions: z.int().nonnegative().openapi({ example: 34 }),
+  })
+  .openapi("PredictionReport");
+
 export const JobListQuery = z.object({
   status: JobStatus.optional().openapi({ param: { name: "status", in: "query" } }),
   limit: z

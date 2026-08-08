@@ -317,6 +317,42 @@ type JobStatusCounts struct {
 	Download int `json:"download"`
 }
 
+// PredictionBox defines model for PredictionBox.
+type PredictionBox struct {
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// Confidence Example: 0.87
+	Confidence float32 `json:"confidence"`
+
+	// PromptVersion Example: 2026-08-08-a
+	PromptVersion string `json:"prompt_version"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
+}
+
+// PredictionReport defines model for PredictionReport.
+type PredictionReport struct {
+	// Predictions Example: 34
+	Predictions int `json:"predictions"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
 // ReportImagesRequest defines model for ReportImagesRequest.
 type ReportImagesRequest struct {
 	// ConfigVersion Example: 2026-08-01-a
@@ -331,6 +367,16 @@ type ReportImagesRequest struct {
 	// FramesKept Example: 12
 	FramesKept int          `json:"frames_kept"`
 	Images     []ImageFrame `json:"images"`
+
+	// WorkerId Example: carls-ubuntu-1
+	WorkerId string `json:"worker_id"`
+}
+
+// ReportPredictionsRequest defines model for ReportPredictionsRequest.
+type ReportPredictionsRequest struct {
+	// ModelId Example: owlvit-base-patch32.onnx
+	ModelId     string          `json:"model_id"`
+	Predictions []PredictionBox `json:"predictions"`
 
 	// WorkerId Example: carls-ubuntu-1
 	WorkerId string `json:"worker_id"`
@@ -383,6 +429,9 @@ type HeartbeatJobJSONRequestBody = HeartbeatRequest
 
 // ReportImagesJSONRequestBody defines body for ReportImages for application/json ContentType.
 type ReportImagesJSONRequestBody = ReportImagesRequest
+
+// ReportPredictionsJSONRequestBody defines body for ReportPredictions for application/json ContentType.
+type ReportPredictionsJSONRequestBody = ReportPredictionsRequest
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -582,6 +631,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
 	ReportImages(ctx context.Context, id int, body ReportImagesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportPredictionsWithBody Report the boxes a prelabel worker's detector proposed
+	//
+	// M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole video's sampled frames in a single report, the same shape `reportImages` established for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE against `predictions` (migration 0003), and unlike `reportImages` there is no `ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather than replacing anything, a gap left open deliberately rather than closed here (see the handler's own comment).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
+	ReportPredictionsWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportPredictions Report the boxes a prelabel worker's detector proposed
+	//
+	// M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole video's sampled frames in a single report, the same shape `reportImages` established for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE against `predictions` (migration 0003), and unlike `reportImages` there is no `ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather than replacing anything, a gap left open deliberately rather than closed here (see the handler's own comment).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
+	ReportPredictions(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Liveness and deployment identity
 	//
@@ -854,6 +921,44 @@ func (c *Client) ReportImagesWithBody(ctx context.Context, id int, contentType s
 // Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
 func (c *Client) ReportImages(ctx context.Context, id int, body ReportImagesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportImagesRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportPredictionsWithBody Report the boxes a prelabel worker's detector proposed
+//
+// M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole video's sampled frames in a single report, the same shape `reportImages` established for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE against `predictions` (migration 0003), and unlike `reportImages` there is no `ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather than replacing anything, a gap left open deliberately rather than closed here (see the handler's own comment).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
+func (c *Client) ReportPredictionsWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportPredictionsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportPredictions Report the boxes a prelabel worker's detector proposed
+//
+// M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole video's sampled frames in a single report, the same shape `reportImages` established for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE against `predictions` (migration 0003), and unlike `reportImages` there is no `ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather than replacing anything, a gap left open deliberately rather than closed here (see the handler's own comment).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
+func (c *Client) ReportPredictions(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportPredictionsRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1267,6 +1372,53 @@ func NewReportImagesRequestWithBody(server string, id int, contentType string, b
 	return req, nil
 }
 
+// NewReportPredictionsRequest calls the generic ReportPredictions builder with application/json body
+func NewReportPredictionsRequest(server string, id int, body ReportPredictionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReportPredictionsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewReportPredictionsRequestWithBody constructs an http.Request for the ReportPredictions method, with any body, and a specified content type
+func NewReportPredictionsRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/jobs/%s/predictions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -1468,6 +1620,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/images (the `ReportImages` operationId).
 	ReportImagesWithResponse(ctx context.Context, id int, body ReportImagesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportImagesResponse, error)
+
+	// ReportPredictionsWithBodyWithResponse Report the boxes a prelabel worker's detector proposed
+	//
+	// M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole video's sampled frames in a single report, the same shape `reportImages` established for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE against `predictions` (migration 0003), and unlike `reportImages` there is no `ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather than replacing anything, a gap left open deliberately rather than closed here (see the handler's own comment).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
+	ReportPredictionsWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportPredictionsResponse, error)
+
+	// ReportPredictionsWithResponse Report the boxes a prelabel worker's detector proposed
+	//
+	// M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole video's sampled frames in a single report, the same shape `reportImages` established for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE against `predictions` (migration 0003), and unlike `reportImages` there is no `ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather than replacing anything, a gap left open deliberately rather than closed here (see the handler's own comment).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
+	ReportPredictionsWithResponse(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportPredictionsResponse, error)
 
 	// GetHealthWithResponse Liveness and deployment identity
 	//
@@ -1979,6 +2149,61 @@ func (r ReportImagesResponse) ContentType() string {
 	return ""
 }
 
+type ReportPredictionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PredictionReport
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReportPredictionsResponse) GetJSON200() *PredictionReport {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReportPredictionsResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReportPredictionsResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ReportPredictionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportPredictionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportPredictionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReportPredictionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2239,6 +2464,36 @@ func (c *ClientWithResponses) ReportImagesWithResponse(ctx context.Context, id i
 		return nil, err
 	}
 	return ParseReportImagesResponse(rsp)
+}
+
+// ReportPredictionsWithBodyWithResponse Report the boxes a prelabel worker's detector proposed
+//
+// M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole video's sampled frames in a single report, the same shape `reportImages` established for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE against `predictions` (migration 0003), and unlike `reportImages` there is no `ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather than replacing anything, a gap left open deliberately rather than closed here (see the handler's own comment).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
+func (c *ClientWithResponses) ReportPredictionsWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportPredictionsResponse, error) {
+	rsp, err := c.ReportPredictionsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportPredictionsResponse(rsp)
+}
+
+// ReportPredictionsWithResponse Report the boxes a prelabel worker's detector proposed
+//
+// M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole video's sampled frames in a single report, the same shape `reportImages` established for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE against `predictions` (migration 0003), and unlike `reportImages` there is no `ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather than replacing anything, a gap left open deliberately rather than closed here (see the handler's own comment).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
+func (c *ClientWithResponses) ReportPredictionsWithResponse(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportPredictionsResponse, error) {
+	rsp, err := c.ReportPredictions(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportPredictionsResponse(rsp)
 }
 
 // GetHealthWithResponse Liveness and deployment identity
@@ -2615,6 +2870,46 @@ func ParseReportImagesResponse(rsp *http.Response) (*ReportImagesResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ImageReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportPredictionsResponse parses an HTTP response from a ReportPredictionsWithResponse call
+func ParseReportPredictionsResponse(rsp *http.Response) (*ReportPredictionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportPredictionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PredictionReport
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

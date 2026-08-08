@@ -13,7 +13,9 @@ import {
   Job,
   JobIdParam,
   JobStats,
+  PredictionReport,
   ReportImagesRequest,
+  ReportPredictionsRequest,
   SEGMENT_SECONDS,
 } from "../schemas";
 
@@ -166,6 +168,40 @@ export const reportImagesRoute = createRoute({
     },
     400: errorResponse(
       "Malformed job id or body, frames_kept disagreeing with images.length, or a job that is not a chunk",
+    ),
+    404: errorResponse("No job with this id is held by this worker"),
+  },
+});
+
+export const reportPredictionsRoute = createRoute({
+  method: "post",
+  path: "/api/jobs/{id}/predictions",
+  operationId: "reportPredictions",
+  tags: ["jobs"],
+  summary: "Report the boxes a prelabel worker's detector proposed",
+  description:
+    "M10.3: one call per job, not one per box — a prelabel job (M11.1) covers a whole " +
+    "video's sampled frames in a single report, the same shape `reportImages` established " +
+    "for chunk jobs. Writes every row in one D1 batch, so a partial write can never leave " +
+    "predictions nobody's provenance covers. Insert-only: nothing here issues an UPDATE " +
+    "against `predictions` (migration 0003), and unlike `reportImages` there is no " +
+    "`ON CONFLICT` — a re-run after a reap writes the same boxes again as new rows rather " +
+    "than replacing anything, a gap left open deliberately rather than closed here (see the " +
+    "handler's own comment).",
+  request: {
+    params: JobIdParam,
+    body: {
+      content: { "application/json": { schema: ReportPredictionsRequest } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      description: "The prediction rows exist",
+      content: { "application/json": { schema: PredictionReport } },
+    },
+    400: errorResponse(
+      "Malformed job id or body, or a prediction naming an r2_key or class_name that does not exist",
     ),
     404: errorResponse("No job with this id is held by this worker"),
   },
@@ -591,6 +627,155 @@ export const reportImagesHandler: RouteHandler<
   // here, because an update still means this run's provenance is now correct
   // on that row.
   return c.json({ video_id: job.video_id, images: images.length }, 200);
+};
+
+/**
+ * Builds a `column IN (?, ?, ...)` fragment sized to `values`, so the lookups
+ * below resolve a whole report's worth of handles in a handful of statements
+ * rather than one `SELECT` per prediction.
+ */
+const placeholders = (values: unknown[]) => values.map(() => "?").join(",");
+
+/**
+ * D1 rejects a query carrying more than 100 bound parameters, and that limit
+ * is per *statement* — batching does not pool it.
+ *
+ * This is a real bound on the lookups below, not a theoretical one. M11.3
+ * samples 200 images per video by default, so a report naming a distinct
+ * `r2_key` for each would put 200 of them into one `IN (...)` and be rejected
+ * by D1 before a single row was read. The tests that exercise a handful of
+ * keys cannot see it, which is exactly why the chunking is stated here rather
+ * than left to whatever size the first report happens to be.
+ */
+const D1_MAX_BOUND_PARAMS = 100;
+
+/** Splits `values` into runs no query built from one of them can exceed D1's limit. */
+function chunkForBinding<T>(values: T[], reservedParams = 0): T[][] {
+  const size = D1_MAX_BOUND_PARAMS - reservedParams;
+  const chunks: T[][] = [];
+  for (let i = 0; i < values.length; i += size) chunks.push(values.slice(i, i + size));
+  return chunks;
+}
+
+export const reportPredictionsHandler: RouteHandler<
+  typeof reportPredictionsRoute,
+  { Bindings: Bindings }
+> = async (c) => {
+  const { id } = c.req.valid("param");
+  const { worker_id, model_id, predictions } = c.req.valid("json");
+
+  // Same lease check as every other write on a held job (heartbeat, complete,
+  // fanout, report-images): a request that only knew a job id could write
+  // prediction rows against somebody else's job.
+  //
+  // No job-kind check accompanies this the way `reportImages` rejects a
+  // non-chunk job: migration 0001's `jobs.kind` CHECK only allows `download`
+  // and `chunk` today, and the `prelabel` kind this endpoint exists for does
+  // not land until M11.1. There is nothing to assert against yet, so any
+  // held lease qualifies — the same as heartbeat and complete.
+  const job = await c.env.DB.prepare(`SELECT video_id FROM jobs WHERE ${HELD_BY}`)
+    .bind(id, worker_id)
+    .first<{ video_id: string }>();
+
+  if (!job) return notHeldByCaller(c);
+
+  // An empty report is well-formed (a detector finding nothing is a real
+  // outcome, not an error) and skipping straight to the answer avoids an
+  // `IN ()` with no placeholders below, which is invalid SQL.
+  if (predictions.length === 0) {
+    return c.json({ video_id: job.video_id, predictions: 0 }, 200);
+  }
+
+  // Resolves the worker's natural handles — `r2_key` and `classes.name`
+  // (`PredictionBox`'s own comment explains why those, not `image_id` and
+  // `class_id`) — into the ids `predictions` actually stores, before writing
+  // anything. Two lookups rather than trusting the request or letting a bad
+  // reference surface as an FK error from the insert: this is what turns
+  // "worker named an image or class that does not exist" into a 400 that
+  // names which one, instead of a D1 constraint failure with no field to
+  // point at.
+  //
+  // Images are scoped to `job.video_id`, the same way `reportImages` reads
+  // `video_id` off the held job rather than the body: an r2_key that is real
+  // but belongs to a different video must not resolve here, or a worker
+  // could write predictions against a video it was never assigned.
+  const r2Keys = [...new Set(predictions.map((p) => p.r2_key))];
+  const classNames = [...new Set(predictions.map((p) => p.class_name))];
+
+  // Chunked against D1_MAX_BOUND_PARAMS. The image lookup reserves one
+  // parameter for `video_id`, which every chunk has to re-bind.
+  const lookups = await c.env.DB.batch<{ id: number; handle: string }>([
+    ...chunkForBinding(r2Keys, 1).map((keys) =>
+      c.env.DB.prepare(
+        `SELECT id, r2_key AS handle FROM images
+          WHERE video_id = ? AND r2_key IN (${placeholders(keys)})`,
+      ).bind(job.video_id, ...keys),
+    ),
+    ...chunkForBinding(classNames).map((names) =>
+      c.env.DB.prepare(
+        `SELECT id, name AS handle FROM classes WHERE name IN (${placeholders(names)})`,
+      ).bind(...names),
+    ),
+  ]);
+
+  // Split back apart by position: the image chunks were queued first, so the
+  // first `imageChunks` results are theirs and the rest are the classes'.
+  const imageChunks = chunkForBinding(r2Keys, 1).length;
+  const rowsOf = (results: (typeof lookups)[number][]) =>
+    new Map(results.flatMap((result) => result.results.map((row) => [row.handle, row.id])));
+
+  const imageIdByKey = rowsOf(lookups.slice(0, imageChunks));
+  const classIdByName = rowsOf(lookups.slice(imageChunks));
+
+  const unknownKeys = r2Keys.filter((key) => !imageIdByKey.has(key));
+  const unknownClasses = classNames.filter((name) => !classIdByName.has(name));
+
+  if (unknownKeys.length > 0 || unknownClasses.length > 0) {
+    const parts: string[] = [];
+    if (unknownKeys.length > 0) parts.push(`unknown r2_key: ${unknownKeys.join(", ")}`);
+    if (unknownClasses.length > 0) {
+      parts.push(`unknown class_name: ${unknownClasses.join(", ")}`);
+    }
+    return c.json({ error: parts.join("; ") }, 400);
+  }
+
+  // One batch: every row lands or none does. `predictions` is never read
+  // back by anything that tolerates a partial write, and the goal here is
+  // the same one M8.4 states for `images` — a failure partway through must
+  // not leave rows whose provenance (`model_id`, `prompt_version`) is only
+  // half-recorded.
+  //
+  // Insert-only, and deliberately without `reportImages`' `ON CONFLICT`: a
+  // prelabel job reaped mid-report and re-run writes its boxes a second time
+  // as new rows. There is no natural key to collide on the way `images` has
+  // `(video_id, timestamp_seconds)` — the same detector on the same frame
+  // legitimately proposes several boxes, so "one row per (image, class)"
+  // would be a constraint on the data, not a statement about re-runs. Left
+  // open rather than guessed at here: the reaper cannot retire a `prelabel`
+  // job until M11.1 makes the kind exist, so there is no path that produces
+  // a duplicate yet, and M11.1 is where the re-run story has to be answered
+  // with the job lifecycle in front of it.
+  await c.env.DB.batch(
+    predictions.map((prediction) =>
+      c.env.DB.prepare(
+        `INSERT INTO predictions
+              (image_id, class_id, x_min, y_min, x_max, y_max, confidence, prompt_version, model_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        imageIdByKey.get(prediction.r2_key),
+        classIdByName.get(prediction.class_name),
+        prediction.x_min,
+        prediction.y_min,
+        prediction.x_max,
+        prediction.y_max,
+        prediction.confidence,
+        prediction.prompt_version,
+        model_id,
+      ),
+    ),
+  );
+
+  return c.json({ video_id: job.video_id, predictions: predictions.length }, 200);
 };
 
 /** A job whose worker reported it as unrecoverable, rather than one the reaper retired. */
