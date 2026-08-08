@@ -17,7 +17,7 @@ from __future__ import annotations
 import pathlib
 
 import torch
-from transformers import OwlViTForObjectDetection, OwlViTProcessor
+from transformers import CLIPTokenizerFast, OwlViTForObjectDetection
 
 MODEL_REPO = "google/owlvit-base-patch32"
 
@@ -66,8 +66,31 @@ def main() -> None:
     # CLIPTokenizerFast.from_pretrained("/opt/model/tokenizer") reads exactly
     # the four files this writes (vocab.json, merges.txt, tokenizer_config.
     # json, special_tokens_map.json), nothing else.
-    processor = OwlViTProcessor.from_pretrained(MODEL_REPO, revision=MODEL_REVISION)
-    processor.tokenizer.save_pretrained(OUT_DIR / "tokenizer")
+    # The tokenizer directly, not via OwlViTProcessor.
+    #
+    # OwlViTProcessor bundles a tokenizer *and* an image processor, and
+    # constructing one resolves both — which fails outright in this builder
+    # stage, because an OWL-ViT image processor needs torchvision or Pillow
+    # and neither is installed here:
+    #
+    #   ValueError: Could not load any image processor class for
+    #   google/owlvit-base-patch32. Missing optional dependencies:
+    #   torchvision, Pillow.
+    #
+    # Adding those to requirements-build.txt would fix the symptom and be the
+    # wrong answer: nothing in this file preprocesses an image. The export
+    # feeds torch.onnx.export a dummy pixel tensor it builds itself, below,
+    # and the *runtime* does its own resizing with its own Pillow
+    # (requirements.txt, app/onnx_model.py). The only thing wanted from the
+    # repo here is the four tokenizer files, so asking for the tokenizer is
+    # both what makes this work and what honestly describes the dependency.
+    #
+    # CLIPTokenizerFast specifically, rather than AutoTokenizer: the runtime
+    # loads this directory back with exactly that class, and naming the same
+    # one on both sides means the files written here cannot be a class the
+    # reader cannot construct.
+    tokenizer = CLIPTokenizerFast.from_pretrained(MODEL_REPO, revision=MODEL_REVISION)
+    tokenizer.save_pretrained(OUT_DIR / "tokenizer")
 
     dummy_pixel_values = torch.zeros(1, 3, IMAGE_SIZE, IMAGE_SIZE, dtype=torch.float32)
     dummy_input_ids = torch.zeros(1, TEXT_SEQ_LEN, dtype=torch.int64)
