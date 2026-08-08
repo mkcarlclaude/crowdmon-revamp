@@ -1,0 +1,15 @@
+# Runtime image. Deliberately no torch and no onnx (see requirements-build.
+# txt) — the model runs through onnxruntime's CPUExecutionProvider, and
+# `transformers` here is pinned only for CLIPTokenizerFast, which needs
+# neither a torch nor a tensorflow backend to tokenize text (it wraps the
+# Rust `tokenizers` crate, not a model). A plain `pip install transformers`
+# does not pull torch as a dependency — that only happens via extras like
+# `transformers[torch]`, which this file deliberately does not use.
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+onnxruntime==1.28.0
+transformers==5.14.1
+pillow==12.3.0
+numpy==2.5.1
+boto3==1.43.67
+pydantic==2.13.4

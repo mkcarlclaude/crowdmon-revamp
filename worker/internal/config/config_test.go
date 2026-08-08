@@ -364,6 +364,38 @@ func TestLoadRejectsPartialR2Credentials(t *testing.T) {
 	}
 }
 
+// The detector is optional exactly as tracing and R2 uploads are (M11.2): a
+// worker with no CROWDMON_DETECTOR_BASE_URL still has to run download and
+// chunk jobs, so an unset value must not be an error.
+func TestLoadTreatsTheDetectorAsOptional(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_DETECTOR_BASE_URL", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+	if cfg.DetectorEnabled() {
+		t.Error("DetectorEnabled() = true with no detector base url configured")
+	}
+}
+
+func TestLoadCarriesTheDetectorBaseURL(t *testing.T) {
+	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
+	t.Setenv("CROWDMON_DETECTOR_BASE_URL", "http://crowdmon-detector:8080")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned an unexpected error: %v", err)
+	}
+	if !cfg.DetectorEnabled() {
+		t.Error("DetectorEnabled() = false with a detector base url configured")
+	}
+	if cfg.DetectorBaseURL != "http://crowdmon-detector:8080" {
+		t.Errorf("DetectorBaseURL = %q, want http://crowdmon-detector:8080", cfg.DetectorBaseURL)
+	}
+}
+
 func TestLoadCarriesCompleteR2Credentials(t *testing.T) {
 	t.Setenv("CROWDMON_API_BASE_URL", "https://api.example.com")
 	t.Setenv("CROWDMON_R2_ACCOUNT_ID", "acct")

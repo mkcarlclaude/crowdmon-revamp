@@ -24,6 +24,22 @@ services:
     # Credentials and the API base URL. Not committed — see .env.example.
     env_file: .env
 
+    # Deliberately no `depends_on` on the detector service below. Detection
+    # is optional (worker/internal/config's DetectorEnabled()), and a box
+    # that has not minted the sidecar's R2 token yet — CLAUDE.md's existing
+    # "worker refuses to boot until Carl mints the bucket-scoped S3 token by
+    # hand" friction, repeated for a second credential — would leave the
+    # detector container crash-looping on settings.require_r2_credentials().
+    # A `depends_on: condition: service_healthy` here would then block the
+    # worker forever too, over a feature nobody has configured: "a worker
+    # with no detector configured must still run download and chunk jobs
+    # exactly as it does today" (issue #102) has to hold even when the
+    # detector service exists in this file but nobody has finished setting
+    # it up. worker/internal/detect.Client.New's own bounded retry
+    # (client.go) is what rides out the ordinary case — the sidecar is
+    # merely slower to load its model than the worker is to start — without
+    # coupling the two containers' lifecycles at the compose level.
+
     # Source videos (M7.1). A named volume rather than the container's own
     # filesystem, because the chunk jobs a download enqueues read the file it
     # left behind: an update that recreated the container would throw away
@@ -36,13 +52,16 @@ services:
     volumes:
       - source-videos:/home/worker/videos
 
-    # No ports, no inbound anything. The worker only makes outbound calls: to
-    # the API over the internet, to the collector through otlp.mkcarl.com —
-    # traces, logs, and as of M8.2 frame-extraction metrics, all the same host
-    # and the same gate — and since M8.3 to R2's S3-compatible endpoint
-    # directly, because frame bytes never transit the Workers API (CONTEXT.md
-    # §2). It joins no network beyond the default one this project creates, and
-    # in particular not the monitoring stack's — nothing needs to reach it.
+    # No ports published to the host. The worker only makes outbound calls:
+    # to the API over the internet, to the collector through
+    # otlp.mkcarl.com — traces, logs, and as of M8.2 frame-extraction
+    # metrics, all the same host and the same gate — since M8.3 to R2's
+    # S3-compatible endpoint directly, because frame bytes never transit the
+    # Workers API (CONTEXT.md §2), and as of M11.2 to the detector service
+    # below, by its compose service name (CROWDMON_DETECTOR_BASE_URL=
+    # http://detector:8080 in .env.example). It joins no network beyond the
+    # default one this project creates, and in particular not the monitoring
+    # stack's — nothing needs to reach it.
 
     # R2, dedup and metrics settings flow through env_file above with
     # everything else — no separate `environment:` list here, and none should
@@ -66,6 +85,68 @@ services:
       resources:
         limits:
           memory: 4g
+
+  detector:
+    # Pre-labelling's model host (M11.2, CONTEXT.md §12) — a Python sidecar,
+    # not in-process ONNX inside the worker, because an open-vocabulary
+    # detector needs a CLIP-style tokenizer for the text prompts and that is
+    # a worse bet to hand-roll in Go than to take from a well-exercised
+    # Python one. See deploy/detector/README.md for the model choice and the
+    # thread budget below.
+    image: ghcr.io/mkcarlclaude/crowdmon-detector:latest
+    container_name: crowdmon-detector
+    restart: unless-stopped
+
+    # Same file as the worker's. R2_ACCOUNT_ID and R2_BUCKET are shared
+    # values (there is one account, one bucket); the detector's own R2
+    # credentials are the CROWDMON_DETECTOR_R2_* pair, a second token scoped
+    # Object Read only — see deploy/detector/README.md's "Getting bytes from
+    # R2" for why this sidecar holds a credential of its own rather than the
+    # worker forwarding bytes it already fetched.
+    env_file: .env
+
+    # No ports published to the host — reached only by the worker container,
+    # over this compose project's default network, at http://detector:8080.
+    expose:
+      - "8080"
+
+    # Gates readiness on the model actually being loaded (app/main.py's
+    # lifespan), not merely on the process existing — GET /health answers
+    # 503 until then. Python's stdlib rather than curl or wget: the runtime
+    # image is python:3.13-slim with neither installed, and adding one only
+    # to satisfy a healthcheck would be a second thing this Dockerfile
+    # carries for no reason beyond this one line.
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request as u; u.urlopen('http://localhost:8080/health', timeout=3)"]
+      # A cold start is loading an ONNX model into memory on a two-core box
+      # already running nine other containers (CONTEXT.md §2) — generous
+      # relative to the worker's own startup retry budget (client.go,
+      # worker/internal/detect), which is the thing actually consuming this
+      # healthcheck's result: nothing in this compose file blocks on it
+      # (deliberately — see the worker service's own comment above), so a
+      # slow-but-correct value here costs nothing.
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    # Two cores' worth of CPU and enough RAM to hold one ONNX session and
+    # one decoded 768x768 image at a time — this service processes exactly
+    # one request at a time (onnx_model.py's own lock), so there is no
+    # concurrency here that would need more. See deploy/detector/README.md's
+    # "Thread budget" for why 2 cores and not fewer or all 4 logical ones.
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
 
 volumes:
   # Survives `docker compose up` recreating the container, which is the whole

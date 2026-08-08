@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/config"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/detect"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/frames"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/sample"
@@ -82,6 +83,10 @@ func run(ctx context.Context) error {
 		"logs_export", cfg.LogsEnabled(),
 		"metrics_export", cfg.MetricsEnabled(),
 		"r2_bucket", cfg.R2Bucket,
+		// True here only means the sidecar is configured, not yet reachable —
+		// the "pre-labelling configured" log a few lines below carries the
+		// model id once detect.New has actually confirmed that.
+		"detector_configured", cfg.DetectorEnabled(),
 		// The effective threshold, resolved through frames.Config rather than
 		// logged as the raw config value: a worker that left it unset would
 		// otherwise report "0", which is not the number it will deduplicate at.
@@ -109,6 +114,30 @@ func run(ctx context.Context) error {
 	s3Client, err := frames.NewClient(ctx, cfg.R2AccountID, cfg.R2AccessKeyID, cfg.R2SecretAccessKey)
 	if err != nil {
 		return err
+	}
+
+	// Nil when CROWDMON_DETECTOR_BASE_URL is unset, which the pipeline already
+	// treats as "pre-labelling is not configured" rather than a crash
+	// (pipeline.go's prelabel branch) — the same shape metrics has just above.
+	// That is the only path a nil Detector may take: config that is *present*
+	// but points at a sidecar detect.New could never reach gets returned as a
+	// startup error instead, below, for the same reason UploadsEnabled()
+	// fails closed rather than silently skipping R2 — a worker that thinks it
+	// can pre-label and cannot would burn every prelabel job's attempt
+	// ceiling one flaky poll at a time instead of failing once, loudly, at
+	// the one moment an operator is watching this container come up.
+	var detector worker.Detector
+	if cfg.DetectorEnabled() {
+		detectorClient, err := detect.New(ctx, cfg.DetectorBaseURL)
+		if err != nil {
+			return fmt.Errorf(
+				"CROWDMON_DETECTOR_BASE_URL is set to %s but the sidecar never answered: %w",
+				cfg.DetectorBaseURL, err)
+		}
+		detector = detectorClient
+
+		logger.InfoContext(ctx, "pre-labelling configured",
+			"detector_base_url", cfg.DetectorBaseURL, "model_id", detectorClient.ModelID())
 	}
 
 	// Nil when no metrics endpoint is configured, which the pipeline treats as
@@ -146,20 +175,28 @@ func run(ctx context.Context) error {
 		Extractor:  frames.Extractor{},
 		Deduper:    frames.Deduper{},
 		Uploader:   frames.Uploader{Client: s3Client, Bucket: cfg.R2Bucket},
-		// The same client as Queue. Two fields because they belong to the two
-		// job kinds, not because there are two connections.
+		// The same client as Queue. Separate fields because they belong to
+		// different job kinds, not because there are multiple connections —
+		// Images serves chunk jobs and the prelabel sampler's candidate-pool
+		// read, Predictions serves prelabel reports, and *queue.Client
+		// satisfies all of them.
 		Images: jobs,
-		// M11.3's own dependency: jobs (the same *queue.Client as Images and
-		// Queue above) is also where the prelabel sample's candidate pool is
-		// read from. Detector and Prompts are left unset here — M11.2 and M12
-		// wire those — which is why prelabel jobs are still refused as
-		// misconfigured (retryably, per prelabel's own comment) until this
-		// binary carries all three.
-		Sampler:    sample.Sampler{Images: jobs, Budget: cfg.PrelabelSampleSize},
-		Extraction: frames.Config{DedupThreshold: cfg.DedupThreshold},
-		Metrics:    metrics,
-		Logger:     logger,
-		WorkerID:   cfg.WorkerID,
+		// The three prelabel dependencies, now all present: M11.3's sampler,
+		// M11.2's detector, and the prediction reporter. Detector is nil
+		// exactly when CROWDMON_DETECTOR_BASE_URL is unset (above), and
+		// pipeline.go treats that as a retryable misconfiguration rather than
+		// a crash — a worker without a detector still runs download and chunk
+		// jobs unchanged. Prompts stays unset until M12 makes classes
+		// editable; until then prelabel refuses on the empty prompt set,
+		// which is why this binary is not yet one that completes a prelabel
+		// job.
+		Sampler:     sample.Sampler{Images: jobs, Budget: cfg.PrelabelSampleSize},
+		Detector:    detector,
+		Predictions: jobs,
+		Extraction:  frames.Config{DedupThreshold: cfg.DedupThreshold},
+		Metrics:     metrics,
+		Logger:      logger,
+		WorkerID:    cfg.WorkerID,
 	}
 
 	runner := worker.Runner{

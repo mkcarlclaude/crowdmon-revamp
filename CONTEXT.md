@@ -1033,17 +1033,27 @@ mechanism this project has, and a queue job is inside all of them.
 timeline, and a per-chunk job cannot see outside its own sixty seconds.
 
 **Detection sits behind a one-method interface** — image path plus prompts in, boxes with
-confidences out. Production runs an ONNX open-vocabulary model on the box's CPU; tests
-substitute a table of known boxes, so no test needs a model file, an ONNX runtime or a GPU.
-Same shape as `frames.Deduper`'s injectable hash, and the same payoff: the model is a
-one-file swap, which matters because it must run on an i5-7200U and the right choice is
-not yet known.
+confidences out. Production talks to an ONNX open-vocabulary model over HTTP, in a Python
+sidecar container rather than in-process in the Go worker (M11.2): an open-vocabulary
+detector needs a CLIP-style tokenizer for the text prompts, and getting that right by hand
+in Go is a worse bet than a well-exercised Python one. Tests substitute a table of known
+boxes, so no test needs a model file, an ONNX runtime or a GPU. Same shape as
+`frames.Deduper`'s injectable hash, and the same payoff: the model is a swap — today
+OWL-ViT (`google/owlvit-base-patch32`), chosen over YOLO-World because YOLO-World's
+standard ONNX export bakes the class vocabulary in as constants, which would mean a
+redeploy every time a prompt changes and defeats the point of choosing an open-vocabulary
+model at all — and the swap costs one image rebuild, not a change to this repo.
 
-**The hardware makes bounded sampling non-optional.** Open-vocabulary detection on that
-CPU is seconds per image; 200 frames is minutes per video, while every kept frame from a
-97-minute video would be most of a night. The 940MX marked unusable for *training* is
-worth re-measuring for *inference* before being written off — `dcgm_exporter` is already
-on the box, so the answer would arrive in Grafana.
+**The 940MX question is closed, not merely re-measured.** The card is Maxwell, compute
+capability 5.0, and CUDA 13's release notes say plainly that Maxwell support is gone —
+running anything on it now would mean pinning the whole detection stack to a dead CUDA 12.x
+branch for a card with 2GB of VRAM, not a live option to keep open. Detection runs CPU-only,
+on the same two cores as everything else on the box, and open-vocabulary inference at that
+budget is seconds per image — 200 frames is minutes per video, while every kept frame from a
+97-minute video would be most of a night, which is what makes bounded sampling non-optional
+rather than a nicety. What makes this reversible if the hardware ever changes is not a note
+to revisit it — it is the one-method interface above: a future GPU box implements the same
+`Detector` and nothing upstream of it has to know.
 
 ### Data model
 
