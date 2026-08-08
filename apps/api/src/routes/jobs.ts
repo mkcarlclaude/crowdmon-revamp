@@ -1,4 +1,5 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
+import { trace } from "@opentelemetry/api";
 import type { Context } from "hono";
 import type { Bindings } from "../bindings";
 import {
@@ -11,6 +12,7 @@ import {
   ImageReport,
   Job,
   JobIdParam,
+  JobStats,
   ReportImagesRequest,
   SEGMENT_SECONDS,
 } from "../schemas";
@@ -169,6 +171,63 @@ export const reportImagesRoute = createRoute({
   },
 });
 
+export const jobStatsRoute = createRoute({
+  method: "get",
+  path: "/api/jobs/stats",
+  operationId: "jobStats",
+  tags: ["jobs"],
+  summary: "Job counts by status and kind",
+  description:
+    "The only place queue depth can be read from (CONTEXT.md §6: Workers export traces " +
+    "only, and Prometheus cannot scrape a Worker). The Go worker polls this once per " +
+    "metrics export interval and republishes it as the `queue_depth{status,kind}` gauge " +
+    "Prometheus actually scrapes (worker/internal/telemetry/metrics.go) — the dashboard's " +
+    "queue-depth panel reads that gauge, never this endpoint directly. Sits beside claim, " +
+    "heartbeat and complete rather than under `/api/admin/*`: same trust boundary as the " +
+    "rest of `/api/jobs/*`, which carries no Access assertion and no worker-id credential " +
+    "today, and this endpoint is read-only besides — a stray caller learns nothing here " +
+    "it could not already infer by polling claim until it stopped returning 200.",
+  responses: {
+    200: {
+      description: "Every (status, kind) combination, zero-filled where D1 has no rows",
+      content: { "application/json": { schema: JobStats } },
+    },
+  },
+});
+
+export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, { Bindings: Bindings }> = async (
+  c,
+) => {
+  // One statement, one GROUP BY — the task's own constraint, and it is enough:
+  // this is a dashboard read on an interval, not a lease operation, so there
+  // is nothing here that needs a transaction or a second round trip.
+  const { results } = await c.env.DB.prepare(
+    "SELECT status, kind, COUNT(*) AS count FROM jobs GROUP BY status, kind",
+  ).all<{
+    status: "pending" | "claimed" | "done" | "failed";
+    kind: "download" | "chunk";
+    count: number;
+  }>();
+
+  // Every combination starts at zero and only the ones D1 actually returned
+  // overwrite it. This is the zero-fill `JobStats`' own comment (schemas.ts)
+  // promises the Go worker's gauge callback it will never have to do itself —
+  // seeing this shape is what lets that callback report a drained queue as
+  // eight zeros instead of eight absences.
+  const counts = {
+    pending: { download: 0, chunk: 0 },
+    claimed: { download: 0, chunk: 0 },
+    done: { download: 0, chunk: 0 },
+    failed: { download: 0, chunk: 0 },
+  };
+
+  for (const row of results) {
+    counts[row.status][row.kind] = row.count;
+  }
+
+  return c.json(counts, 200);
+};
+
 export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bindings }> = async (
   c,
 ) => {
@@ -192,10 +251,23 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
             attempts     = attempts + 1,
             updated_at   = ?
       WHERE id = (SELECT id FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1)
-  RETURNING id, kind, video_id, attempts`,
+  RETURNING id, kind, video_id, attempts, traceparent, created_at`,
   )
     .bind(worker_id, claimedAt, claimedAt, claimedAt)
-    .first<{ id: number; kind: "download" | "chunk"; video_id: string; attempts: number }>();
+    .first<{
+      id: number;
+      kind: "download" | "chunk";
+      video_id: string;
+      attempts: number;
+      // Whatever the row that created this job stamped onto it (M9.2) — the
+      // submit request for a download, the fan-out request for a chunk.
+      // Genuinely null for a job with no stored context, not merely absent.
+      traceparent: string | null;
+      // Free on this statement — one more column on a `RETURNING` clause the
+      // claim already pays for — and the only way to compute queue wait
+      // without a second round trip (M9.2's `job.claimed` span).
+      created_at: number;
+    }>();
 
   if (!job) return c.body(null, 204);
 
@@ -236,6 +308,22 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, { Bindings: Bin
       video_id: job.video_id,
       video_url: video.url,
       attempts: job.attempts,
+      // Handed back as stored, not re-derived: the worker extracts it with
+      // `propagation.TraceContext` into the context its job spans start from,
+      // so a job whose row carries no context (or one that fails to parse)
+      // falls back to the root span it would have started anyway (M9.2).
+      traceparent: job.traceparent,
+      // `claimedAt` came from this isolate's clock (`now()`, above);
+      // `created_at` was stamped
+      // by D1's own `strftime('%s','now')` at insert time, on a different
+      // clock than this Worker's. The two are close enough in practice that
+      // this is worth reporting, but not provably monotonic against each
+      // other, so the subtraction is clamped rather than trusted to always
+      // land on the right side of zero — `queue_wait_seconds` is declared
+      // `.nonnegative()` in the contract, and a claim landing within the same
+      // second a fast-drifting clock pair disagreed about would otherwise
+      // fail that validation on the way out.
+      queue_wait_seconds: Math.max(0, claimedAt - job.created_at),
       ...(chunk ? { chunk } : {}),
     },
     200,
@@ -308,6 +396,17 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: B
   const segments = segmentsFor(duration_seconds);
   const at = now();
 
+  // The trace this request arrived inside (M9.2), read straight off the
+  // header rather than through `trace.getActiveSpan()`. The Go worker injects
+  // `traceparent` on its outbound call using whichever span was active when
+  // it fanned out — a child of the download job's own span, which was itself
+  // extracted from what submit stamped on that job's row — so forwarding the
+  // header verbatim is what carries the whole chain's trace id onto every
+  // chunk this call creates. Absent when tracing produced nothing upstream,
+  // in which case every chunk job gets the same null a pre-M9.2 row would
+  // have, and the worker's fallback (a root span) is unchanged.
+  const traceparent = c.req.header("traceparent") ?? null;
+
   // One batch, and that is a constraint M3.4 imposed on this endpoint rather
   // than a preference: the claim handler retires a chunk job whose `chunks`
   // row is missing as corruption, which is only correct if the pair can never
@@ -333,10 +432,10 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, { Bindings: B
   for (const segment of segments) {
     statements.push(
       c.env.DB.prepare(
-        `INSERT INTO jobs (kind, video_id)
-              SELECT 'chunk', ?
+        `INSERT INTO jobs (kind, video_id, traceparent)
+              SELECT 'chunk', ?, ?
                WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE video_id = ? AND segment_index = ?)`,
-      ).bind(job.video_id, job.video_id, segment.index),
+      ).bind(job.video_id, traceparent, job.video_id, segment.index),
       c.env.DB.prepare(
         `INSERT INTO chunks (job_id, video_id, segment_index, start_seconds, end_seconds)
               SELECT last_insert_rowid(), ?, ?, ?, ?
@@ -494,6 +593,65 @@ export const reportImagesHandler: RouteHandler<
   return c.json({ video_id: job.video_id, images: images.length }, 200);
 };
 
+/** A job whose worker reported it as unrecoverable, rather than one the reaper retired. */
+export const FAILED_SPAN = "job.failed";
+
+const TRACER = "crowdmon.jobs";
+
+/**
+ * Records one span for a worker-reported terminal failure — the half of the
+ * failure taxonomy `reclaim-spans.ts` does not cover, since a reported
+ * failure never touches the reaper at all (CONTEXT.md §Q14/M6 amendment:
+ * "the ceiling covers crashes, not reported failures"). That file explains
+ * why a reclaim is one span per job rather than a count folded into an
+ * attribute, and why `job.reclaimed`/`job.retired` are two span *names*
+ * rather than one name plus an `outcome` attribute — Tempo's metrics-
+ * generator keys on service, span name, kind and status, and neither a count
+ * nor an attribute survives that translation into a Grafana series. The
+ * same argument holds here without restating it: `job.failed` needs its own
+ * name for the same reason `job.retired` does, because the dashboard's
+ * "Failure rate" panel has to be able to sum the two together.
+ *
+ * Unlike `reclaim-spans.ts`, this lives beside the SQL that decides whether
+ * to call it, rather than in its own module tested on Node. That split
+ * existed because `@opentelemetry/api`'s ESM build was believed not to
+ * resolve under workerd's module loader (this file's own
+ * `reclaim-spans.ts` and `vitest.config.ts` both say so) — a belief this
+ * function's own test disproves. `tracing.ts` (M9.2) already imports `trace`
+ * from the same package and runs inside every `test/workers/*.test.ts` via
+ * `nameSpanAfterRoute`, and a probe that called
+ * `trace.getTracer(...).startSpan(...).end()` — plus the full Node-style
+ * `BasicTracerProvider`/`InMemorySpanExporter` recording setup
+ * `traceparent.test.ts` uses — directly inside the `workers` vitest project
+ * passed cleanly. Whatever broke this originally is not broken today, so
+ * there is no correctness reason left to keep new code like this out of the
+ * module its SQL already lives in.
+ */
+function recordJobFailed(job: {
+  id: number;
+  kind: "download" | "chunk";
+  video_id: string;
+  attempts: number;
+  failure_reason: string | null;
+}): void {
+  trace
+    .getTracer(TRACER)
+    .startSpan(FAILED_SPAN, {
+      attributes: {
+        "crowdmon.job.id": job.id,
+        "crowdmon.job.kind": job.kind,
+        "crowdmon.video.id": job.video_id,
+        "crowdmon.job.attempts": job.attempts,
+        // Recorded verbatim, same as the column it mirrors (CompleteRequest's
+        // own comment): the difference between "a video permanently lost"
+        // and "a video permanently lost to a geo-block" is exactly what an
+        // operator wants on the span without re-querying D1 for it.
+        ...(job.failure_reason ? { "crowdmon.job.failure_reason": job.failure_reason } : {}),
+      },
+    })
+    .end();
+}
+
 export const completeJobHandler: RouteHandler<
   typeof completeJobRoute,
   { Bindings: Bindings }
@@ -503,19 +661,41 @@ export const completeJobHandler: RouteHandler<
 
   // `claimed_by` is cleared on the way out so a finished row cannot be
   // mistaken for a held one, and the reaper's partial index stops covering it.
-  const { meta } = await c.env.DB.prepare(
+  //
+  // `RETURNING` rather than the bare `.run()` this used before M9.1: the
+  // failure span needs the job's kind, video id and attempts, and none of
+  // them were otherwise in scope here. `HELD_BY` still names exactly one row
+  // by primary key, so switching to `.first()` changes nothing about how a
+  // worker that does not hold the lease is told apart from one that does —
+  // both remain "no row came back."
+  const job = await c.env.DB.prepare(
     `UPDATE jobs
         SET status         = ?,
             failure_reason = ?,
             claimed_by     = NULL,
             heartbeat_at   = NULL,
             updated_at     = ?
-      WHERE ${HELD_BY}`,
+      WHERE ${HELD_BY}
+  RETURNING kind, video_id, attempts`,
   )
     .bind(status, status === "failed" ? (failure_reason ?? null) : null, now(), id, worker_id)
-    .run();
+    .first<{ kind: "download" | "chunk"; video_id: string; attempts: number }>();
 
-  if (meta.changes === 0) return notHeldByCaller(c);
+  if (!job) return notHeldByCaller(c);
+
+  // Only a reported failure gets a span. A reported success is not an event
+  // this milestone's panel counts, and giving it one would double as a
+  // second, differently-named way to ask Tempo "how many jobs finished" that
+  // nothing in this dashboard needs.
+  if (status === "failed") {
+    recordJobFailed({
+      id,
+      kind: job.kind,
+      video_id: job.video_id,
+      attempts: job.attempts,
+      failure_reason: failure_reason ?? null,
+    });
+  }
 
   return c.body(null, 204);
 };

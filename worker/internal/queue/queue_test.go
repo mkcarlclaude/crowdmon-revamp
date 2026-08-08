@@ -9,15 +9,20 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
 )
 
 // request is what the API saw. The seam is the wire, so the tests assert on
 // this and never on how the client got there.
 type request struct {
-	method string
-	path   string
-	body   map[string]any
+	method  string
+	path    string
+	body    map[string]any
+	headers http.Header
 }
 
 // serverRecording answers every request with the given handler and records
@@ -38,7 +43,7 @@ func serverRecording(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 				t.Errorf("request body is not JSON: %s", raw)
 			}
 		}
-		seen = append(seen, request{method: r.Method, path: r.URL.Path, body: body})
+		seen = append(seen, request{method: r.Method, path: r.URL.Path, body: body, headers: r.Header})
 
 		handler(w, r)
 	}))
@@ -346,6 +351,62 @@ func TestFanOutOmitsATitleItDoesNotHave(t *testing.T) {
 	}
 }
 
+// The other half of M9.2's join: whatever span is active on the caller's
+// context has to reach the API as a `traceparent` header, or the API's own
+// span for this request — and the stored value it later stamps onto every
+// chunk job — would start a trace of its own instead of continuing this one.
+func TestFanOutCarriesTheActiveSpanAsATraceparentHeader(t *testing.T) {
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator()) })
+
+	provider := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "segments": 1, "created": 1}`)
+	})
+
+	ctx, span := provider.Tracer("test").Start(context.Background(), "video.fanout")
+	_, err := newClient(t, server.URL).FanOut(ctx, 7, queue.Probed{
+		DurationSeconds: 60, Width: 1920, Height: 1080,
+	})
+	span.End()
+	if err != nil {
+		t.Fatalf("FanOut() returned an unexpected error: %v", err)
+	}
+
+	want := "00-" + span.SpanContext().TraceID().String() + "-" + span.SpanContext().SpanID().String() + "-01"
+	if got := (*seen)[0].headers.Get("traceparent"); got != want {
+		t.Errorf("traceparent header = %q, want %q (the fan-out call's own active span)", got, want)
+	}
+}
+
+// With no active span, injection has nothing to write — the propagator's own
+// validity check is what makes this a no-op rather than a header carrying a
+// zero-valued trace id, which the API would otherwise store as if it meant
+// something.
+func TestFanOutSendsNoTraceparentWithoutAnActiveSpan(t *testing.T) {
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator()) })
+
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"video_id": "dQw4w9WgXcQ", "segments": 1, "created": 1}`)
+	})
+
+	_, err := newClient(t, server.URL).FanOut(context.Background(), 7, queue.Probed{
+		DurationSeconds: 60, Width: 1920, Height: 1080,
+	})
+	if err != nil {
+		t.Fatalf("FanOut() returned an unexpected error: %v", err)
+	}
+
+	if got := (*seen)[0].headers.Get("traceparent"); got != "" {
+		t.Errorf("traceparent header = %q with no active span, want none sent at all", got)
+	}
+}
+
 func TestFanOutReportsALostLease(t *testing.T) {
 	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -483,5 +544,71 @@ func TestReportImagesReportsARefusedReportAsPermanent(t *testing.T) {
 	}
 	if errors.Is(err, queue.ErrLeaseLost) {
 		t.Fatalf("ReportImages() error = %v, want it distinct from a lost lease", err)
+	}
+}
+
+func TestStatsDecodesEveryStatusAndKind(t *testing.T) {
+	server, seen := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"pending": {"download": 1, "chunk": 5},
+			"claimed": {"download": 1, "chunk": 0},
+			"done":    {"download": 40, "chunk": 300},
+			"failed":  {"download": 0, "chunk": 2}
+		}`)
+	})
+
+	stats, err := newClient(t, server.URL).Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats() returned an unexpected error: %v", err)
+	}
+
+	got := (*seen)[0]
+	if got.method != http.MethodGet || got.path != "/api/jobs/stats" {
+		t.Errorf("Stats() sent %s %s, want GET /api/jobs/stats", got.method, got.path)
+	}
+
+	want := queue.Stats{
+		Pending: queue.StatusCounts{Download: 1, Chunk: 5},
+		Claimed: queue.StatusCounts{Download: 1, Chunk: 0},
+		Done:    queue.StatusCounts{Download: 40, Chunk: 300},
+		Failed:  queue.StatusCounts{Download: 0, Chunk: 2},
+	}
+	if stats != want {
+		t.Errorf("Stats() = %+v, want %+v", stats, want)
+	}
+}
+
+// An empty queue is a real answer, not an error — every status is present at
+// zero, because the API zero-fills rather than omitting combinations that
+// have no rows (schemas.ts's JobStats comment). Stats must hand that
+// straight through rather than treating an all-zero body as malformed.
+func TestStatsReportsAnEmptyQueueAsZeroesNotAnError(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"pending": {"download": 0, "chunk": 0},
+			"claimed": {"download": 0, "chunk": 0},
+			"done":    {"download": 0, "chunk": 0},
+			"failed":  {"download": 0, "chunk": 0}
+		}`)
+	})
+
+	stats, err := newClient(t, server.URL).Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats() returned an unexpected error: %v", err)
+	}
+	if stats != (queue.Stats{}) {
+		t.Errorf("Stats() = %+v, want the zero value", stats)
+	}
+}
+
+func TestStatsReportsAnAPIFailure(t *testing.T) {
+	server, _ := serverRecording(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	if _, err := newClient(t, server.URL).Stats(context.Background()); err == nil {
+		t.Fatal("Stats() returned no error for a 500")
 	}
 }

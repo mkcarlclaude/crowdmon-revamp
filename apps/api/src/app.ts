@@ -16,6 +16,8 @@ import {
   fanOutJobRoute,
   heartbeatHandler,
   heartbeatRoute,
+  jobStatsHandler,
+  jobStatsRoute,
   reportImagesHandler,
   reportImagesRoute,
 } from "./routes/jobs";
@@ -90,6 +92,7 @@ app.openapi(heartbeatRoute, heartbeatHandler);
 app.openapi(completeJobRoute, completeJobHandler);
 app.openapi(fanOutJobRoute, fanOutJobHandler);
 app.openapi(reportImagesRoute, reportImagesHandler);
+app.openapi(jobStatsRoute, jobStatsHandler);
 
 // Serves the same document the build artifact contains, from the same config.
 // A deployed Worker that describes itself is worth one route: it answers "what

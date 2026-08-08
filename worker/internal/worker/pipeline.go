@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/api"
@@ -103,10 +104,20 @@ type Pipeline struct {
 	// configured rather than a mistake.
 	Metrics Metrics
 	Logger  *slog.Logger
+	// WorkerID names this process on the job.claimed span (M9.2's join point,
+	// below). It duplicates queue.Client's own workerID rather than reaching
+	// into that package for it: config.Config.WorkerID is already the single
+	// source both are built from, and a getter here would exist only to read
+	// a private field the queue package has no other reason to expose.
+	WorkerID string
 }
 
 // Work runs the job, whichever kind it is. It satisfies WorkFunc.
 func (p Pipeline) Work(ctx context.Context, job *api.Job) error {
+	ctx = withStoredTraceContext(ctx, job.Traceparent)
+
+	p.recordClaimed(ctx, job)
+
 	switch job.Kind {
 	case api.Download:
 		return p.download(ctx, job)
@@ -119,6 +130,40 @@ func (p Pipeline) Work(ctx context.Context, job *api.Job) error {
 		// hide that behind a generic "exhausted its attempts".
 		return Terminal(fmt.Errorf("this worker does not know how to run a %q job", job.Kind))
 	}
+}
+
+// recordClaimed emits job.claimed, the join point Issue #47 and PRD §5
+// criterion 6 both name as part of the single trace — until now the only
+// piece of the job lifecycle that was not actually in it. The real claim,
+// the `POST /api/jobs/claim` round trip, happened before this function ever
+// ran, inside the worker's own polling trace: the response has to come back
+// before anything knows which trace this job belongs to, so there is no
+// request left to re-parent by the time withStoredTraceContext (just above,
+// in Work) has adopted that trace. What this span honestly is: a marker
+// dropped into the adopted context saying a claim happened and what it
+// carried, not the request itself wearing a new parent. Placed before
+// job.download/job.chunk opens so it reads first in the trace, the way the
+// claim itself came first.
+//
+// No duration worth measuring, so none is faked — started and ended
+// immediately, exactly as reclaim-spans.ts's job.reclaimed and job.retired
+// are: this is an event, and the interesting fact is that it happened.
+//
+// Attributes are what an operator staring at this trace at 2am would want
+// without leaving it: which worker took the job (there is only one today,
+// but CONTEXT.md's affinity constraint already anticipates a second), the
+// attempt number (a job.claimed on attempt 3 is a job about to be retired
+// if this run also fails), and the queue wait the API computed and handed
+// back on the claim response — how long the row sat pending before this
+// worker picked it up, the one number here that could not be reconstructed
+// from anywhere else in the trace.
+func (p Pipeline) recordClaimed(ctx context.Context, job *api.Job) {
+	_, span := tracer().Start(ctx, "job.claimed", trace.WithAttributes(
+		attribute.String("crowdmon.worker.id", p.WorkerID),
+		attribute.Int("crowdmon.job.attempts", job.Attempts),
+		attribute.Int("crowdmon.job.queue_wait_seconds", job.QueueWaitSeconds),
+	))
+	span.End()
 }
 
 // download is phase one of CONTEXT.md §Q13: fetch, measure, fan out.
@@ -481,6 +526,31 @@ func (p Pipeline) log() *slog.Logger {
 		return slog.Default()
 	}
 	return p.Logger
+}
+
+// withStoredTraceContext extracts a job's stored traceparent (M9.2) into ctx,
+// so the `job.download` or `job.chunk` span opened a moment later is a child
+// of whichever request wrote the row — submit for a download job, the
+// fan-out call for a chunk job — joining this worker's spans to the trace
+// that has been running since the video was first submitted.
+//
+// `propagation.TraceContext`, not a hand-rolled parse: it is the propagator
+// telemetry.Setup already installs as the global (for the outbound side —
+// see queue.tracingTransport), and using it here rather than a second parser
+// means there is exactly one place that decides what a valid `traceparent`
+// looks like.
+//
+// A nil or malformed value is not an error and is never logged as one:
+// Extract leaves ctx unchanged when the carrier's `traceparent` does not
+// parse, which is precisely today's behaviour for a job with nothing stored
+// at all — a fresh root span. Telemetry must never be the reason a job fails,
+// so there is nothing here worth checking or reporting.
+func withStoredTraceContext(ctx context.Context, traceparent *string) context.Context {
+	if traceparent == nil || *traceparent == "" {
+		return ctx
+	}
+	carrier := propagation.MapCarrier{"traceparent": *traceparent}
+	return otel.GetTextMapPropagator().Extract(ctx, carrier)
 }
 
 // tracer is resolved per call rather than once at construction. The global

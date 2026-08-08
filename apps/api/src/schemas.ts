@@ -116,6 +116,26 @@ export const Job = z
     // Incremented on claim, so the worker can see how close this job is to the
     // ceiling that will retire it as failed.
     attempts: z.int().nonnegative().openapi({ example: 1 }),
+    // The trace context (M9.2) whoever wrote this row was inside, in W3C
+    // `traceparent` form. `.nullable()` rather than `.optional()`: the column
+    // is genuinely nullable in migration 0002 — every row from before it
+    // existed, and any job written with no active span — and the worker has
+    // to tell "there is no context" apart from "the field was left out",
+    // which an absent key and a JSON `null` cannot otherwise be told apart
+    // from in JavaScript. A null here means exactly what it means on a job
+    // with no `traceparent` today: start a root span.
+    traceparent: z.string().nullable().openapi({
+      example: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    }),
+    // How long this row sat `pending` before this claim, in whole seconds
+    // (M9.2's `job.claimed` marker span). Computed here, from `claimed_at`
+    // minus `created_at` on the same row the claim's `RETURNING` already
+    // reads, rather than left for the worker to derive — the worker only
+    // ever sees one instant (whenever this response arrives), and a value
+    // computed against its own clock would be skewed by wire latency and any
+    // drift between this box and the one that submitted the job. The API
+    // computes it once, on the clock that stamped both timestamps.
+    queue_wait_seconds: z.int().nonnegative().openapi({ example: 42 }),
     // Present only for `chunk` jobs. Optional rather than a second response
     // schema per kind: one queue, one job type on the wire (CONTEXT.md §Q14),
     // and oapi-codegen renders this as a nil-able pointer the worker can
@@ -354,6 +374,50 @@ export const ImageReport = z
     images: z.int().nonnegative().openapi({ example: 12 }),
   })
   .openapi("ImageReport");
+
+/**
+ * One status's row count for each job kind (M9.1).
+ *
+ * Named, not inlined into `JobStats`: oapi-codegen renders an inline object as
+ * an anonymous struct, and it would have to do it four times over — once per
+ * status — leaving the Go worker's gauge callback with four types it cannot
+ * name.
+ */
+const JobStatusCounts = z
+  .object({
+    download: z.int().nonnegative().openapi({ example: 1 }),
+    chunk: z.int().nonnegative().openapi({ example: 14 }),
+  })
+  .openapi("JobStatusCounts");
+
+/**
+ * D1's job table, grouped by status and kind — the only place queue depth
+ * exists to read from. Prometheus cannot scrape a Worker and there is no
+ * metrics pipeline on that side (CONTEXT.md §6), so the Go worker polls this
+ * once per metrics export interval and republishes it as the
+ * `queue_depth{status,kind}` gauge Prometheus actually scrapes
+ * (worker/internal/telemetry/metrics.go) — this endpoint exists for that
+ * poll and has no other caller.
+ *
+ * Fixed shape — eight named fields, four statuses times two kinds — rather
+ * than the array of rows `SELECT status, kind, COUNT(*) ... GROUP BY status,
+ * kind` naturally produces. That query returns only combinations with at
+ * least one row, so a drained `pending` bucket is *absent* from the result
+ * set, not present at zero. Handing that straight to the Go worker would
+ * make an empty queue and a worker that stopped reporting look identical in
+ * Prometheus — the one distinction the dashboard's queue-depth panel exists
+ * to show. The zero-fill happens here, in the one place that already knows
+ * all eight combinations exist, so the gauge callback on the other end of
+ * the wire never has to guess which ones it did not hear about.
+ */
+export const JobStats = z
+  .object({
+    pending: JobStatusCounts,
+    claimed: JobStatusCounts,
+    done: JobStatusCounts,
+    failed: JobStatusCounts,
+  })
+  .openapi("JobStats");
 
 export const JobListQuery = z.object({
   status: JobStatus.optional().openapi({ param: { name: "status", in: "query" } }),

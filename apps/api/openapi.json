@@ -269,6 +269,16 @@
             "minimum": 0,
             "example": 1
           },
+          "traceparent": {
+            "type": "string",
+            "nullable": true,
+            "example": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+          },
+          "queue_wait_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 42
+          },
           "chunk": {
             "$ref": "#/components/schemas/ChunkWork"
           }
@@ -278,7 +288,9 @@
           "kind",
           "video_id",
           "video_url",
-          "attempts"
+          "attempts",
+          "traceparent",
+          "queue_wait_seconds"
         ]
       },
       "ChunkWork": {
@@ -509,6 +521,48 @@
           "r2_key",
           "timestamp_seconds",
           "phash"
+        ]
+      },
+      "JobStats": {
+        "type": "object",
+        "properties": {
+          "pending": {
+            "$ref": "#/components/schemas/JobStatusCounts"
+          },
+          "claimed": {
+            "$ref": "#/components/schemas/JobStatusCounts"
+          },
+          "done": {
+            "$ref": "#/components/schemas/JobStatusCounts"
+          },
+          "failed": {
+            "$ref": "#/components/schemas/JobStatusCounts"
+          }
+        },
+        "required": [
+          "pending",
+          "claimed",
+          "done",
+          "failed"
+        ]
+      },
+      "JobStatusCounts": {
+        "type": "object",
+        "properties": {
+          "download": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 1
+          },
+          "chunk": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 14
+          }
+        },
+        "required": [
+          "download",
+          "chunk"
         ]
       }
     },
@@ -1027,6 +1081,28 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/stats": {
+      "get": {
+        "operationId": "jobStats",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job counts by status and kind",
+        "description": "The only place queue depth can be read from (CONTEXT.md §6: Workers export traces only, and Prometheus cannot scrape a Worker). The Go worker polls this once per metrics export interval and republishes it as the `queue_depth{status,kind}` gauge Prometheus actually scrapes (worker/internal/telemetry/metrics.go) — the dashboard's queue-depth panel reads that gauge, never this endpoint directly. Sits beside claim, heartbeat and complete rather than under `/api/admin/*`: same trust boundary as the rest of `/api/jobs/*`, which carries no Access assertion and no worker-id credential today, and this endpoint is read-only besides — a stray caller learns nothing here it could not already infer by polling claim until it stopped returning 200.",
+        "responses": {
+          "200": {
+            "description": "Every (status, kind) combination, zero-filled where D1 has no rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStats"
                 }
               }
             }

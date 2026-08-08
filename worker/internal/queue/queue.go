@@ -16,6 +16,9 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/api"
 )
 
@@ -67,12 +70,39 @@ func New(baseURL, workerID string) (*Client, error) {
 		return nil, errors.New("a worker id is required: it is what the lease is held by")
 	}
 
-	client, err := api.NewClient(baseURL, api.WithHTTPClient(&http.Client{Timeout: requestTimeout}))
+	client, err := api.NewClient(baseURL, api.WithHTTPClient(&http.Client{
+		Timeout:   requestTimeout,
+		Transport: tracingTransport{},
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("building the API client: %w", err)
 	}
 
 	return &Client{api: client, workerID: workerID}, nil
+}
+
+// tracingTransport injects the calling context's span onto every outbound
+// request as a W3C `traceparent` header, which is the other half of M9.2's
+// join: the fan-out call this produces arrives at the API already inside the
+// download job's trace, so the chunk jobs it stamps a traceparent onto
+// (jobs.ts's fanOutJobHandler) share that trace rather than starting new ones.
+//
+// A hand-rolled RoundTripper rather than otelhttp.NewTransport: the contrib
+// package instruments the request with its own span and metrics, which this
+// worker already gets one layer up — every call here runs inside a span
+// `pipeline.go` opened with `tracer().Start` — so the only thing missing at
+// this seam is the header, and injecting it is two lines against a dependency
+// already in go.mod.
+type tracingTransport struct{}
+
+func (tracingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// A no-op when req.Context() carries no span: TraceContext.Inject checks
+	// validity itself and leaves the header unset, which is exactly what a
+	// worker running with tracing disabled needs — every request it sends
+	// still goes out, just without the header a live trace would carry.
+	otel.GetTextMapPropagator().Inject(req.Context(), propagation.HeaderCarrier(req.Header))
+
+	return http.DefaultTransport.RoundTrip(req)
 }
 
 // Claim takes the next pending job, or returns nil when there is none.
@@ -98,6 +128,56 @@ func (c *Client) Claim(ctx context.Context) (*api.Job, error) {
 	default:
 		return nil, fmt.Errorf("claiming a job: %w", statusError(resp))
 	}
+}
+
+// StatusCounts is one status's row count for each job kind, mirroring
+// api.JobStatusCounts. A local type rather than the generated one reused
+// directly, for the same reason Probed and Image are: the wire shape belongs
+// to this package, and callers outside it — telemetry's queue.depth gauge,
+// in particular — should not have to import the generated api package just
+// to read a count off it.
+type StatusCounts struct {
+	Download int
+	Chunk    int
+}
+
+// Stats is what the queue looked like the moment this was read: job counts
+// by status and kind (M9.1). All four statuses are always populated — the
+// API zero-fills them (apps/api/src/schemas.ts's JobStats comment explains
+// why) — so a freshly-seeded or fully-drained queue answers with real zeros
+// here, never with a status this struct happens not to mention.
+type Stats struct {
+	Pending, Claimed, Done, Failed StatusCounts
+}
+
+// Stats reads the queue's current job counts by status and kind. Its only
+// caller is the queue.depth gauge's callback (telemetry.NewQueueDepthGauge),
+// on the SDK's own export interval rather than the poll loop — this is a
+// dashboard read, not a step in the job lifecycle, and the two are
+// deliberately decoupled so a slow or failing stats call cannot back off
+// PollOnce the way a failing Claim does.
+func (c *Client) Stats(ctx context.Context) (Stats, error) {
+	resp, err := c.api.JobStats(ctx)
+	if err != nil {
+		return Stats{}, fmt.Errorf("reading job stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return Stats{}, fmt.Errorf("reading job stats: %w", statusError(resp))
+	}
+
+	var stats api.JobStats
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return Stats{}, fmt.Errorf("decoding job stats: %w", err)
+	}
+
+	return Stats{
+		Pending: StatusCounts{Download: stats.Pending.Download, Chunk: stats.Pending.Chunk},
+		Claimed: StatusCounts{Download: stats.Claimed.Download, Chunk: stats.Claimed.Chunk},
+		Done:    StatusCounts{Download: stats.Done.Download, Chunk: stats.Done.Chunk},
+		Failed:  StatusCounts{Download: stats.Failed.Download, Chunk: stats.Failed.Chunk},
+	}, nil
 }
 
 // Heartbeat renews the lease on a held job.
