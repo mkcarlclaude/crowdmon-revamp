@@ -20,7 +20,21 @@ import {
 } from "./routes/admin-dryruns";
 import { getImageHandler, getImageRoute } from "./routes/admin-images";
 import { listJobsHandler, listJobsRoute } from "./routes/admin-jobs";
+import {
+  labellingBatchHandler,
+  labellingBatchRoute,
+  labellingStatsHandler,
+  labellingStatsRoute,
+} from "./routes/admin-labelling";
 import { adminLoginHandler, adminLoginRoute } from "./routes/admin-login";
+import {
+  createMissingReportHandler,
+  createMissingReportRoute,
+  createVerdictHandler,
+  createVerdictRoute,
+  rejectImageHandler,
+  rejectImageRoute,
+} from "./routes/admin-verdicts";
 import { listActiveClassesHandler, listActiveClassesRoute } from "./routes/classes";
 import { healthHandler, healthRoute } from "./routes/health";
 import {
@@ -131,6 +145,11 @@ app.openapi(createDryRunRoute, createDryRunHandler);
 app.openapi(listDryRunsRoute, listDryRunsHandler);
 app.openapi(getImageRoute, getImageHandler);
 app.openapi(reportDryRunRoute, reportDryRunHandler);
+app.openapi(createVerdictRoute, createVerdictHandler);
+app.openapi(rejectImageRoute, rejectImageHandler);
+app.openapi(createMissingReportRoute, createMissingReportHandler);
+app.openapi(labellingBatchRoute, labellingBatchHandler);
+app.openapi(labellingStatsRoute, labellingStatsHandler);
 
 // Serves the same document the build artifact contains, from the same config.
 // A deployed Worker that describes itself is worth one route: it answers "what

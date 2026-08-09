@@ -3,6 +3,8 @@ import { AddClassForm } from "../components/AddClassForm";
 import { ClassRoster } from "../components/ClassRoster";
 import { GrafanaLink } from "../components/GrafanaLink";
 import { JobList } from "../components/JobList";
+import { LabellingSession } from "../components/LabellingSession";
+import { LabellingStats } from "../components/LabellingStats";
 import { SessionExpiredBanner } from "../components/SessionExpiredBanner";
 import { SubmitForm } from "../components/SubmitForm";
 
@@ -29,6 +31,21 @@ export function Admin() {
           Queue
         </h2>
         <JobList />
+      </section>
+      {/* M13. Above the classes and below the queue, by the same rule: this is
+          the screen's daily work once a video has been submitted, and the
+          class roster is the occasional edit. */}
+      <section>
+        <h2 className="mb-2 text-sm uppercase tracking-wide text-[var(--color-text-muted)]">
+          Verify
+        </h2>
+        <LabellingSession />
+      </section>
+      <section>
+        <h2 className="mb-2 text-sm uppercase tracking-wide text-[var(--color-text-muted)]">
+          Labelling pool
+        </h2>
+        <LabellingStats />
       </section>
       {/* M12.1. Below the queue rather than above it: submitting a video is the
           daily act and editing a prompt is the occasional one, and the page
