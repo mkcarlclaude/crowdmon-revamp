@@ -130,21 +130,39 @@ func (e LabellingBatchUrlMode) Valid() bool {
 	}
 }
 
+// Defines values for PublicVerdictKind.
+const (
+	PublicVerdictKindAccept PublicVerdictKind = "accept"
+	PublicVerdictKindReject PublicVerdictKind = "reject"
+)
+
+// Valid indicates whether the value is a known member of the PublicVerdictKind enum.
+func (e PublicVerdictKind) Valid() bool {
+	switch e {
+	case PublicVerdictKindAccept:
+		return true
+	case PublicVerdictKindReject:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VerdictKind.
 const (
-	Accept VerdictKind = "accept"
-	Adjust VerdictKind = "adjust"
-	Reject VerdictKind = "reject"
+	VerdictKindAccept VerdictKind = "accept"
+	VerdictKindAdjust VerdictKind = "adjust"
+	VerdictKindReject VerdictKind = "reject"
 )
 
 // Valid indicates whether the value is a known member of the VerdictKind enum.
 func (e VerdictKind) Valid() bool {
 	switch e {
-	case Accept:
+	case VerdictKindAccept:
 		return true
-	case Adjust:
+	case VerdictKindAdjust:
 		return true
-	case Reject:
+	case VerdictKindReject:
 		return true
 	default:
 		return false
@@ -195,6 +213,15 @@ type AdminClass struct {
 // AdminClassList defines model for AdminClassList.
 type AdminClassList struct {
 	Classes []AdminClass `json:"classes"`
+}
+
+// AdminImage defines model for AdminImage.
+type AdminImage struct {
+	// Id Example: 7
+	Id int `json:"id"`
+
+	// PublicSample Example: true
+	PublicSample bool `json:"public_sample"`
 }
 
 // AdminJob defines model for AdminJob.
@@ -294,8 +321,14 @@ type ClassLabellingStats struct {
 	// Adjusted Example: 12
 	Adjusted int `json:"adjusted"`
 
-	// AnonVerdicts Example: 0
-	AnonVerdicts int `json:"anon_verdicts"`
+	// AnonAccepted Example: 0
+	AnonAccepted int `json:"anon_accepted"`
+
+	// AnonAdjusted Example: 0
+	AnonAdjusted int `json:"anon_adjusted"`
+
+	// AnonRejected Example: 0
+	AnonRejected int `json:"anon_rejected"`
 
 	// ClassId Example: 1
 	ClassId int `json:"class_id"`
@@ -348,6 +381,13 @@ type CreateDryRunRequest struct {
 type CreateMissingReportRequest struct {
 	// ClassId Example: 3
 	ClassId *int `json:"class_id,omitempty"`
+}
+
+// CreatePublicVerdictsRequest defines model for CreatePublicVerdictsRequest.
+type CreatePublicVerdictsRequest struct {
+	// SessionId Example: b3f1c2a4-8e5d-4c6a-9b1a-2f3e4d5c6b7a
+	SessionId string                `json:"session_id"`
+	Verdicts  []PublicStagedVerdict `json:"verdicts"`
 }
 
 // CreateVerdictsRequest defines model for CreateVerdictsRequest.
@@ -726,6 +766,59 @@ type ProposedBox struct {
 	YMin float32 `json:"y_min"`
 }
 
+// PublicFrame defines model for PublicFrame.
+type PublicFrame struct {
+	// ExpiresAt Example: 1754099900
+	ExpiresAt int `json:"expires_at"`
+
+	// Id Example: 7
+	Id          int                 `json:"id"`
+	Predictions []PublicProposedBox `json:"predictions"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// Url Example: https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…
+	Url string `json:"url"`
+}
+
+// PublicProposedBox defines model for PublicProposedBox.
+type PublicProposedBox struct {
+	// ClassId Example: 1
+	ClassId int `json:"class_id"`
+
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// Confidence Example: 0.87
+	Confidence float32 `json:"confidence"`
+
+	// Id Example: 42
+	Id int `json:"id"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
+}
+
+// PublicStagedVerdict defines model for PublicStagedVerdict.
+type PublicStagedVerdict struct {
+	// PredictionId Example: 42
+	PredictionId int               `json:"prediction_id"`
+	Verdict      PublicVerdictKind `json:"verdict"`
+}
+
+// PublicVerdictKind defines model for PublicVerdictKind.
+type PublicVerdictKind string
+
 // ReportDryRunRequest defines model for ReportDryRunRequest.
 type ReportDryRunRequest struct {
 	Boxes []DryRunBox `json:"boxes"`
@@ -800,6 +893,12 @@ type UpdateClassRequest struct {
 
 	// AppearancePrompt Example: a tiny white-haired floating companion with a dark crown
 	AppearancePrompt *string `json:"appearance_prompt,omitempty"`
+}
+
+// UpdatePublicSampleRequest defines model for UpdatePublicSampleRequest.
+type UpdatePublicSampleRequest struct {
+	// PublicSample Example: true
+	PublicSample bool `json:"public_sample"`
 }
 
 // ValidationIssue defines model for ValidationIssue.
@@ -882,6 +981,9 @@ type CreateDryRunJSONRequestBody = CreateDryRunRequest
 // CreateMissingReportJSONRequestBody defines body for CreateMissingReport for application/json ContentType.
 type CreateMissingReportJSONRequestBody = CreateMissingReportRequest
 
+// UpdatePublicSampleJSONRequestBody defines body for UpdatePublicSample for application/json ContentType.
+type UpdatePublicSampleJSONRequestBody = UpdatePublicSampleRequest
+
 // SubmitVerdictsJSONRequestBody defines body for SubmitVerdicts for application/json ContentType.
 type SubmitVerdictsJSONRequestBody = CreateVerdictsRequest
 
@@ -908,6 +1010,9 @@ type ReportImagesJSONRequestBody = ReportImagesRequest
 
 // ReportPredictionsJSONRequestBody defines body for ReportPredictions for application/json ContentType.
 type ReportPredictionsJSONRequestBody = ReportPredictionsRequest
+
+// SubmitPublicVerdictsJSONRequestBody defines body for SubmitPublicVerdicts for application/json ContentType.
+type SubmitPublicVerdictsJSONRequestBody = CreatePublicVerdictsRequest
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -1075,6 +1180,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
 	CreateMissingReport(ctx context.Context, id int, body CreateMissingReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePublicSampleWithBody Flag or unflag an image for the public verification page
+	//
+	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/admin/images/{id}/public-sample (the `UpdatePublicSample` operationId).
+	UpdatePublicSampleWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePublicSample Flag or unflag an image for the public verification page
+	//
+	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/admin/images/{id}/public-sample (the `UpdatePublicSample` operationId).
+	UpdatePublicSample(ctx context.Context, id int, body UpdatePublicSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SubmitVerdictsWithBody Submit a frame's rulings, all at once
 	//
@@ -1283,6 +1406,31 @@ type ClientInterface interface {
 	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
 	ReportPredictions(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PublicFrame One frame from the hand-curated public sample, for a visitor with no account
+	//
+	// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.
+	//
+	// Corresponds with GET /api/public/frame (the `PublicFrame` operationId).
+	PublicFrame(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SubmitPublicVerdictsWithBody Submit an anonymous visitor's rulings on one frame
+	//
+	// Appends one `source = 'anon'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame. `annotator_id` is the caller-supplied `session_id`, not an Access identity: this surface has none. Only `accept` and `reject` are legal here; `PublicStagedVerdict` has no adjusted- coordinate fields for an `adjust` verdict to carry. The image must be in `public_sample` — a verdict cannot be attached to a frame this visitor was never shown. No Access assertion; rate limited.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/public/images/{id}/verdicts (the `SubmitPublicVerdicts` operationId).
+	SubmitPublicVerdictsWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SubmitPublicVerdicts Submit an anonymous visitor's rulings on one frame
+	//
+	// Appends one `source = 'anon'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame. `annotator_id` is the caller-supplied `session_id`, not an Access identity: this surface has none. Only `accept` and `reject` are legal here; `PublicStagedVerdict` has no adjusted- coordinate fields for an `adjust` verdict to carry. The image must be in `public_sample` — a verdict cannot be attached to a frame this visitor was never shown. No Access assertion; rate limited.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/public/images/{id}/verdicts (the `SubmitPublicVerdicts` operationId).
+	SubmitPublicVerdicts(ctx context.Context, id int, body SubmitPublicVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListVideoImages The candidate pool a prelabel job's sampler draws from
 	//
 	// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. A `dryrun` job (M12.2) draws from the same pool and is accepted here too — see the handler's comment for why the weaker uniqueness of that kind costs this read nothing. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
@@ -1489,6 +1637,44 @@ func (c *Client) CreateMissingReportWithBody(ctx context.Context, id int, conten
 // Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
 func (c *Client) CreateMissingReport(ctx context.Context, id int, body CreateMissingReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateMissingReportRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePublicSampleWithBody Flag or unflag an image for the public verification page
+//
+// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/admin/images/{id}/public-sample (the `UpdatePublicSample` operationId).
+func (c *Client) UpdatePublicSampleWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePublicSampleRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdatePublicSample Flag or unflag an image for the public verification page
+//
+// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/admin/images/{id}/public-sample (the `UpdatePublicSample` operationId).
+func (c *Client) UpdatePublicSample(ctx context.Context, id int, body UpdatePublicSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePublicSampleRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1956,6 +2142,61 @@ func (c *Client) ReportPredictions(ctx context.Context, id int, body ReportPredi
 	return c.Client.Do(req)
 }
 
+// PublicFrame One frame from the hand-curated public sample, for a visitor with no account
+//
+// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.
+//
+// Corresponds with GET /api/public/frame (the `PublicFrame` operationId).
+func (c *Client) PublicFrame(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPublicFrameRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SubmitPublicVerdictsWithBody Submit an anonymous visitor's rulings on one frame
+//
+// Appends one `source = 'anon'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame. `annotator_id` is the caller-supplied `session_id`, not an Access identity: this surface has none. Only `accept` and `reject` are legal here; `PublicStagedVerdict` has no adjusted- coordinate fields for an `adjust` verdict to carry. The image must be in `public_sample` — a verdict cannot be attached to a frame this visitor was never shown. No Access assertion; rate limited.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/public/images/{id}/verdicts (the `SubmitPublicVerdicts` operationId).
+func (c *Client) SubmitPublicVerdictsWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSubmitPublicVerdictsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SubmitPublicVerdicts Submit an anonymous visitor's rulings on one frame
+//
+// Appends one `source = 'anon'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame. `annotator_id` is the caller-supplied `session_id`, not an Access identity: this surface has none. Only `accept` and `reject` are legal here; `PublicStagedVerdict` has no adjusted- coordinate fields for an `adjust` verdict to carry. The image must be in `public_sample` — a verdict cannot be attached to a frame this visitor was never shown. No Access assertion; rate limited.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/public/images/{id}/verdicts (the `SubmitPublicVerdicts` operationId).
+func (c *Client) SubmitPublicVerdicts(ctx context.Context, id int, body SubmitPublicVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSubmitPublicVerdictsRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListVideoImages The candidate pool a prelabel job's sampler draws from
 //
 // M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. A `dryrun` job (M12.2) draws from the same pool and is accepted here too — see the handler's comment for why the weaker uniqueness of that kind costs this read nothing. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
@@ -2271,6 +2512,53 @@ func NewCreateMissingReportRequestWithBody(server string, id int, contentType st
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUpdatePublicSampleRequest calls the generic UpdatePublicSample builder with application/json body
+func NewUpdatePublicSampleRequest(server string, id int, body UpdatePublicSampleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdatePublicSampleRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdatePublicSampleRequestWithBody constructs an http.Request for the UpdatePublicSample method, with any body, and a specified content type
+func NewUpdatePublicSampleRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/images/%s/public-sample", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -2944,6 +3232,80 @@ func NewReportPredictionsRequestWithBody(server string, id int, contentType stri
 	return req, nil
 }
 
+// NewPublicFrameRequest constructs an http.Request for the PublicFrame method
+func NewPublicFrameRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/public/frame")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSubmitPublicVerdictsRequest calls the generic SubmitPublicVerdicts builder with application/json body
+func NewSubmitPublicVerdictsRequest(server string, id int, body SubmitPublicVerdictsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSubmitPublicVerdictsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSubmitPublicVerdictsRequestWithBody constructs an http.Request for the SubmitPublicVerdicts method, with any body, and a specified content type
+func NewSubmitPublicVerdictsRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/public/images/%s/verdicts", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListVideoImagesRequest constructs an http.Request for the ListVideoImages method
 func NewListVideoImagesRequest(server string, videoId string, params *ListVideoImagesParams) (*http.Request, error) {
 	var err error
@@ -3171,6 +3533,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
 	CreateMissingReportWithResponse(ctx context.Context, id int, body CreateMissingReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMissingReportResponse, error)
 
+	// UpdatePublicSampleWithBodyWithResponse Flag or unflag an image for the public verification page
+	//
+	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/admin/images/{id}/public-sample (the `UpdatePublicSample` operationId).
+	UpdatePublicSampleWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublicSampleResponse, error)
+
+	// UpdatePublicSampleWithResponse Flag or unflag an image for the public verification page
+	//
+	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/admin/images/{id}/public-sample (the `UpdatePublicSample` operationId).
+	UpdatePublicSampleWithResponse(ctx context.Context, id int, body UpdatePublicSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicSampleResponse, error)
+
 	// SubmitVerdictsWithBodyWithResponse Submit a frame's rulings, all at once
 	//
 	// Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
@@ -3391,6 +3771,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
 	ReportPredictionsWithResponse(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportPredictionsResponse, error)
+
+	// PublicFrameWithResponse One frame from the hand-curated public sample, for a visitor with no account
+	//
+	// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/public/frame (the `PublicFrame` operationId).
+	PublicFrameWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*PublicFrameResponse, error)
+
+	// SubmitPublicVerdictsWithBodyWithResponse Submit an anonymous visitor's rulings on one frame
+	//
+	// Appends one `source = 'anon'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame. `annotator_id` is the caller-supplied `session_id`, not an Access identity: this surface has none. Only `accept` and `reject` are legal here; `PublicStagedVerdict` has no adjusted- coordinate fields for an `adjust` verdict to carry. The image must be in `public_sample` — a verdict cannot be attached to a frame this visitor was never shown. No Access assertion; rate limited.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/public/images/{id}/verdicts (the `SubmitPublicVerdicts` operationId).
+	SubmitPublicVerdictsWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubmitPublicVerdictsResponse, error)
+
+	// SubmitPublicVerdictsWithResponse Submit an anonymous visitor's rulings on one frame
+	//
+	// Appends one `source = 'anon'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame. `annotator_id` is the caller-supplied `session_id`, not an Access identity: this surface has none. Only `accept` and `reject` are legal here; `PublicStagedVerdict` has no adjusted- coordinate fields for an `adjust` verdict to carry. The image must be in `public_sample` — a verdict cannot be attached to a frame this visitor was never shown. No Access assertion; rate limited.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/public/images/{id}/verdicts (the `SubmitPublicVerdicts` operationId).
+	SubmitPublicVerdictsWithResponse(ctx context.Context, id int, body SubmitPublicVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitPublicVerdictsResponse, error)
 
 	// ListVideoImagesWithResponse The candidate pool a prelabel job's sampler draws from
 	//
@@ -3907,6 +4314,82 @@ func (r CreateMissingReportResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateMissingReportResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdatePublicSampleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminImage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdatePublicSampleResponse) GetJSON200() *AdminImage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdatePublicSampleResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdatePublicSampleResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdatePublicSampleResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdatePublicSampleResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdatePublicSampleResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdatePublicSampleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdatePublicSampleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdatePublicSampleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdatePublicSampleResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4835,6 +5318,130 @@ func (r ReportPredictionsResponse) ContentType() string {
 	return ""
 }
 
+type PublicFrameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicFrame
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PublicFrameResponse) GetJSON200() *PublicFrame {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PublicFrameResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r PublicFrameResponse) GetJSON429() *ErrorResponse {
+	return r.JSON429
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PublicFrameResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PublicFrameResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PublicFrameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PublicFrameResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PublicFrameResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SubmitPublicVerdictsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *VerdictBatch
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r SubmitPublicVerdictsResponse) GetJSON201() *VerdictBatch {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SubmitPublicVerdictsResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SubmitPublicVerdictsResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r SubmitPublicVerdictsResponse) GetJSON429() *ErrorResponse {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r SubmitPublicVerdictsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SubmitPublicVerdictsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SubmitPublicVerdictsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SubmitPublicVerdictsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListVideoImagesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5094,6 +5701,36 @@ func (c *ClientWithResponses) CreateMissingReportWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseCreateMissingReportResponse(rsp)
+}
+
+// UpdatePublicSampleWithBodyWithResponse Flag or unflag an image for the public verification page
+//
+// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/admin/images/{id}/public-sample (the `UpdatePublicSample` operationId).
+func (c *ClientWithResponses) UpdatePublicSampleWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePublicSampleResponse, error) {
+	rsp, err := c.UpdatePublicSampleWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePublicSampleResponse(rsp)
+}
+
+// UpdatePublicSampleWithResponse Flag or unflag an image for the public verification page
+//
+// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/admin/images/{id}/public-sample (the `UpdatePublicSample` operationId).
+func (c *ClientWithResponses) UpdatePublicSampleWithResponse(ctx context.Context, id int, body UpdatePublicSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePublicSampleResponse, error) {
+	rsp, err := c.UpdatePublicSample(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePublicSampleResponse(rsp)
 }
 
 // SubmitVerdictsWithBodyWithResponse Submit a frame's rulings, all at once
@@ -5465,6 +6102,51 @@ func (c *ClientWithResponses) ReportPredictionsWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseReportPredictionsResponse(rsp)
+}
+
+// PublicFrameWithResponse One frame from the hand-curated public sample, for a visitor with no account
+//
+// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/public/frame (the `PublicFrame` operationId).
+func (c *ClientWithResponses) PublicFrameWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*PublicFrameResponse, error) {
+	rsp, err := c.PublicFrame(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePublicFrameResponse(rsp)
+}
+
+// SubmitPublicVerdictsWithBodyWithResponse Submit an anonymous visitor's rulings on one frame
+//
+// Appends one `source = 'anon'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame. `annotator_id` is the caller-supplied `session_id`, not an Access identity: this surface has none. Only `accept` and `reject` are legal here; `PublicStagedVerdict` has no adjusted- coordinate fields for an `adjust` verdict to carry. The image must be in `public_sample` — a verdict cannot be attached to a frame this visitor was never shown. No Access assertion; rate limited.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/public/images/{id}/verdicts (the `SubmitPublicVerdicts` operationId).
+func (c *ClientWithResponses) SubmitPublicVerdictsWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubmitPublicVerdictsResponse, error) {
+	rsp, err := c.SubmitPublicVerdictsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSubmitPublicVerdictsResponse(rsp)
+}
+
+// SubmitPublicVerdictsWithResponse Submit an anonymous visitor's rulings on one frame
+//
+// Appends one `source = 'anon'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame. `annotator_id` is the caller-supplied `session_id`, not an Access identity: this surface has none. Only `accept` and `reject` are legal here; `PublicStagedVerdict` has no adjusted- coordinate fields for an `adjust` verdict to carry. The image must be in `public_sample` — a verdict cannot be attached to a frame this visitor was never shown. No Access assertion; rate limited.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/public/images/{id}/verdicts (the `SubmitPublicVerdicts` operationId).
+func (c *ClientWithResponses) SubmitPublicVerdictsWithResponse(ctx context.Context, id int, body SubmitPublicVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitPublicVerdictsResponse, error) {
+	rsp, err := c.SubmitPublicVerdicts(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSubmitPublicVerdictsResponse(rsp)
 }
 
 // ListVideoImagesWithResponse The candidate pool a prelabel job's sampler draws from
@@ -5853,6 +6535,67 @@ func ParseCreateMissingReportResponse(rsp *http.Response) (*CreateMissingReportR
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdatePublicSampleResponse parses an HTTP response from a UpdatePublicSampleWithResponse call
+func ParseUpdatePublicSampleResponse(rsp *http.Response) (*UpdatePublicSampleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdatePublicSampleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminImage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ErrorResponse
@@ -6588,6 +7331,100 @@ func ParseReportPredictionsResponse(rsp *http.Response) (*ReportPredictionsRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePublicFrameResponse parses an HTTP response from a PublicFrameWithResponse call
+func ParsePublicFrameResponse(rsp *http.Response) (*PublicFrameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PublicFrameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicFrame
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSubmitPublicVerdictsResponse parses an HTTP response from a SubmitPublicVerdictsWithResponse call
+func ParseSubmitPublicVerdictsResponse(rsp *http.Response) (*SubmitPublicVerdictsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SubmitPublicVerdictsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest VerdictBatch
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	}
 
