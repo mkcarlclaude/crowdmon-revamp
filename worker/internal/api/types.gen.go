@@ -151,24 +151,6 @@ func (e VerdictKind) Valid() bool {
 	}
 }
 
-// Defines values for VerdictSource.
-const (
-	Admin VerdictSource = "admin"
-	Anon  VerdictSource = "anon"
-)
-
-// Valid indicates whether the value is a known member of the VerdictSource enum.
-func (e VerdictSource) Valid() bool {
-	switch e {
-	case Admin:
-		return true
-	case Anon:
-		return true
-	default:
-		return false
-	}
-}
-
 // ActiveClasses defines model for ActiveClasses.
 type ActiveClasses struct {
 	Classes []PrelabelClass `json:"classes"`
@@ -368,20 +350,9 @@ type CreateMissingReportRequest struct {
 	ClassId *int `json:"class_id,omitempty"`
 }
 
-// CreateVerdictRequest defines model for CreateVerdictRequest.
-type CreateVerdictRequest struct {
-	// AdjustedXMax Example: 0.48
-	AdjustedXMax *float32 `json:"adjusted_x_max,omitempty"`
-
-	// AdjustedXMin Example: 0.14
-	AdjustedXMin *float32 `json:"adjusted_x_min,omitempty"`
-
-	// AdjustedYMax Example: 0.61
-	AdjustedYMax *float32 `json:"adjusted_y_max,omitempty"`
-
-	// AdjustedYMin Example: 0.22
-	AdjustedYMin *float32    `json:"adjusted_y_min,omitempty"`
-	Verdict      VerdictKind `json:"verdict"`
+// CreateVerdictsRequest defines model for CreateVerdictsRequest.
+type CreateVerdictsRequest struct {
+	Verdicts []StagedVerdict `json:"verdicts"`
 }
 
 // DryRun defines model for DryRun.
@@ -528,15 +499,6 @@ type ImageFrame struct {
 
 	// TimestampSeconds Example: 42
 	TimestampSeconds float32 `json:"timestamp_seconds"`
-}
-
-// ImageRejection defines model for ImageRejection.
-type ImageRejection struct {
-	// ImageId Example: 1
-	ImageId int `json:"image_id"`
-
-	// Verdicts Example: 4
-	Verdicts int `json:"verdicts"`
 }
 
 // ImageReport defines model for ImageReport.
@@ -806,6 +768,25 @@ type ReportPredictionsRequest struct {
 	WorkerId string `json:"worker_id"`
 }
 
+// StagedVerdict defines model for StagedVerdict.
+type StagedVerdict struct {
+	// AdjustedXMax Example: 0.48
+	AdjustedXMax *float32 `json:"adjusted_x_max,omitempty"`
+
+	// AdjustedXMin Example: 0.14
+	AdjustedXMin *float32 `json:"adjusted_x_min,omitempty"`
+
+	// AdjustedYMax Example: 0.61
+	AdjustedYMax *float32 `json:"adjusted_y_max,omitempty"`
+
+	// AdjustedYMin Example: 0.22
+	AdjustedYMin *float32 `json:"adjusted_y_min,omitempty"`
+
+	// PredictionId Example: 42
+	PredictionId int         `json:"prediction_id"`
+	Verdict      VerdictKind `json:"verdict"`
+}
+
 // SubmitVideoRequest defines model for SubmitVideoRequest.
 type SubmitVideoRequest struct {
 	// Url Example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
@@ -830,40 +811,17 @@ type ValidationIssue struct {
 	Path string `json:"path"`
 }
 
-// Verdict defines model for Verdict.
-type Verdict struct {
-	// AdjustedXMax Example: 0.48
-	AdjustedXMax *float32 `json:"adjusted_x_max"`
+// VerdictBatch defines model for VerdictBatch.
+type VerdictBatch struct {
+	// ImageId Example: 1
+	ImageId int `json:"image_id"`
 
-	// AdjustedXMin Example: 0.14
-	AdjustedXMin *float32 `json:"adjusted_x_min"`
-
-	// AdjustedYMax Example: 0.61
-	AdjustedYMax *float32 `json:"adjusted_y_max"`
-
-	// AdjustedYMin Example: 0.22
-	AdjustedYMin *float32 `json:"adjusted_y_min"`
-
-	// AnnotatorId Example: admin@example.com
-	AnnotatorId string `json:"annotator_id"`
-
-	// CreatedAt Example: 1754099000
-	CreatedAt int `json:"created_at"`
-
-	// Id Example: 1
-	Id int `json:"id"`
-
-	// PredictionId Example: 42
-	PredictionId int           `json:"prediction_id"`
-	Source       VerdictSource `json:"source"`
-	Verdict      VerdictKind   `json:"verdict"`
+	// Verdicts Example: 4
+	Verdicts int `json:"verdicts"`
 }
 
 // VerdictKind defines model for VerdictKind.
 type VerdictKind string
-
-// VerdictSource defines model for VerdictSource.
-type VerdictSource string
 
 // VideoImage defines model for VideoImage.
 type VideoImage struct {
@@ -924,8 +882,8 @@ type CreateDryRunJSONRequestBody = CreateDryRunRequest
 // CreateMissingReportJSONRequestBody defines body for CreateMissingReport for application/json ContentType.
 type CreateMissingReportJSONRequestBody = CreateMissingReportRequest
 
-// CreateVerdictJSONRequestBody defines body for CreateVerdict for application/json ContentType.
-type CreateVerdictJSONRequestBody = CreateVerdictRequest
+// SubmitVerdictsJSONRequestBody defines body for SubmitVerdicts for application/json ContentType.
+type SubmitVerdictsJSONRequestBody = CreateVerdictsRequest
 
 // SubmitVideoJSONRequestBody defines body for SubmitVideo for application/json ContentType.
 type SubmitVideoJSONRequestBody = SubmitVideoRequest
@@ -1118,12 +1076,23 @@ type ClientInterface interface {
 	// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
 	CreateMissingReport(ctx context.Context, id int, body CreateMissingReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RejectImage Reject every box on one frame, in one action
+	// SubmitVerdictsWithBody Submit a frame's rulings, all at once
 	//
-	// Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.
+	// Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
 	//
-	// Corresponds with POST /api/admin/images/{id}/reject (the `RejectImage` operationId).
-	RejectImage(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/admin/images/{id}/verdicts (the `SubmitVerdicts` operationId).
+	SubmitVerdictsWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SubmitVerdicts Submit a frame's rulings, all at once
+	//
+	// Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/admin/images/{id}/verdicts (the `SubmitVerdicts` operationId).
+	SubmitVerdicts(ctx context.Context, id int, body SubmitVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListJobs List jobs with their lease and failure state
 	//
@@ -1152,24 +1121,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVerdictWithBody Accept, adjust or reject one proposed box
-	//
-	// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
-	CreateVerdictWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVerdict Accept, adjust or reject one proposed box
-	//
-	// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
-	CreateVerdict(ctx context.Context, id int, body CreateVerdictJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVideos Submitted videos and how many frames each has
 	//
@@ -1548,13 +1499,34 @@ func (c *Client) CreateMissingReport(ctx context.Context, id int, body CreateMis
 	return c.Client.Do(req)
 }
 
-// RejectImage Reject every box on one frame, in one action
+// SubmitVerdictsWithBody Submit a frame's rulings, all at once
 //
-// Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.
+// Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
 //
-// Corresponds with POST /api/admin/images/{id}/reject (the `RejectImage` operationId).
-func (c *Client) RejectImage(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRejectImageRequest(c.Server, id)
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/admin/images/{id}/verdicts (the `SubmitVerdicts` operationId).
+func (c *Client) SubmitVerdictsWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSubmitVerdictsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SubmitVerdicts Submit a frame's rulings, all at once
+//
+// Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/admin/images/{id}/verdicts (the `SubmitVerdicts` operationId).
+func (c *Client) SubmitVerdicts(ctx context.Context, id int, body SubmitVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSubmitVerdictsRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1623,44 +1595,6 @@ func (c *Client) LabellingStats(ctx context.Context, reqEditors ...RequestEditor
 // Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 func (c *Client) AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminLoginRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVerdictWithBody Accept, adjust or reject one proposed box
-//
-// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
-func (c *Client) CreateVerdictWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVerdictRequestWithBody(c.Server, id, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVerdict Accept, adjust or reject one proposed box
-//
-// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
-func (c *Client) CreateVerdict(ctx context.Context, id int, body CreateVerdictJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVerdictRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2346,8 +2280,19 @@ func NewCreateMissingReportRequestWithBody(server string, id int, contentType st
 	return req, nil
 }
 
-// NewRejectImageRequest constructs an http.Request for the RejectImage method
-func NewRejectImageRequest(server string, id int) (*http.Request, error) {
+// NewSubmitVerdictsRequest calls the generic SubmitVerdicts builder with application/json body
+func NewSubmitVerdictsRequest(server string, id int, body SubmitVerdictsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSubmitVerdictsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSubmitVerdictsRequestWithBody constructs an http.Request for the SubmitVerdicts method, with any body, and a specified content type
+func NewSubmitVerdictsRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2362,7 +2307,7 @@ func NewRejectImageRequest(server string, id int) (*http.Request, error) {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/api/admin/images/%s/reject", pathParam0)
+	operationPath := fmt.Sprintf("/api/admin/images/%s/verdicts", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2372,10 +2317,12 @@ func NewRejectImageRequest(server string, id int) (*http.Request, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -2550,53 +2497,6 @@ func NewAdminLoginRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewCreateVerdictRequest calls the generic CreateVerdict builder with application/json body
-func NewCreateVerdictRequest(server string, id int, body CreateVerdictJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateVerdictRequestWithBody(server, id, "application/json", bodyReader)
-}
-
-// NewCreateVerdictRequestWithBody constructs an http.Request for the CreateVerdict method, with any body, and a specified content type
-func NewCreateVerdictRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/admin/predictions/%s/verdict", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -3271,14 +3171,23 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
 	CreateMissingReportWithResponse(ctx context.Context, id int, body CreateMissingReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMissingReportResponse, error)
 
-	// RejectImageWithResponse Reject every box on one frame, in one action
+	// SubmitVerdictsWithBodyWithResponse Submit a frame's rulings, all at once
 	//
-	// Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.
+	// Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /api/admin/images/{id}/reject (the `RejectImage` operationId).
-	RejectImageWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RejectImageResponse, error)
+	// Corresponds with POST /api/admin/images/{id}/verdicts (the `SubmitVerdicts` operationId).
+	SubmitVerdictsWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubmitVerdictsResponse, error)
+
+	// SubmitVerdictsWithResponse Submit a frame's rulings, all at once
+	//
+	// Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/images/{id}/verdicts (the `SubmitVerdicts` operationId).
+	SubmitVerdictsWithResponse(ctx context.Context, id int, body SubmitVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitVerdictsResponse, error)
 
 	// ListJobsWithResponse List jobs with their lease and failure state
 	//
@@ -3315,24 +3224,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminLoginResponse, error)
-
-	// CreateVerdictWithBodyWithResponse Accept, adjust or reject one proposed box
-	//
-	// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
-	CreateVerdictWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVerdictResponse, error)
-
-	// CreateVerdictWithResponse Accept, adjust or reject one proposed box
-	//
-	// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
-	CreateVerdictWithResponse(ctx context.Context, id int, body CreateVerdictJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVerdictResponse, error)
 
 	// ListVideosWithResponse Submitted videos and how many frames each has
 	//
@@ -4022,11 +3913,13 @@ func (r CreateMissingReportResponse) ContentType() string {
 	return ""
 }
 
-type RejectImageResponse struct {
+type SubmitVerdictsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ImageRejection
+	JSON201 *VerdictBatch
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *ErrorResponse
 	// JSON403 the response for an HTTP 403 `application/json` response
@@ -4038,37 +3931,42 @@ type RejectImageResponse struct {
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r RejectImageResponse) GetJSON201() *ImageRejection {
+func (r SubmitVerdictsResponse) GetJSON201() *VerdictBatch {
 	return r.JSON201
 }
 
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SubmitVerdictsResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r RejectImageResponse) GetJSON401() *ErrorResponse {
+func (r SubmitVerdictsResponse) GetJSON401() *ErrorResponse {
 	return r.JSON401
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r RejectImageResponse) GetJSON403() *ErrorResponse {
+func (r SubmitVerdictsResponse) GetJSON403() *ErrorResponse {
 	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r RejectImageResponse) GetJSON404() *ErrorResponse {
+func (r SubmitVerdictsResponse) GetJSON404() *ErrorResponse {
 	return r.JSON404
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r RejectImageResponse) GetJSON503() *ErrorResponse {
+func (r SubmitVerdictsResponse) GetJSON503() *ErrorResponse {
 	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
-func (r RejectImageResponse) GetBody() []byte {
+func (r SubmitVerdictsResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r RejectImageResponse) Status() string {
+func (r SubmitVerdictsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -4076,7 +3974,7 @@ func (r RejectImageResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r RejectImageResponse) StatusCode() int {
+func (r SubmitVerdictsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4084,7 +3982,7 @@ func (r RejectImageResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RejectImageResponse) ContentType() string {
+func (r SubmitVerdictsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4347,82 +4245,6 @@ func (r AdminLoginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AdminLoginResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateVerdictResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *Verdict
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *ErrorResponse
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *ErrorResponse
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *ErrorResponse
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *ErrorResponse
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *ErrorResponse
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateVerdictResponse) GetJSON201() *Verdict {
-	return r.JSON201
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r CreateVerdictResponse) GetJSON400() *ErrorResponse {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r CreateVerdictResponse) GetJSON401() *ErrorResponse {
-	return r.JSON401
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r CreateVerdictResponse) GetJSON403() *ErrorResponse {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r CreateVerdictResponse) GetJSON404() *ErrorResponse {
-	return r.JSON404
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r CreateVerdictResponse) GetJSON503() *ErrorResponse {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateVerdictResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateVerdictResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateVerdictResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateVerdictResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5274,19 +5096,34 @@ func (c *ClientWithResponses) CreateMissingReportWithResponse(ctx context.Contex
 	return ParseCreateMissingReportResponse(rsp)
 }
 
-// RejectImageWithResponse Reject every box on one frame, in one action
+// SubmitVerdictsWithBodyWithResponse Submit a frame's rulings, all at once
 //
-// Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.
+// Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /api/admin/images/{id}/reject (the `RejectImage` operationId).
-func (c *ClientWithResponses) RejectImageWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RejectImageResponse, error) {
-	rsp, err := c.RejectImage(ctx, id, reqEditors...)
+// Corresponds with POST /api/admin/images/{id}/verdicts (the `SubmitVerdicts` operationId).
+func (c *ClientWithResponses) SubmitVerdictsWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubmitVerdictsResponse, error) {
+	rsp, err := c.SubmitVerdictsWithBody(ctx, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseRejectImageResponse(rsp)
+	return ParseSubmitVerdictsResponse(rsp)
+}
+
+// SubmitVerdictsWithResponse Submit a frame's rulings, all at once
+//
+// Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/images/{id}/verdicts (the `SubmitVerdicts` operationId).
+func (c *ClientWithResponses) SubmitVerdictsWithResponse(ctx context.Context, id int, body SubmitVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitVerdictsResponse, error) {
+	rsp, err := c.SubmitVerdicts(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSubmitVerdictsResponse(rsp)
 }
 
 // ListJobsWithResponse List jobs with their lease and failure state
@@ -5347,36 +5184,6 @@ func (c *ClientWithResponses) AdminLoginWithResponse(ctx context.Context, reqEdi
 		return nil, err
 	}
 	return ParseAdminLoginResponse(rsp)
-}
-
-// CreateVerdictWithBodyWithResponse Accept, adjust or reject one proposed box
-//
-// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
-func (c *ClientWithResponses) CreateVerdictWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVerdictResponse, error) {
-	rsp, err := c.CreateVerdictWithBody(ctx, id, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVerdictResponse(rsp)
-}
-
-// CreateVerdictWithResponse Accept, adjust or reject one proposed box
-//
-// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
-func (c *ClientWithResponses) CreateVerdictWithResponse(ctx context.Context, id int, body CreateVerdictJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVerdictResponse, error) {
-	rsp, err := c.CreateVerdict(ctx, id, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVerdictResponse(rsp)
 }
 
 // ListVideosWithResponse Submitted videos and how many frames each has
@@ -6087,26 +5894,33 @@ func ParseCreateMissingReportResponse(rsp *http.Response) (*CreateMissingReportR
 	return response, nil
 }
 
-// ParseRejectImageResponse parses an HTTP response from a RejectImageWithResponse call
-func ParseRejectImageResponse(rsp *http.Response) (*RejectImageResponse, error) {
+// ParseSubmitVerdictsResponse parses an HTTP response from a SubmitVerdictsWithResponse call
+func ParseSubmitVerdictsResponse(rsp *http.Response) (*SubmitVerdictsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &RejectImageResponse{
+	response := &SubmitVerdictsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ImageRejection
+		var dest VerdictBatch
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ErrorResponse
@@ -6347,67 +6161,6 @@ func ParseAdminLoginResponse(rsp *http.Response) (*AdminLoginResponse, error) {
 			headers.Location = &value
 		}
 		response.Headers302 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseCreateVerdictResponse parses an HTTP response from a CreateVerdictWithResponse call
-func ParseCreateVerdictResponse(rsp *http.Response) (*CreateVerdictResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateVerdictResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest Verdict
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
 	}
 
 	return response, nil

@@ -30,10 +30,8 @@ import { adminLoginHandler, adminLoginRoute } from "./routes/admin-login";
 import {
   createMissingReportHandler,
   createMissingReportRoute,
-  createVerdictHandler,
-  createVerdictRoute,
-  rejectImageHandler,
-  rejectImageRoute,
+  submitVerdictsHandler,
+  submitVerdictsRoute,
 } from "./routes/admin-verdicts";
 import { listActiveClassesHandler, listActiveClassesRoute } from "./routes/classes";
 import { healthHandler, healthRoute } from "./routes/health";
@@ -145,8 +143,7 @@ app.openapi(createDryRunRoute, createDryRunHandler);
 app.openapi(listDryRunsRoute, listDryRunsHandler);
 app.openapi(getImageRoute, getImageHandler);
 app.openapi(reportDryRunRoute, reportDryRunHandler);
-app.openapi(createVerdictRoute, createVerdictHandler);
-app.openapi(rejectImageRoute, rejectImageHandler);
+app.openapi(submitVerdictsRoute, submitVerdictsHandler);
 app.openapi(createMissingReportRoute, createMissingReportHandler);
 app.openapi(labellingBatchRoute, labellingBatchHandler);
 app.openapi(labellingStatsRoute, labellingStatsHandler);

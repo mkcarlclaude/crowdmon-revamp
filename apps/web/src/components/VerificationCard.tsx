@@ -52,16 +52,29 @@ export interface AdjustedBox {
   adjusted_y_max: number;
 }
 
+/** One staged ruling, in the shape the submit endpoint takes. */
+export interface StagedVerdict {
+  prediction_id: number;
+  verdict: VerdictKind;
+  adjusted_x_min?: number;
+  adjusted_y_min?: number;
+  adjusted_x_max?: number;
+  adjusted_y_max?: number;
+}
+
+export type VerdictKind = "accept" | "adjust" | "reject";
+
 export interface VerificationCardProps {
   frame: VerificationFrame;
-  /** Accept and reject carry no box; an adjust carries the corrected one. */
-  onVerdict: (
-    predictionId: number,
-    verdict: "accept" | "adjust" | "reject",
-    adjusted?: AdjustedBox,
-  ) => void;
-  /** Admin-only in v2, and absent rather than disabled on a mount without it. */
-  onRejectFrame?: () => void;
+  /**
+   * The whole frame's rulings, once the operator submits them.
+   *
+   * Not one callback per click, and that is the point of the staging area: a
+   * ruling written the moment it was clicked meant the box disappeared from
+   * the list, which renumbered every box below it while the cursor was still
+   * moving toward the next one. Nothing leaves this component until Submit.
+   */
+  onSubmit: (verdicts: StagedVerdict[]) => void;
   /** Admin-only (M13.3). `null` means "something is here" with no class named. */
   onReportMissing?: (classId: number | null) => void;
   /** The roster the missing-object picker offers. Ignored when `onReportMissing` is absent. */
@@ -106,8 +119,7 @@ const asBox = (drag: Drag) => ({
 
 export function VerificationCard({
   frame,
-  onVerdict,
-  onRejectFrame,
+  onSubmit,
   onReportMissing,
   classes,
   onImageError,
@@ -115,6 +127,16 @@ export function VerificationCard({
 }: VerificationCardProps) {
   const missingId = useId();
   const surface = useRef<HTMLDivElement>(null);
+  /**
+   * The staging area: what the operator has decided, not yet written.
+   *
+   * Keyed by prediction id and holding at most one ruling per box, so clicking
+   * Accept and then Reject on the same box replaces rather than queues — the
+   * schema would happily accept both, and two contradictory rows written in
+   * one submission are indistinguishable afterwards from a genuine change of
+   * mind recorded later.
+   */
+  const [staged, setStaged] = useState<ReadonlyMap<number, StagedVerdict>>(new Map());
   const [adjusting, setAdjusting] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   // Whether the pointer is still down. Separate from `drag` being non-null,
@@ -166,10 +188,24 @@ export function VerificationCard({
     setDragging(false);
   }
 
+  function stage(ruling: StagedVerdict) {
+    setStaged((current) => new Map(current).set(ruling.prediction_id, ruling));
+  }
+
+  function unstage(predictionId: number) {
+    setStaged((current) => {
+      const next = new Map(current);
+      next.delete(predictionId);
+      return next;
+    });
+  }
+
   function saveAdjustment() {
     if (adjusting === null || !drawn || !drawnIsUsable) return;
 
-    onVerdict(adjusting, "adjust", {
+    stage({
+      prediction_id: adjusting,
+      verdict: "adjust",
       adjusted_x_min: drawn.x_min,
       adjusted_y_min: drawn.y_min,
       adjusted_x_max: drawn.x_max,
@@ -177,6 +213,15 @@ export function VerificationCard({
     });
     cancelAdjustment();
   }
+
+  /**
+   * Submitted in the order the boxes are drawn, not the order they were
+   * clicked. Nothing downstream reads the order, and a stable one makes the
+   * request diffable against what the screen showed.
+   */
+  const rulings = frame.predictions
+    .map((box) => staged.get(box.id))
+    .filter((ruling): ruling is StagedVerdict => ruling !== undefined);
 
   return (
     <section className="flex flex-col gap-3">
@@ -221,12 +266,18 @@ export function VerificationCard({
         {frame.predictions.map((box, index) => (
           <span
             key={box.id}
+            // The staged ruling is on the rectangle, not only in the row: a
+            // frame is judged by looking at the picture, and an operator
+            // scanning for what they have not decided yet should not have to
+            // read a list to find out.
             className={`absolute border-2 ${
               adjusting === box.id
-                ? "border-[var(--color-failed)]"
-                : highlighted === box.id
-                  ? "border-[var(--color-done)]"
-                  : "border-[var(--color-claimed)]"
+                ? "border-[var(--color-failed)] border-dashed"
+                : staged.get(box.id)?.verdict === "reject"
+                  ? "border-[var(--color-failed)] opacity-60"
+                  : staged.has(box.id)
+                    ? "border-[var(--color-done)]"
+                    : "border-[var(--color-claimed)]"
             } ${highlighted !== null && highlighted !== box.id ? "opacity-25" : ""}`}
             style={{
               left: `${box.x_min * 100}%`,
@@ -240,6 +291,7 @@ export function VerificationCard({
             title={`${ordinal(index)}. ${box.class_name} — confidence ${box.confidence.toFixed(2)}`}
             data-testid={`box-${box.id}`}
             data-highlighted={highlighted === box.id}
+            data-staged={staged.get(box.id)?.verdict ?? ""}
           >
             {/* The badge is the whole fix for "which row is this box?". Five
                 boxes of one class produce five rows reading `Paimon 0.15`, and
@@ -310,6 +362,7 @@ export function VerificationCard({
             }`}
             data-testid={`row-${box.id}`}
             data-highlighted={highlighted === box.id}
+            data-staged={staged.get(box.id)?.verdict ?? ""}
           >
             {/* The same number drawn on the rectangle. Five boxes of one class
                 make five rows that are otherwise identical down to the
@@ -321,51 +374,99 @@ export function VerificationCard({
             <span className="font-mono text-[var(--color-text-muted)]">
               {box.confidence.toFixed(2)}
             </span>
+            {/* What is staged, in words. The button's own `aria-pressed` says
+                the same thing, but only to whoever is on that button — this is
+                for the operator scanning five rows for the one they have not
+                decided yet. */}
+            {staged.has(box.id) && (
+              <span className="rounded bg-[var(--color-surface)] px-2 text-xs text-[var(--color-text-muted)]">
+                {staged.get(box.id)?.verdict}
+              </span>
+            )}
             <span className="ml-auto flex gap-2">
               {/* The ordinal is in every label, not just the row, because
                   "Accept Paimon" five times over is five identical accessible
-                  names for five different boxes. */}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => onVerdict(box.id, "accept")}
-                className="rounded border border-[var(--color-border)] px-3 py-1 disabled:opacity-50"
-              >
-                Accept {box.class_name} {ordinal(index)}
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setDrag(null);
-                  setAdjusting(box.id);
-                }}
-                className="rounded border border-[var(--color-border)] px-3 py-1 disabled:opacity-50"
-              >
-                Adjust {box.class_name} {ordinal(index)}
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => onVerdict(box.id, "reject")}
-                className="rounded border border-[var(--color-border)] px-3 py-1 disabled:opacity-50"
-              >
-                Reject {box.class_name} {ordinal(index)}
-              </button>
+                  names for five different boxes.
+
+                  These three are a radio group in behaviour, not a set of
+                  actions: clicking one replaces whatever was staged for this
+                  box, and `aria-pressed` is what says so to anybody who cannot
+                  see the highlight. */}
+              {(["accept", "adjust", "reject"] as const).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  disabled={busy}
+                  aria-pressed={staged.get(box.id)?.verdict === kind}
+                  onClick={() => {
+                    if (kind === "adjust") {
+                      setDrag(null);
+                      setAdjusting(box.id);
+                      return;
+                    }
+                    // Clicking the staged ruling again takes it back. Nothing
+                    // has been written yet, so undo costs a click rather than
+                    // a second contradictory row.
+                    if (staged.get(box.id)?.verdict === kind) {
+                      unstage(box.id);
+                      return;
+                    }
+                    stage({ prediction_id: box.id, verdict: kind });
+                  }}
+                  className={`rounded border px-3 py-1 disabled:opacity-50 ${
+                    staged.get(box.id)?.verdict === kind
+                      ? "border-[var(--color-done)] bg-[var(--color-surface)] font-medium"
+                      : "border-[var(--color-border)]"
+                  }`}
+                >
+                  {kind === "accept" ? "Accept" : kind === "adjust" ? "Adjust" : "Reject"}{" "}
+                  {box.class_name} {ordinal(index)}
+                </button>
+              ))}
             </span>
           </li>
         ))}
       </ul>
 
       <div className="flex flex-wrap items-center gap-2">
-        {onRejectFrame && (
+        {/* Staging is what makes this one button rather than one per box: it
+            fills the whole frame in, and the submit below writes it. The
+            menu-and-black-frame case is the common one in a sampled timeline
+            and still costs two clicks total. */}
+        <button
+          type="button"
+          disabled={busy || frame.predictions.length === 0}
+          onClick={() =>
+            setStaged(
+              new Map(
+                frame.predictions.map((box) => [
+                  box.id,
+                  { prediction_id: box.id, verdict: "reject" as const },
+                ]),
+              ),
+            )
+          }
+          className="rounded border border-[var(--color-failed)] px-3 py-1 text-sm disabled:opacity-50"
+        >
+          Reject whole frame
+        </button>
+
+        <button
+          type="button"
+          disabled={busy || rulings.length === 0}
+          onClick={() => onSubmit(rulings)}
+          className="rounded border border-[var(--color-done)] px-3 py-1 text-sm font-medium disabled:opacity-50"
+        >
+          {busy ? "Submitting…" : `Submit ${rulings.length} of ${frame.predictions.length}`}
+        </button>
+
+        {rulings.length > 0 && !busy && (
           <button
             type="button"
-            disabled={busy}
-            onClick={onRejectFrame}
-            className="rounded border border-[var(--color-failed)] px-3 py-1 text-sm disabled:opacity-50"
+            onClick={() => setStaged(new Map())}
+            className="rounded border border-[var(--color-border)] px-3 py-1 text-sm"
           >
-            Reject whole frame
+            Clear
           </button>
         )}
 

@@ -1176,120 +1176,7 @@
           "sampled_images"
         ]
       },
-      "Verdict": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "minimum": 0,
-            "exclusiveMinimum": true,
-            "example": 1
-          },
-          "prediction_id": {
-            "type": "integer",
-            "minimum": 0,
-            "exclusiveMinimum": true,
-            "example": 42
-          },
-          "verdict": {
-            "$ref": "#/components/schemas/VerdictKind"
-          },
-          "adjusted_x_min": {
-            "type": "number",
-            "nullable": true,
-            "example": 0.14
-          },
-          "adjusted_y_min": {
-            "type": "number",
-            "nullable": true,
-            "example": 0.22
-          },
-          "adjusted_x_max": {
-            "type": "number",
-            "nullable": true,
-            "example": 0.48
-          },
-          "adjusted_y_max": {
-            "type": "number",
-            "nullable": true,
-            "example": 0.61
-          },
-          "source": {
-            "$ref": "#/components/schemas/VerdictSource"
-          },
-          "annotator_id": {
-            "type": "string",
-            "example": "admin@example.com"
-          },
-          "created_at": {
-            "type": "integer",
-            "example": 1754099000
-          }
-        },
-        "required": [
-          "id",
-          "prediction_id",
-          "verdict",
-          "adjusted_x_min",
-          "adjusted_y_min",
-          "adjusted_x_max",
-          "adjusted_y_max",
-          "source",
-          "annotator_id",
-          "created_at"
-        ]
-      },
-      "VerdictKind": {
-        "type": "string",
-        "enum": [
-          "accept",
-          "adjust",
-          "reject"
-        ]
-      },
-      "VerdictSource": {
-        "type": "string",
-        "enum": [
-          "admin",
-          "anon"
-        ]
-      },
-      "CreateVerdictRequest": {
-        "type": "object",
-        "properties": {
-          "verdict": {
-            "$ref": "#/components/schemas/VerdictKind"
-          },
-          "adjusted_x_min": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "example": 0.14
-          },
-          "adjusted_y_min": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "example": 0.22
-          },
-          "adjusted_x_max": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "example": 0.48
-          },
-          "adjusted_y_max": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "example": 0.61
-          }
-        },
-        "required": [
-          "verdict"
-        ]
-      },
-      "ImageRejection": {
+      "VerdictBatch": {
         "type": "object",
         "properties": {
           "image_id": {
@@ -1307,6 +1194,72 @@
         "required": [
           "image_id",
           "verdicts"
+        ]
+      },
+      "CreateVerdictsRequest": {
+        "type": "object",
+        "properties": {
+          "verdicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StagedVerdict"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "verdicts"
+        ]
+      },
+      "StagedVerdict": {
+        "type": "object",
+        "properties": {
+          "prediction_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 42
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/VerdictKind"
+          },
+          "adjusted_x_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.14
+          },
+          "adjusted_y_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.22
+          },
+          "adjusted_x_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.48
+          },
+          "adjusted_y_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.61
+          }
+        },
+        "required": [
+          "prediction_id",
+          "verdict"
+        ]
+      },
+      "VerdictKind": {
+        "type": "string",
+        "enum": [
+          "accept",
+          "adjust",
+          "reject"
         ]
       },
       "MissingReport": {
@@ -2889,14 +2842,14 @@
         }
       }
     },
-    "/api/admin/predictions/{id}/verdict": {
+    "/api/admin/images/{id}/verdicts": {
       "post": {
-        "operationId": "createVerdict",
+        "operationId": "submitVerdicts",
         "tags": [
           "admin"
         ],
-        "summary": "Accept, adjust or reject one proposed box",
-        "description": "Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.",
+        "summary": "Submit a frame's rulings, all at once",
+        "description": "Appends one verdict row per ruling, as a single atomic batch. One call per frame rather than one per box: the UI stages rulings so that a frame holds still while it is being judged, and a screen that wrote each click immediately had to remove and renumber boxes under the cursor. Never updates — an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.",
         "parameters": [
           {
             "schema": {
@@ -2913,24 +2866,24 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateVerdictRequest"
+                "$ref": "#/components/schemas/CreateVerdictsRequest"
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "The verdict as written",
+            "description": "How many verdicts the submission wrote",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Verdict"
+                  "$ref": "#/components/schemas/VerdictBatch"
                 }
               }
             }
           },
           "400": {
-            "description": "A malformed body, or coordinates that disagree with the verdict",
+            "description": "A malformed body, an empty submission, coordinates that disagree with a verdict, or a duplicated prediction",
             "content": {
               "application/json": {
                 "schema": {
@@ -2960,80 +2913,7 @@
             }
           },
           "404": {
-            "description": "No prediction with this id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Admin access is not configured on this deployment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/admin/images/{id}/reject": {
-      "post": {
-        "operationId": "rejectImage",
-        "tags": [
-          "admin"
-        ],
-        "summary": "Reject every box on one frame, in one action",
-        "description": "Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "integer",
-              "example": 1
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "How many verdicts the rejection wrote",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ImageRejection"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid Access assertion",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "A verified identity that is not an administrator",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No image with this id",
+            "description": "No image with this id, or a prediction that is not on this frame",
             "content": {
               "application/json": {
                 "schema": {

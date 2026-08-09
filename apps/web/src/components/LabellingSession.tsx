@@ -3,10 +3,9 @@ import { useState } from "react";
 import {
   labellingBatchKey,
   useClasses,
-  useCreateVerdict,
   useLabellingBatch,
-  useRejectFrame,
   useReportMissing,
+  useSubmitVerdicts,
 } from "../api/queries";
 import { VerificationCard } from "./VerificationCard";
 
@@ -35,8 +34,7 @@ export function LabellingSession() {
   const queryClient = useQueryClient();
   const batch = useLabellingBatch();
   const classes = useClasses();
-  const verdict = useCreateVerdict();
-  const rejectFrame = useRejectFrame();
+  const submit = useSubmitVerdicts();
   const reportMissing = useReportMissing();
 
   // Prediction and image ids this session has finished with. Kept as ids
@@ -144,21 +142,23 @@ export function LabellingSession() {
         key={frame.id}
         frame={frame}
         classes={classes.data?.classes}
-        busy={verdict.isPending || rejectFrame.isPending || reportMissing.isPending}
-        onVerdict={(predictionId, kind, adjusted) =>
-          verdict.mutate(
-            { predictionId, verdict: kind, ...adjusted },
-            // Advanced on success rather than optimistically: a verdict that
-            // failed and still moved the frame on is a box silently dropped
-            // from the dataset, which is the one outcome this screen exists to
-            // prevent.
-            { onSuccess: () => setRuled((seen) => new Set(seen).add(predictionId)) },
+        busy={submit.isPending || reportMissing.isPending}
+        onSubmit={(verdicts) =>
+          submit.mutate(
+            { imageId: frame.id, verdicts },
+            // Marked ruled on success rather than optimistically: a submission
+            // that failed and still moved the frame on is a set of boxes
+            // silently dropped from the dataset, which is the one outcome this
+            // screen exists to prevent.
+            {
+              onSuccess: () =>
+                setRuled((seen) => {
+                  const next = new Set(seen);
+                  for (const ruling of verdicts) next.add(ruling.prediction_id);
+                  return next;
+                }),
+            },
           )
-        }
-        onRejectFrame={() =>
-          rejectFrame.mutate(frame.id, {
-            onSuccess: () => setDone((seen) => new Set(seen).add(frame.id)),
-          })
         }
         // A missing-object report is not a ruling on any box, so the frame
         // stays put: whatever the detector *did* propose on it still needs
@@ -179,14 +179,9 @@ export function LabellingSession() {
         }}
       />
 
-      {verdict.isError && (
+      {submit.isError && (
         <p role="alert" className="text-sm text-[var(--color-failed)]">
-          {verdict.error.message}
-        </p>
-      )}
-      {rejectFrame.isError && (
-        <p role="alert" className="text-sm text-[var(--color-failed)]">
-          {rejectFrame.error.message}
+          {submit.error.message}
         </p>
       )}
       {reportMissing.isError && (
