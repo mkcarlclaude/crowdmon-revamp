@@ -86,6 +86,17 @@ interface Drag {
   y2: number;
 }
 
+/**
+ * What a box is called on screen: its position in this frame's list, one-based.
+ *
+ * Not the prediction id, which is a database number an operator has no use
+ * for and which would be five digits wide beside a two-character confidence.
+ * Positional, so it is stable for as long as the frame is on screen and starts
+ * again at 1 on the next one — a frame is judged whole and nobody carries a
+ * box number between frames.
+ */
+const ordinal = (index: number) => index + 1;
+
 const asBox = (drag: Drag) => ({
   x_min: Math.min(drag.x1, drag.x2),
   y_min: Math.min(drag.y1, drag.y2),
@@ -113,6 +124,12 @@ export function VerificationCard({
   // it had become. Every adjustment would be wrong, and a test that replays
   // down/move/up with no movement afterwards would not see it.
   const [dragging, setDragging] = useState(false);
+  // Which box the operator is pointing at, by prediction id. The only state
+  // here that changes nothing about what gets written — it exists because five
+  // boxes of one class produce five rows that are identical down to the
+  // confidence, and picking the wrong one writes a verdict about the wrong
+  // rectangle.
+  const [highlighted, setHighlighted] = useState<number | null>(null);
   const [missingClass, setMissingClass] = useState("");
 
   /**
@@ -201,14 +218,16 @@ export function VerificationCard({
       >
         <img src={frame.url} alt={frame.r2_key} className="block w-full" onError={onImageError} />
 
-        {frame.predictions.map((box) => (
+        {frame.predictions.map((box, index) => (
           <span
             key={box.id}
             className={`absolute border-2 ${
               adjusting === box.id
                 ? "border-[var(--color-failed)]"
-                : "border-[var(--color-claimed)]"
-            }`}
+                : highlighted === box.id
+                  ? "border-[var(--color-done)]"
+                  : "border-[var(--color-claimed)]"
+            } ${highlighted !== null && highlighted !== box.id ? "opacity-25" : ""}`}
             style={{
               left: `${box.x_min * 100}%`,
               top: `${box.y_min * 100}%`,
@@ -218,9 +237,20 @@ export function VerificationCard({
             // On the box rather than in a legend, for `DryRunPanel`'s reason: a
             // number somewhere else is a number nobody connects to the
             // rectangle it belongs to.
-            title={`${box.class_name} — confidence ${box.confidence.toFixed(2)}`}
+            title={`${ordinal(index)}. ${box.class_name} — confidence ${box.confidence.toFixed(2)}`}
             data-testid={`box-${box.id}`}
-          />
+            data-highlighted={highlighted === box.id}
+          >
+            {/* The badge is the whole fix for "which row is this box?". Five
+                boxes of one class produce five rows reading `Paimon 0.15`, and
+                without a mark on the rectangle itself the only way to tell
+                them apart is to guess. Drawn inside the box rather than beside
+                it so it cannot drift from what it names, and offset outward at
+                the top-left so it does not cover the thing being judged. */}
+            <span className="absolute -top-0.5 -left-0.5 bg-[var(--color-claimed)] px-1 text-[10px] font-mono leading-tight text-[var(--color-bg)]">
+              {ordinal(index)}
+            </span>
+          </span>
         ))}
 
         {drawn && (
@@ -261,23 +291,47 @@ export function VerificationCard({
       )}
 
       <ul className="flex flex-col gap-2">
-        {frame.predictions.map((box) => (
+        {frame.predictions.map((box, index) => (
           <li
             key={box.id}
-            className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] pb-2 text-sm"
+            // Pointing at a row lights up its rectangle and dims the rest.
+            // `onFocus`/`onBlur` alongside the pointer pair rather than instead
+            // of it: the buttons inside are the keyboard path through this
+            // list, and their focus bubbles here, so tabbing highlights the
+            // same box hovering does.
+            onPointerEnter={() => setHighlighted(box.id)}
+            onPointerLeave={() =>
+              setHighlighted((current) => (current === box.id ? null : current))
+            }
+            onFocus={() => setHighlighted(box.id)}
+            onBlur={() => setHighlighted((current) => (current === box.id ? null : current))}
+            className={`flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] pb-2 text-sm ${
+              highlighted === box.id ? "bg-[var(--color-surface)]" : ""
+            }`}
+            data-testid={`row-${box.id}`}
+            data-highlighted={highlighted === box.id}
           >
+            {/* The same number drawn on the rectangle. Five boxes of one class
+                make five rows that are otherwise identical down to the
+                confidence, and this is the only thing telling them apart. */}
+            <span className="w-5 shrink-0 text-center font-mono text-xs text-[var(--color-text-muted)]">
+              {ordinal(index)}
+            </span>
             <span className="font-medium">{box.class_name}</span>
             <span className="font-mono text-[var(--color-text-muted)]">
               {box.confidence.toFixed(2)}
             </span>
             <span className="ml-auto flex gap-2">
+              {/* The ordinal is in every label, not just the row, because
+                  "Accept Paimon" five times over is five identical accessible
+                  names for five different boxes. */}
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => onVerdict(box.id, "accept")}
                 className="rounded border border-[var(--color-border)] px-3 py-1 disabled:opacity-50"
               >
-                Accept {box.class_name}
+                Accept {box.class_name} {ordinal(index)}
               </button>
               <button
                 type="button"
@@ -288,7 +342,7 @@ export function VerificationCard({
                 }}
                 className="rounded border border-[var(--color-border)] px-3 py-1 disabled:opacity-50"
               >
-                Adjust {box.class_name}
+                Adjust {box.class_name} {ordinal(index)}
               </button>
               <button
                 type="button"
@@ -296,7 +350,7 @@ export function VerificationCard({
                 onClick={() => onVerdict(box.id, "reject")}
                 className="rounded border border-[var(--color-border)] px-3 py-1 disabled:opacity-50"
               >
-                Reject {box.class_name}
+                Reject {box.class_name} {ordinal(index)}
               </button>
             </span>
           </li>
