@@ -913,33 +913,75 @@ from `/admin`, with no code change.
 row in D1.
 
 ### M13.1 — The verification component
-- [ ] One image, its proposed boxes, and accept / adjust / reject
-- [ ] Reject-whole-image in one action — menus, loading screens and black frames are the
-      common case and must not cost several
-- [ ] Built as one component with two mounts from the start, because M14 renders the same
+- [x] One image, its proposed boxes, and accept / adjust / reject — an adjustment is
+      drawn by dragging a corrected box over the frame, in the same normalized [0, 1]
+      coordinates the schema stores
+- [x] Reject-whole-image in one action — menus, loading screens and black frames are the
+      common case and must not cost several. One request whatever the box count:
+      `INSERT ... SELECT` over the frame's unruled boxes, two bound parameters
+- [x] Built as one component with two mounts from the start, because M14 renders the same
       thing against different endpoints
 
+      **The seam is that `VerificationCard` knows no endpoint.** Every action is a
+      callback the mount supplies, and the admin-only controls are *absent* rather than
+      disabled when their callback is not passed — a disabled control is a promise that
+      signing in would help, and M14's visitor has nothing to sign into. Its test file
+      renders it with plain props and no query client, which is the check that the split
+      still holds: the day that test needs a `QueryClientProvider` is the day the
+      component learned an endpoint.
+
 ### M13.2 — Verdict endpoints
-- [ ] Append-only writes; an `adjust` carries coordinates on the verdict row and leaves
-      the prediction byte-for-byte unchanged
-- [ ] Verdicts carry `source` and identity from the Access assertion
-- [ ] Under `/api/admin`, so the existing gate and the Worker's own allowlist both apply
+- [x] Append-only writes; an `adjust` carries coordinates on the verdict row and leaves
+      the prediction byte-for-byte unchanged — asserted against the row rather than the
+      response, because a handler that mutated `predictions` could still echo the
+      original coordinates back
+- [x] Verdicts carry `source` and identity from the Access assertion. A body that names
+      its own `source` is ignored, and that is tested: a caller who could set it could
+      write an admin verdict from the public page M14 mounts the same component on
+- [x] Under `/api/admin`, so the existing gate and the Worker's own allowlist both apply
       with no new auth code
 
 ### M13.3 — Missing-object reports
-- [ ] Admin-only, stored as their own row type rather than as a verdict on a prediction
+- [x] Admin-only, stored as their own row type rather than as a verdict on a prediction
       that does not exist
-- [ ] **This is the escape hatch for the one thing verify-only cannot see.** A frame the
+- [x] **This is the escape hatch for the one thing verify-only cannot see.** A frame the
       detector missed produces no pre-label, is never shown, and in the table is
       indistinguishable from a frame where the character was absent
-- [ ] Report rate per class surfaced in `/admin` — the number that says whether a prompt
+
+      **Half of it is reachable from the screen, and the honest bound is worth stating.**
+      A frame the detector *partly* missed — one character boxed, another not — is in the
+      session pool and the report is one click. A frame it missed *entirely* has no box
+      to rule on, so it is not in the pool at all: the endpoint takes its image id
+      happily, but nothing walks an operator to it. Putting those frames in the pool
+      needs a row type this schema does not have — "a human looked and there is nothing
+      here" — because with no prediction to verdict there is no way for the frame to
+      leave the pool again. Deferred rather than half-built, and the route description
+      says so rather than implying coverage it does not have.
+- [x] Report rate per class surfaced in `/admin` — the number that says whether a prompt
       is good enough
 
+      Rendered as a fraction over `pool.images_verified`, not as a percentage and not
+      over the class's own box count. A prompt that grounds on nothing has no boxes to
+      divide by, and it is exactly the prompt whose miss rate matters; "3 / 40" also
+      carries how much evidence is behind it, which "7.5%" does not.
+
 ### M13.4 — Image serving for a labelling session
-- [ ] Batched short-lived presigned URLs, per `CONTEXT.md` §Q25 — N images and their
+- [x] Batched short-lived presigned URLs, per `CONTEXT.md` §Q25 — N images and their
       signed URLs in one call, bytes fetched from R2 directly
-- [ ] The UI re-requests the batch on a 403 rather than treating expiry as an error
-- [ ] Verdict counts, class coverage and pool size in `/admin`. **Business data here,
+
+      **Two modes, because the credential is the one thing this repo cannot create.**
+      Signing needs an R2 S3 access key that only a human at the Cloudflare dashboard can
+      mint, so a deployment without one falls back to the Access-gated `/api/admin/image`
+      proxy and says so as `url_mode`. Both modes keep §Q25's posture whole — private
+      bucket, no enumeration, same allowlist — and setting `FRAMES_S3_BASE_URL` plus the
+      two secrets switches the mode with no code change. Both are tested; the fallback is
+      not a degraded path to be discovered in production, it is the mode every deployment
+      is in until the key exists.
+- [x] The UI re-requests the batch on a 403 rather than treating expiry as an error — an
+      `<img>` reports only that it failed, so the refresh is driven by the load failure,
+      once per batch. A second failure on freshly-signed URLs is a missing R2 object, not
+      an expiry, and is said so on screen rather than retried forever
+- [x] Verdict counts, class coverage and pool size in `/admin`. **Business data here,
       system data in Grafana** — §7's "do not rebuild Grafana inside /admin"
 
 ---

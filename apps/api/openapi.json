@@ -1175,6 +1175,436 @@
           "boxes",
           "sampled_images"
         ]
+      },
+      "Verdict": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "prediction_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 42
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/VerdictKind"
+          },
+          "adjusted_x_min": {
+            "type": "number",
+            "nullable": true,
+            "example": 0.14
+          },
+          "adjusted_y_min": {
+            "type": "number",
+            "nullable": true,
+            "example": 0.22
+          },
+          "adjusted_x_max": {
+            "type": "number",
+            "nullable": true,
+            "example": 0.48
+          },
+          "adjusted_y_max": {
+            "type": "number",
+            "nullable": true,
+            "example": 0.61
+          },
+          "source": {
+            "$ref": "#/components/schemas/VerdictSource"
+          },
+          "annotator_id": {
+            "type": "string",
+            "example": "admin@example.com"
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          }
+        },
+        "required": [
+          "id",
+          "prediction_id",
+          "verdict",
+          "adjusted_x_min",
+          "adjusted_y_min",
+          "adjusted_x_max",
+          "adjusted_y_max",
+          "source",
+          "annotator_id",
+          "created_at"
+        ]
+      },
+      "VerdictKind": {
+        "type": "string",
+        "enum": [
+          "accept",
+          "adjust",
+          "reject"
+        ]
+      },
+      "VerdictSource": {
+        "type": "string",
+        "enum": [
+          "admin",
+          "anon"
+        ]
+      },
+      "CreateVerdictRequest": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "$ref": "#/components/schemas/VerdictKind"
+          },
+          "adjusted_x_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.14
+          },
+          "adjusted_y_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.22
+          },
+          "adjusted_x_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.48
+          },
+          "adjusted_y_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.61
+          }
+        },
+        "required": [
+          "verdict"
+        ]
+      },
+      "ImageRejection": {
+        "type": "object",
+        "properties": {
+          "image_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "verdicts": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 4
+          }
+        },
+        "required": [
+          "image_id",
+          "verdicts"
+        ]
+      },
+      "MissingReport": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "image_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "class_id": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 3
+          },
+          "reporter": {
+            "type": "string",
+            "example": "admin@example.com"
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          }
+        },
+        "required": [
+          "id",
+          "image_id",
+          "class_id",
+          "reporter",
+          "created_at"
+        ]
+      },
+      "CreateMissingReportRequest": {
+        "type": "object",
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 3
+          }
+        }
+      },
+      "LabellingBatch": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LabellingImage"
+            },
+            "maxItems": 100
+          },
+          "url_mode": {
+            "type": "string",
+            "enum": [
+              "signed",
+              "proxy"
+            ],
+            "example": "signed"
+          },
+          "expires_at": {
+            "type": "integer",
+            "example": 1754099900
+          },
+          "remaining": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 214
+          }
+        },
+        "required": [
+          "images",
+          "url_mode",
+          "expires_at",
+          "remaining"
+        ]
+      },
+      "LabellingImage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "r2_key": {
+            "type": "string",
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "example": 42
+          },
+          "url": {
+            "type": "string",
+            "example": "https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…"
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposedBox"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "video_id",
+          "r2_key",
+          "timestamp_seconds",
+          "url",
+          "predictions"
+        ]
+      },
+      "ProposedBox": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 42
+          },
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "class_name": {
+            "type": "string",
+            "example": "Paimon"
+          },
+          "x_min": {
+            "type": "number",
+            "example": 0.12
+          },
+          "y_min": {
+            "type": "number",
+            "example": 0.2
+          },
+          "x_max": {
+            "type": "number",
+            "example": 0.5
+          },
+          "y_max": {
+            "type": "number",
+            "example": 0.6
+          },
+          "confidence": {
+            "type": "number",
+            "example": 0.87
+          },
+          "prompt_version": {
+            "type": "string",
+            "example": "2026-08-08-a"
+          },
+          "model_id": {
+            "type": "string",
+            "example": "owlvit-base-patch32.onnx"
+          }
+        },
+        "required": [
+          "id",
+          "class_id",
+          "class_name",
+          "x_min",
+          "y_min",
+          "x_max",
+          "y_max",
+          "confidence",
+          "prompt_version",
+          "model_id"
+        ]
+      },
+      "LabellingStats": {
+        "type": "object",
+        "properties": {
+          "pool": {
+            "$ref": "#/components/schemas/LabellingPool"
+          },
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClassLabellingStats"
+            }
+          }
+        },
+        "required": [
+          "pool",
+          "classes"
+        ]
+      },
+      "LabellingPool": {
+        "type": "object",
+        "properties": {
+          "images_with_predictions": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 254
+          },
+          "images_verified": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 40
+          },
+          "images_remaining": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 214
+          },
+          "missing_reports": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 5
+          }
+        },
+        "required": [
+          "images_with_predictions",
+          "images_verified",
+          "images_remaining",
+          "missing_reports"
+        ]
+      },
+      "ClassLabellingStats": {
+        "type": "object",
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "name": {
+            "type": "string",
+            "example": "Paimon"
+          },
+          "active": {
+            "type": "boolean",
+            "example": true
+          },
+          "predictions": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 128
+          },
+          "accepted": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 90
+          },
+          "adjusted": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 12
+          },
+          "rejected": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 8
+          },
+          "anon_verdicts": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
+          },
+          "missing_reports": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 3
+          }
+        },
+        "required": [
+          "class_id",
+          "name",
+          "active",
+          "predictions",
+          "accepted",
+          "adjusted",
+          "rejected",
+          "anon_verdicts",
+          "missing_reports"
+        ]
       }
     },
     "parameters": {}
@@ -2448,6 +2878,390 @@
           },
           "404": {
             "description": "No job with this id is held by this worker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/predictions/{id}/verdict": {
+      "post": {
+        "operationId": "createVerdict",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Accept, adjust or reject one proposed box",
+        "description": "Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVerdictRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The verdict as written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Verdict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, or coordinates that disagree with the verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No prediction with this id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/images/{id}/reject": {
+      "post": {
+        "operationId": "rejectImage",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Reject every box on one frame, in one action",
+        "description": "Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "How many verdicts the rejection wrote",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRejection"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No image with this id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/images/{id}/missing": {
+      "post": {
+        "operationId": "createMissingReport",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Report an object the detector never proposed",
+        "description": "Records that this frame contains something no prediction covers — the recall failures a verify-only UI cannot otherwise see. `class_id` is optional: a report can name a class or just say something is here. Takes any image id, including one the labelling session never shows: a frame the detector proposed *nothing* on is not in that pool (there would be no box to rule on and no way to leave the frame), so a total miss is reportable through this route but not yet reachable from that screen. Admin-only. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMissingReportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The report as written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissingReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No image with this id, or no class with the given class_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/labelling/batch": {
+      "get": {
+        "operationId": "labellingBatch",
+        "tags": [
+          "admin"
+        ],
+        "summary": "The next N frames to verify, with their boxes and their URLs",
+        "description": "One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The next frames, their boxes and their URLs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabellingBatch"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A limit outside 1..100",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/labelling/stats": {
+      "get": {
+        "operationId": "labellingStats",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Verdict counts, class coverage and pool size",
+        "description": "Business data about the labelling pool: how many frames carry predictions, how many have been ruled on, and per class how many boxes were accepted, adjusted or rejected and how many missing-object reports name it. The missing-report rate per class is the number that says whether a prompt is good enough — its numerator is here and its denominator is `pool.images_verified`. Requires a Cloudflare Access assertion.",
+        "responses": {
+          "200": {
+            "description": "The pool and the per-class counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabellingStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
             "content": {
               "application/json": {
                 "schema": {

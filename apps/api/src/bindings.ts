@@ -60,4 +60,19 @@ export type Bindings = {
   // only because it is a list of real email addresses and this repo is public
   // — it grants nothing on its own.
   ADMIN_EMAILS: string;
+
+  // Presigned frame serving for a labelling session (M13.4, CONTEXT.md §Q25).
+  // All three optional, and the mode is decided by whether they are all set:
+  // signing needs an R2 S3 access key, which only a human at the Cloudflare
+  // dashboard can mint, so a deployment without one falls back to the
+  // Access-gated `/api/admin/image` proxy rather than refusing to serve the
+  // verification UI at all. See `src/frame-urls.ts` for why that fallback is
+  // the same posture rather than a weaker one.
+  //
+  // The base URL is a plain var — it is the account's S3 endpoint plus the
+  // bucket name, both of which are already in this repo's Terraform. The key
+  // and secret are wrangler secrets and appear nowhere in the tree.
+  FRAMES_S3_BASE_URL?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
 };

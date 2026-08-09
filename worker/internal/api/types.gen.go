@@ -112,6 +112,63 @@ func (e JobStatus) Valid() bool {
 	}
 }
 
+// Defines values for LabellingBatchUrlMode.
+const (
+	Proxy  LabellingBatchUrlMode = "proxy"
+	Signed LabellingBatchUrlMode = "signed"
+)
+
+// Valid indicates whether the value is a known member of the LabellingBatchUrlMode enum.
+func (e LabellingBatchUrlMode) Valid() bool {
+	switch e {
+	case Proxy:
+		return true
+	case Signed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VerdictKind.
+const (
+	Accept VerdictKind = "accept"
+	Adjust VerdictKind = "adjust"
+	Reject VerdictKind = "reject"
+)
+
+// Valid indicates whether the value is a known member of the VerdictKind enum.
+func (e VerdictKind) Valid() bool {
+	switch e {
+	case Accept:
+		return true
+	case Adjust:
+		return true
+	case Reject:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VerdictSource.
+const (
+	Admin VerdictSource = "admin"
+	Anon  VerdictSource = "anon"
+)
+
+// Valid indicates whether the value is a known member of the VerdictSource enum.
+func (e VerdictSource) Valid() bool {
+	switch e {
+	case Admin:
+		return true
+	case Anon:
+		return true
+	default:
+		return false
+	}
+}
+
 // ActiveClasses defines model for ActiveClasses.
 type ActiveClasses struct {
 	Classes []PrelabelClass `json:"classes"`
@@ -244,6 +301,36 @@ type ClaimRequest struct {
 	WorkerId string `json:"worker_id"`
 }
 
+// ClassLabellingStats defines model for ClassLabellingStats.
+type ClassLabellingStats struct {
+	// Accepted Example: 90
+	Accepted int `json:"accepted"`
+
+	// Active Example: true
+	Active bool `json:"active"`
+
+	// Adjusted Example: 12
+	Adjusted int `json:"adjusted"`
+
+	// AnonVerdicts Example: 0
+	AnonVerdicts int `json:"anon_verdicts"`
+
+	// ClassId Example: 1
+	ClassId int `json:"class_id"`
+
+	// MissingReports Example: 3
+	MissingReports int `json:"missing_reports"`
+
+	// Name Example: Paimon
+	Name string `json:"name"`
+
+	// Predictions Example: 128
+	Predictions int `json:"predictions"`
+
+	// Rejected Example: 8
+	Rejected int `json:"rejected"`
+}
+
 // CompleteRequest defines model for CompleteRequest.
 type CompleteRequest struct {
 	// FailureReason Example: video unavailable
@@ -273,6 +360,28 @@ type CreateDryRunRequest struct {
 
 	// VideoId Example: dQw4w9WgXcQ
 	VideoId string `json:"video_id"`
+}
+
+// CreateMissingReportRequest defines model for CreateMissingReportRequest.
+type CreateMissingReportRequest struct {
+	// ClassId Example: 3
+	ClassId *int `json:"class_id,omitempty"`
+}
+
+// CreateVerdictRequest defines model for CreateVerdictRequest.
+type CreateVerdictRequest struct {
+	// AdjustedXMax Example: 0.48
+	AdjustedXMax *float32 `json:"adjusted_x_max,omitempty"`
+
+	// AdjustedXMin Example: 0.14
+	AdjustedXMin *float32 `json:"adjusted_x_min,omitempty"`
+
+	// AdjustedYMax Example: 0.61
+	AdjustedYMax *float32 `json:"adjusted_y_max,omitempty"`
+
+	// AdjustedYMin Example: 0.22
+	AdjustedYMin *float32    `json:"adjusted_y_min,omitempty"`
+	Verdict      VerdictKind `json:"verdict"`
 }
 
 // DryRun defines model for DryRun.
@@ -421,6 +530,15 @@ type ImageFrame struct {
 	TimestampSeconds float32 `json:"timestamp_seconds"`
 }
 
+// ImageRejection defines model for ImageRejection.
+type ImageRejection struct {
+	// ImageId Example: 1
+	ImageId int `json:"image_id"`
+
+	// Verdicts Example: 4
+	Verdicts int `json:"verdicts"`
+}
+
 // ImageReport defines model for ImageReport.
 type ImageReport struct {
 	// Images Example: 12
@@ -491,6 +609,80 @@ type JobStatusCounts struct {
 	Prelabel int `json:"prelabel"`
 }
 
+// LabellingBatch defines model for LabellingBatch.
+type LabellingBatch struct {
+	// ExpiresAt Example: 1754099900
+	ExpiresAt int              `json:"expires_at"`
+	Images    []LabellingImage `json:"images"`
+
+	// Remaining Example: 214
+	Remaining int `json:"remaining"`
+
+	// UrlMode Example: signed
+	UrlMode LabellingBatchUrlMode `json:"url_mode"`
+}
+
+// LabellingBatchUrlMode Example: signed
+type LabellingBatchUrlMode string
+
+// LabellingImage defines model for LabellingImage.
+type LabellingImage struct {
+	// Id Example: 7
+	Id          int           `json:"id"`
+	Predictions []ProposedBox `json:"predictions"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// TimestampSeconds Example: 42
+	TimestampSeconds float32 `json:"timestamp_seconds"`
+
+	// Url Example: https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…
+	Url string `json:"url"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
+// LabellingPool defines model for LabellingPool.
+type LabellingPool struct {
+	// ImagesRemaining Example: 214
+	ImagesRemaining int `json:"images_remaining"`
+
+	// ImagesVerified Example: 40
+	ImagesVerified int `json:"images_verified"`
+
+	// ImagesWithPredictions Example: 254
+	ImagesWithPredictions int `json:"images_with_predictions"`
+
+	// MissingReports Example: 5
+	MissingReports int `json:"missing_reports"`
+}
+
+// LabellingStats defines model for LabellingStats.
+type LabellingStats struct {
+	Classes []ClassLabellingStats `json:"classes"`
+	Pool    LabellingPool         `json:"pool"`
+}
+
+// MissingReport defines model for MissingReport.
+type MissingReport struct {
+	// ClassId Example: 3
+	ClassId *int `json:"class_id"`
+
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// Id Example: 1
+	Id int `json:"id"`
+
+	// ImageId Example: 7
+	ImageId int `json:"image_id"`
+
+	// Reporter Example: admin@example.com
+	Reporter string `json:"reporter"`
+}
+
 // PredictionBox defines model for PredictionBox.
 type PredictionBox struct {
 	// ClassName Example: Paimon
@@ -537,6 +729,39 @@ type PrelabelClass struct {
 
 	// PromptVersion Example: 2026-08-08-a
 	PromptVersion string `json:"prompt_version"`
+}
+
+// ProposedBox defines model for ProposedBox.
+type ProposedBox struct {
+	// ClassId Example: 1
+	ClassId int `json:"class_id"`
+
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// Confidence Example: 0.87
+	Confidence float32 `json:"confidence"`
+
+	// Id Example: 42
+	Id int `json:"id"`
+
+	// ModelId Example: owlvit-base-patch32.onnx
+	ModelId string `json:"model_id"`
+
+	// PromptVersion Example: 2026-08-08-a
+	PromptVersion string `json:"prompt_version"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
 }
 
 // ReportDryRunRequest defines model for ReportDryRunRequest.
@@ -605,6 +830,41 @@ type ValidationIssue struct {
 	Path string `json:"path"`
 }
 
+// Verdict defines model for Verdict.
+type Verdict struct {
+	// AdjustedXMax Example: 0.48
+	AdjustedXMax *float32 `json:"adjusted_x_max"`
+
+	// AdjustedXMin Example: 0.14
+	AdjustedXMin *float32 `json:"adjusted_x_min"`
+
+	// AdjustedYMax Example: 0.61
+	AdjustedYMax *float32 `json:"adjusted_y_max"`
+
+	// AdjustedYMin Example: 0.22
+	AdjustedYMin *float32 `json:"adjusted_y_min"`
+
+	// AnnotatorId Example: admin@example.com
+	AnnotatorId string `json:"annotator_id"`
+
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// Id Example: 1
+	Id int `json:"id"`
+
+	// PredictionId Example: 42
+	PredictionId int           `json:"prediction_id"`
+	Source       VerdictSource `json:"source"`
+	Verdict      VerdictKind   `json:"verdict"`
+}
+
+// VerdictKind defines model for VerdictKind.
+type VerdictKind string
+
+// VerdictSource defines model for VerdictSource.
+type VerdictSource string
+
 // VideoImage defines model for VideoImage.
 type VideoImage struct {
 	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
@@ -642,6 +902,11 @@ type ListJobsParams struct {
 	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// LabellingBatchParams defines parameters for LabellingBatch.
+type LabellingBatchParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListVideoImagesParams defines parameters for ListVideoImages.
 type ListVideoImagesParams struct {
 	WorkerId string `form:"worker_id" json:"worker_id"`
@@ -655,6 +920,12 @@ type UpdateClassJSONRequestBody = UpdateClassRequest
 
 // CreateDryRunJSONRequestBody defines body for CreateDryRun for application/json ContentType.
 type CreateDryRunJSONRequestBody = CreateDryRunRequest
+
+// CreateMissingReportJSONRequestBody defines body for CreateMissingReport for application/json ContentType.
+type CreateMissingReportJSONRequestBody = CreateMissingReportRequest
+
+// CreateVerdictJSONRequestBody defines body for CreateVerdict for application/json ContentType.
+type CreateVerdictJSONRequestBody = CreateVerdictRequest
 
 // SubmitVideoJSONRequestBody defines body for SubmitVideo for application/json ContentType.
 type SubmitVideoJSONRequestBody = SubmitVideoRequest
@@ -829,6 +1100,31 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/image (the `GetImage` operationId).
 	GetImage(ctx context.Context, params *GetImageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateMissingReportWithBody Report an object the detector never proposed
+	//
+	// Records that this frame contains something no prediction covers — the recall failures a verify-only UI cannot otherwise see. `class_id` is optional: a report can name a class or just say something is here. Takes any image id, including one the labelling session never shows: a frame the detector proposed *nothing* on is not in that pool (there would be no box to rule on and no way to leave the frame), so a total miss is reportable through this route but not yet reachable from that screen. Admin-only. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
+	CreateMissingReportWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateMissingReport Report an object the detector never proposed
+	//
+	// Records that this frame contains something no prediction covers — the recall failures a verify-only UI cannot otherwise see. `class_id` is optional: a report can name a class or just say something is here. Takes any image id, including one the labelling session never shows: a frame the detector proposed *nothing* on is not in that pool (there would be no box to rule on and no way to leave the frame), so a total miss is reportable through this route but not yet reachable from that screen. Admin-only. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
+	CreateMissingReport(ctx context.Context, id int, body CreateMissingReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RejectImage Reject every box on one frame, in one action
+	//
+	// Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with POST /api/admin/images/{id}/reject (the `RejectImage` operationId).
+	RejectImage(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListJobs List jobs with their lease and failure state
 	//
 	// The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -836,12 +1132,44 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/jobs (the `ListJobs` operationId).
 	ListJobs(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// LabellingBatch The next N frames to verify, with their boxes and their URLs
+	//
+	// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/labelling/batch (the `LabellingBatch` operationId).
+	LabellingBatch(ctx context.Context, params *LabellingBatchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LabellingStats Verdict counts, class coverage and pool size
+	//
+	// Business data about the labelling pool: how many frames carry predictions, how many have been ruled on, and per class how many boxes were accepted, adjusted or rejected and how many missing-object reports name it. The missing-report rate per class is the number that says whether a prompt is good enough — its numerator is here and its denominator is `pool.images_verified`. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/labelling/stats (the `LabellingStats` operationId).
+	LabellingStats(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// AdminLogin Complete an Access login and return to the dashboard
 	//
 	// Exists to be navigated to, not fetched. Access gates the path, so an unauthenticated browser is sent through the login flow and only then redirected on to `/admin`.
 	//
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVerdictWithBody Accept, adjust or reject one proposed box
+	//
+	// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
+	CreateVerdictWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVerdict Accept, adjust or reject one proposed box
+	//
+	// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
+	CreateVerdict(ctx context.Context, id int, body CreateVerdictJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVideos Submitted videos and how many frames each has
 	//
@@ -1182,6 +1510,61 @@ func (c *Client) GetImage(ctx context.Context, params *GetImageParams, reqEditor
 	return c.Client.Do(req)
 }
 
+// CreateMissingReportWithBody Report an object the detector never proposed
+//
+// Records that this frame contains something no prediction covers — the recall failures a verify-only UI cannot otherwise see. `class_id` is optional: a report can name a class or just say something is here. Takes any image id, including one the labelling session never shows: a frame the detector proposed *nothing* on is not in that pool (there would be no box to rule on and no way to leave the frame), so a total miss is reportable through this route but not yet reachable from that screen. Admin-only. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
+func (c *Client) CreateMissingReportWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMissingReportRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateMissingReport Report an object the detector never proposed
+//
+// Records that this frame contains something no prediction covers — the recall failures a verify-only UI cannot otherwise see. `class_id` is optional: a report can name a class or just say something is here. Takes any image id, including one the labelling session never shows: a frame the detector proposed *nothing* on is not in that pool (there would be no box to rule on and no way to leave the frame), so a total miss is reportable through this route but not yet reachable from that screen. Admin-only. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
+func (c *Client) CreateMissingReport(ctx context.Context, id int, body CreateMissingReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMissingReportRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RejectImage Reject every box on one frame, in one action
+//
+// Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.
+//
+// Corresponds with POST /api/admin/images/{id}/reject (the `RejectImage` operationId).
+func (c *Client) RejectImage(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRejectImageRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListJobs List jobs with their lease and failure state
 //
 // The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -1199,6 +1582,40 @@ func (c *Client) ListJobs(ctx context.Context, params *ListJobsParams, reqEditor
 	return c.Client.Do(req)
 }
 
+// LabellingBatch The next N frames to verify, with their boxes and their URLs
+//
+// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/labelling/batch (the `LabellingBatch` operationId).
+func (c *Client) LabellingBatch(ctx context.Context, params *LabellingBatchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLabellingBatchRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LabellingStats Verdict counts, class coverage and pool size
+//
+// Business data about the labelling pool: how many frames carry predictions, how many have been ruled on, and per class how many boxes were accepted, adjusted or rejected and how many missing-object reports name it. The missing-report rate per class is the number that says whether a prompt is good enough — its numerator is here and its denominator is `pool.images_verified`. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/labelling/stats (the `LabellingStats` operationId).
+func (c *Client) LabellingStats(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLabellingStatsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // AdminLogin Complete an Access login and return to the dashboard
 //
 // Exists to be navigated to, not fetched. Access gates the path, so an unauthenticated browser is sent through the login flow and only then redirected on to `/admin`.
@@ -1206,6 +1623,44 @@ func (c *Client) ListJobs(ctx context.Context, params *ListJobsParams, reqEditor
 // Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 func (c *Client) AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminLoginRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVerdictWithBody Accept, adjust or reject one proposed box
+//
+// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
+func (c *Client) CreateVerdictWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVerdictRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVerdict Accept, adjust or reject one proposed box
+//
+// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
+func (c *Client) CreateVerdict(ctx context.Context, id int, body CreateVerdictJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVerdictRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1844,6 +2299,87 @@ func NewGetImageRequest(server string, params *GetImageParams) (*http.Request, e
 	return req, nil
 }
 
+// NewCreateMissingReportRequest calls the generic CreateMissingReport builder with application/json body
+func NewCreateMissingReportRequest(server string, id int, body CreateMissingReportJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateMissingReportRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateMissingReportRequestWithBody constructs an http.Request for the CreateMissingReport method, with any body, and a specified content type
+func NewCreateMissingReportRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/images/%s/missing", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRejectImageRequest constructs an http.Request for the RejectImage method
+func NewRejectImageRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/images/%s/reject", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListJobsRequest constructs an http.Request for the ListJobs method
 func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, error) {
 	var err error
@@ -1910,6 +2446,87 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 	return req, nil
 }
 
+// NewLabellingBatchRequest constructs an http.Request for the LabellingBatch method
+func NewLabellingBatchRequest(server string, params *LabellingBatchParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/labelling/batch")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLabellingStatsRequest constructs an http.Request for the LabellingStats method
+func NewLabellingStatsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/labelling/stats")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAdminLoginRequest constructs an http.Request for the AdminLogin method
 func NewAdminLoginRequest(server string) (*http.Request, error) {
 	var err error
@@ -1933,6 +2550,53 @@ func NewAdminLoginRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewCreateVerdictRequest calls the generic CreateVerdict builder with application/json body
+func NewCreateVerdictRequest(server string, id int, body CreateVerdictJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateVerdictRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateVerdictRequestWithBody constructs an http.Request for the CreateVerdict method, with any body, and a specified content type
+func NewCreateVerdictRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/predictions/%s/verdict", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -2589,6 +3253,33 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/image (the `GetImage` operationId).
 	GetImageWithResponse(ctx context.Context, params *GetImageParams, reqEditors ...RequestEditorFn) (*GetImageResponse, error)
 
+	// CreateMissingReportWithBodyWithResponse Report an object the detector never proposed
+	//
+	// Records that this frame contains something no prediction covers — the recall failures a verify-only UI cannot otherwise see. `class_id` is optional: a report can name a class or just say something is here. Takes any image id, including one the labelling session never shows: a frame the detector proposed *nothing* on is not in that pool (there would be no box to rule on and no way to leave the frame), so a total miss is reportable through this route but not yet reachable from that screen. Admin-only. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
+	CreateMissingReportWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMissingReportResponse, error)
+
+	// CreateMissingReportWithResponse Report an object the detector never proposed
+	//
+	// Records that this frame contains something no prediction covers — the recall failures a verify-only UI cannot otherwise see. `class_id` is optional: a report can name a class or just say something is here. Takes any image id, including one the labelling session never shows: a frame the detector proposed *nothing* on is not in that pool (there would be no box to rule on and no way to leave the frame), so a total miss is reportable through this route but not yet reachable from that screen. Admin-only. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
+	CreateMissingReportWithResponse(ctx context.Context, id int, body CreateMissingReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMissingReportResponse, error)
+
+	// RejectImageWithResponse Reject every box on one frame, in one action
+	//
+	// Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/images/{id}/reject (the `RejectImage` operationId).
+	RejectImageWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RejectImageResponse, error)
+
 	// ListJobsWithResponse List jobs with their lease and failure state
 	//
 	// The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -2598,6 +3289,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/jobs (the `ListJobs` operationId).
 	ListJobsWithResponse(ctx context.Context, params *ListJobsParams, reqEditors ...RequestEditorFn) (*ListJobsResponse, error)
 
+	// LabellingBatchWithResponse The next N frames to verify, with their boxes and their URLs
+	//
+	// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/labelling/batch (the `LabellingBatch` operationId).
+	LabellingBatchWithResponse(ctx context.Context, params *LabellingBatchParams, reqEditors ...RequestEditorFn) (*LabellingBatchResponse, error)
+
+	// LabellingStatsWithResponse Verdict counts, class coverage and pool size
+	//
+	// Business data about the labelling pool: how many frames carry predictions, how many have been ruled on, and per class how many boxes were accepted, adjusted or rejected and how many missing-object reports name it. The missing-report rate per class is the number that says whether a prompt is good enough — its numerator is here and its denominator is `pool.images_verified`. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/labelling/stats (the `LabellingStats` operationId).
+	LabellingStatsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LabellingStatsResponse, error)
+
 	// AdminLoginWithResponse Complete an Access login and return to the dashboard
 	//
 	// Exists to be navigated to, not fetched. Access gates the path, so an unauthenticated browser is sent through the login flow and only then redirected on to `/admin`.
@@ -2606,6 +3315,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminLoginResponse, error)
+
+	// CreateVerdictWithBodyWithResponse Accept, adjust or reject one proposed box
+	//
+	// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
+	CreateVerdictWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVerdictResponse, error)
+
+	// CreateVerdictWithResponse Accept, adjust or reject one proposed box
+	//
+	// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
+	CreateVerdictWithResponse(ctx context.Context, id int, body CreateVerdictJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVerdictResponse, error)
 
 	// ListVideosWithResponse Submitted videos and how many frames each has
 	//
@@ -3219,6 +3946,151 @@ func (r GetImageResponse) ContentType() string {
 	return ""
 }
 
+type CreateMissingReportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *MissingReport
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateMissingReportResponse) GetJSON201() *MissingReport {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateMissingReportResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateMissingReportResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateMissingReportResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateMissingReportResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateMissingReportResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateMissingReportResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateMissingReportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateMissingReportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateMissingReportResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RejectImageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ImageRejection
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RejectImageResponse) GetJSON201() *ImageRejection {
+	return r.JSON201
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RejectImageResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RejectImageResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RejectImageResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RejectImageResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RejectImageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RejectImageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RejectImageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RejectImageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListJobsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3288,6 +4160,137 @@ func (r ListJobsResponse) ContentType() string {
 	return ""
 }
 
+type LabellingBatchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LabellingBatch
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LabellingBatchResponse) GetJSON200() *LabellingBatch {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r LabellingBatchResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r LabellingBatchResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r LabellingBatchResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r LabellingBatchResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r LabellingBatchResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LabellingBatchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LabellingBatchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LabellingBatchResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LabellingStatsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LabellingStats
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LabellingStatsResponse) GetJSON200() *LabellingStats {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r LabellingStatsResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r LabellingStatsResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r LabellingStatsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r LabellingStatsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LabellingStatsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LabellingStatsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LabellingStatsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // AdminLoginResponse302Headers the declared response headers of an HTTP 302 response for AdminLogin
 type AdminLoginResponse302Headers struct {
 	Location *string
@@ -3344,6 +4347,82 @@ func (r AdminLoginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AdminLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateVerdictResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Verdict
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateVerdictResponse) GetJSON201() *Verdict {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateVerdictResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateVerdictResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateVerdictResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateVerdictResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateVerdictResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateVerdictResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateVerdictResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateVerdictResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateVerdictResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4165,6 +5244,51 @@ func (c *ClientWithResponses) GetImageWithResponse(ctx context.Context, params *
 	return ParseGetImageResponse(rsp)
 }
 
+// CreateMissingReportWithBodyWithResponse Report an object the detector never proposed
+//
+// Records that this frame contains something no prediction covers — the recall failures a verify-only UI cannot otherwise see. `class_id` is optional: a report can name a class or just say something is here. Takes any image id, including one the labelling session never shows: a frame the detector proposed *nothing* on is not in that pool (there would be no box to rule on and no way to leave the frame), so a total miss is reportable through this route but not yet reachable from that screen. Admin-only. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
+func (c *ClientWithResponses) CreateMissingReportWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMissingReportResponse, error) {
+	rsp, err := c.CreateMissingReportWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMissingReportResponse(rsp)
+}
+
+// CreateMissingReportWithResponse Report an object the detector never proposed
+//
+// Records that this frame contains something no prediction covers — the recall failures a verify-only UI cannot otherwise see. `class_id` is optional: a report can name a class or just say something is here. Takes any image id, including one the labelling session never shows: a frame the detector proposed *nothing* on is not in that pool (there would be no box to rule on and no way to leave the frame), so a total miss is reportable through this route but not yet reachable from that screen. Admin-only. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/images/{id}/missing (the `CreateMissingReport` operationId).
+func (c *ClientWithResponses) CreateMissingReportWithResponse(ctx context.Context, id int, body CreateMissingReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMissingReportResponse, error) {
+	rsp, err := c.CreateMissingReport(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMissingReportResponse(rsp)
+}
+
+// RejectImageWithResponse Reject every box on one frame, in one action
+//
+// Appends a `reject` verdict for each of this frame's boxes that the admin tier has not already ruled on. Menus, loading screens and black frames are the common case in a sampled timeline and must not cost one request per box. A frame with nothing left to reject answers 201 with a count of zero rather than an error — a stale screen is ordinary, not a conflict. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/images/{id}/reject (the `RejectImage` operationId).
+func (c *ClientWithResponses) RejectImageWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RejectImageResponse, error) {
+	rsp, err := c.RejectImage(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRejectImageResponse(rsp)
+}
+
 // ListJobsWithResponse List jobs with their lease and failure state
 //
 // The operator's view of the queue. Requires a Cloudflare Access assertion in `Cf-Access-Jwt-Assertion` for an identity on the Worker's admin allowlist.
@@ -4180,6 +5304,36 @@ func (c *ClientWithResponses) ListJobsWithResponse(ctx context.Context, params *
 	return ParseListJobsResponse(rsp)
 }
 
+// LabellingBatchWithResponse The next N frames to verify, with their boxes and their URLs
+//
+// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/labelling/batch (the `LabellingBatch` operationId).
+func (c *ClientWithResponses) LabellingBatchWithResponse(ctx context.Context, params *LabellingBatchParams, reqEditors ...RequestEditorFn) (*LabellingBatchResponse, error) {
+	rsp, err := c.LabellingBatch(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLabellingBatchResponse(rsp)
+}
+
+// LabellingStatsWithResponse Verdict counts, class coverage and pool size
+//
+// Business data about the labelling pool: how many frames carry predictions, how many have been ruled on, and per class how many boxes were accepted, adjusted or rejected and how many missing-object reports name it. The missing-report rate per class is the number that says whether a prompt is good enough — its numerator is here and its denominator is `pool.images_verified`. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/labelling/stats (the `LabellingStats` operationId).
+func (c *ClientWithResponses) LabellingStatsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LabellingStatsResponse, error) {
+	rsp, err := c.LabellingStats(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLabellingStatsResponse(rsp)
+}
+
 // AdminLoginWithResponse Complete an Access login and return to the dashboard
 //
 // Exists to be navigated to, not fetched. Access gates the path, so an unauthenticated browser is sent through the login flow and only then redirected on to `/admin`.
@@ -4193,6 +5347,36 @@ func (c *ClientWithResponses) AdminLoginWithResponse(ctx context.Context, reqEdi
 		return nil, err
 	}
 	return ParseAdminLoginResponse(rsp)
+}
+
+// CreateVerdictWithBodyWithResponse Accept, adjust or reject one proposed box
+//
+// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
+func (c *ClientWithResponses) CreateVerdictWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVerdictResponse, error) {
+	rsp, err := c.CreateVerdictWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVerdictResponse(rsp)
+}
+
+// CreateVerdictWithResponse Accept, adjust or reject one proposed box
+//
+// Appends a verdict row. Never updates: an `adjust` carries its corrected coordinates on the verdict and leaves the prediction unchanged, and ruling twice on one prediction appends a second row rather than replacing the first. `source` and `annotator_id` are read off the Access assertion and cannot be set by the caller. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/predictions/{id}/verdict (the `CreateVerdict` operationId).
+func (c *ClientWithResponses) CreateVerdictWithResponse(ctx context.Context, id int, body CreateVerdictJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVerdictResponse, error) {
+	rsp, err := c.CreateVerdict(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVerdictResponse(rsp)
 }
 
 // ListVideosWithResponse Submitted videos and how many frames each has
@@ -4842,6 +6026,121 @@ func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
 	return response, nil
 }
 
+// ParseCreateMissingReportResponse parses an HTTP response from a CreateMissingReportWithResponse call
+func ParseCreateMissingReportResponse(rsp *http.Response) (*CreateMissingReportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateMissingReportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest MissingReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRejectImageResponse parses an HTTP response from a RejectImageWithResponse call
+func ParseRejectImageResponse(rsp *http.Response) (*RejectImageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RejectImageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ImageRejection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListJobsResponse parses an HTTP response from a ListJobsWithResponse call
 func ParseListJobsResponse(rsp *http.Response) (*ListJobsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -4869,6 +6168,107 @@ func ParseListJobsResponse(rsp *http.Response) (*ListJobsResponse, error) {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLabellingBatchResponse parses an HTTP response from a LabellingBatchWithResponse call
+func ParseLabellingBatchResponse(rsp *http.Response) (*LabellingBatchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LabellingBatchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LabellingBatch
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLabellingStatsResponse parses an HTTP response from a LabellingStatsWithResponse call
+func ParseLabellingStatsResponse(rsp *http.Response) (*LabellingStatsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LabellingStatsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LabellingStats
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ErrorResponse
@@ -4947,6 +6347,67 @@ func ParseAdminLoginResponse(rsp *http.Response) (*AdminLoginResponse, error) {
 			headers.Location = &value
 		}
 		response.Headers302 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateVerdictResponse parses an HTTP response from a CreateVerdictWithResponse call
+func ParseCreateVerdictResponse(rsp *http.Response) (*CreateVerdictResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateVerdictResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Verdict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil

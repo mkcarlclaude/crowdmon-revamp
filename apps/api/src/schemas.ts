@@ -1045,3 +1045,355 @@ export const JobListQuery = z.object({
     .optional()
     .openapi({ param: { name: "limit", in: "query" }, type: "integer", example: 50 }),
 });
+
+/**
+ * The `{id}` path parameter for the routes keyed on a prediction (M13.2).
+ *
+ * Same digits-then-parse treatment as `JobIdParam` and `ClassIdParam`, for
+ * their reason: coercion would resolve `0x10` and `1e3` to integers, so a
+ * malformed id would rule on some other prediction rather than being refused.
+ */
+export const PredictionIdParam = z.object({
+  id: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((id) => id > 0)
+    .openapi({ param: { name: "id", in: "path" }, type: "integer", example: 1 }),
+});
+
+/** The `{id}` path parameter for the routes keyed on an image (M13.2, M13.3). */
+export const ImageIdParam = z.object({
+  id: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((id) => id > 0)
+    .openapi({ param: { name: "id", in: "path" }, type: "integer", example: 1 }),
+});
+
+/** Mirrors the `verdict` CHECK constraint in migration 0003. */
+export const VerdictKind = z.enum(["accept", "adjust", "reject"]).openapi("VerdictKind");
+
+/** Mirrors the `source` CHECK constraint in migration 0003 (CONTEXT.md §Q10's two tiers). */
+export const VerdictSource = z.enum(["admin", "anon"]).openapi("VerdictSource");
+
+/**
+ * A human's ruling on one model-proposed box (M13.2).
+ *
+ * The adjusted coordinates are four optional top-level fields rather than a
+ * nested `adjusted` object, because that is the shape the row has (migration
+ * 0003) and a nested object would need unwrapping in the handler for no gain.
+ * The `superRefine` below mirrors that migration's CHECK exactly — present on
+ * `adjust`, absent otherwise — so a body that disagrees with it is a 400
+ * naming the field rather than a D1 constraint failure the caller has to
+ * decode.
+ *
+ * There is no `source` and no `annotator_id`. Both are read off the Access
+ * assertion by the handler (`verdicts.source = 'admin'`, `annotator_id` = the
+ * verified email): a caller that could name its own source could write an
+ * admin verdict from the public page, which is the one thing keeping untrusted
+ * input out of the dataset (CONTEXT.md §Q10).
+ */
+export const CreateVerdictRequest = z
+  .object({
+    verdict: VerdictKind,
+    adjusted_x_min: z.number().min(0).max(1).optional().openapi({ example: 0.14 }),
+    adjusted_y_min: z.number().min(0).max(1).optional().openapi({ example: 0.22 }),
+    adjusted_x_max: z.number().min(0).max(1).optional().openapi({ example: 0.48 }),
+    adjusted_y_max: z.number().min(0).max(1).optional().openapi({ example: 0.61 }),
+  })
+  .superRefine((body, ctx) => {
+    const corners = [
+      body.adjusted_x_min,
+      body.adjusted_y_min,
+      body.adjusted_x_max,
+      body.adjusted_y_max,
+    ];
+    const given = corners.filter((corner) => corner !== undefined).length;
+
+    if (body.verdict === "adjust" && given !== 4) {
+      ctx.addIssue({
+        code: "custom",
+        message: "an adjust verdict needs all four adjusted coordinates",
+        path: ["adjusted_x_min"],
+      });
+      return;
+    }
+
+    if (body.verdict !== "adjust" && given > 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: `a ${body.verdict} verdict must not carry adjusted coordinates`,
+        path: ["adjusted_x_min"],
+      });
+      return;
+    }
+
+    // Cross-field, so no bound on either coordinate alone can express it —
+    // `PredictionBox` makes the same two checks for the same reason.
+    if (body.adjusted_x_max !== undefined && body.adjusted_x_min !== undefined) {
+      if (body.adjusted_x_max < body.adjusted_x_min) {
+        ctx.addIssue({
+          code: "custom",
+          message: "adjusted_x_max must be >= adjusted_x_min",
+          path: ["adjusted_x_max"],
+        });
+      }
+    }
+    if (body.adjusted_y_max !== undefined && body.adjusted_y_min !== undefined) {
+      if (body.adjusted_y_max < body.adjusted_y_min) {
+        ctx.addIssue({
+          code: "custom",
+          message: "adjusted_y_max must be >= adjusted_y_min",
+          path: ["adjusted_y_max"],
+        });
+      }
+    }
+  })
+  .openapi("CreateVerdictRequest");
+
+/**
+ * The verdict row as written (M13.2).
+ *
+ * Echoed back whole rather than answered with a bare id, and the adjusted
+ * coordinates come from the row rather than from the request: this response is
+ * the evidence that an `adjust` landed on the *verdict* and left the
+ * prediction alone, which is the property every later exclusion of an
+ * annotator depends on (CONTEXT.md §12).
+ */
+export const Verdict = z
+  .object({
+    id: z.int().positive().openapi({ example: 1 }),
+    prediction_id: z.int().positive().openapi({ example: 42 }),
+    verdict: VerdictKind,
+    adjusted_x_min: z.number().nullable().openapi({ example: 0.14 }),
+    adjusted_y_min: z.number().nullable().openapi({ example: 0.22 }),
+    adjusted_x_max: z.number().nullable().openapi({ example: 0.48 }),
+    adjusted_y_max: z.number().nullable().openapi({ example: 0.61 }),
+    source: VerdictSource,
+    annotator_id: z.string().openapi({ example: "admin@example.com" }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+  })
+  .openapi("Verdict");
+
+export type VerdictRow = z.infer<typeof Verdict>;
+
+/**
+ * What rejecting a whole frame produced (M13.1's "reject-whole-image in one
+ * action").
+ *
+ * The count is on the wire because it is the only way the caller can tell a
+ * frame whose four boxes were all rejected from one that had nothing left to
+ * reject — the button is pressed on menus and loading screens, where a stale
+ * screen showing boxes somebody else already ruled on is entirely possible.
+ */
+export const ImageRejection = z
+  .object({
+    image_id: z.int().positive().openapi({ example: 1 }),
+    verdicts: z.int().nonnegative().openapi({ example: 4 }),
+  })
+  .openapi("ImageRejection");
+
+/**
+ * What reporting a missed object takes (M13.3).
+ *
+ * `class_id` is nullable rather than optional-and-absent, and both are
+ * accepted: null is the real case migration 0003 describes — "something is
+ * missing here" for a character that is not in `classes` at all — and a
+ * reporter who does know which class it was names it. Nothing else is on the
+ * body: the reporter comes from the Access assertion, the image from the path.
+ */
+export const CreateMissingReportRequest = z
+  .object({
+    class_id: z.int().positive().nullable().optional().openapi({ example: 3 }),
+  })
+  .openapi("CreateMissingReportRequest");
+
+/** The `missing_reports` row as written (M13.3). */
+export const MissingReport = z
+  .object({
+    id: z.int().positive().openapi({ example: 1 }),
+    image_id: z.int().positive().openapi({ example: 7 }),
+    class_id: z.int().positive().nullable().openapi({ example: 3 }),
+    reporter: z.string().openapi({ example: "admin@example.com" }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+  })
+  .openapi("MissingReport");
+
+/**
+ * How many frames one call of the labelling batch hands out (M13.4), and the
+ * ceiling on what a caller may ask for.
+ *
+ * CONTEXT.md §Q25 sizes the session at "a couple of hundred images per
+ * sitting" served as "N images and their signed URLs in one call" — about ten
+ * batched calls. Twenty is that arithmetic. The ceiling is a hundred because
+ * every image in a batch costs one HMAC chain to sign and one row of
+ * predictions to join, and because a session that asked for a thousand would
+ * be holding signed URLs that expire long before it reaches them.
+ */
+export const LABELLING_BATCH_SIZE = 20;
+export const MAX_LABELLING_BATCH = 100;
+
+/**
+ * How long a batch's URLs stay good (M13.4).
+ *
+ * Short enough that a URL pasted elsewhere is worthless within the sitting,
+ * long enough that an operator working through twenty frames does not hit an
+ * expiry mid-batch. The UI treats an expiry as a re-request rather than an
+ * error (M13.4), so being wrong in the short direction costs one extra call
+ * and being wrong in the long direction weakens the bound §Q25 is built on.
+ */
+export const PRESIGN_TTL_SECONDS = 15 * 60;
+
+export const LabellingBatchQuery = z.object({
+  limit: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((n) => n >= 1 && n <= MAX_LABELLING_BATCH)
+    .optional()
+    .openapi({ param: { name: "limit", in: "query" }, type: "integer", example: 20 }),
+});
+
+/**
+ * One proposed box as the verification UI receives it (M13.4).
+ *
+ * Carries `id`, unlike `PredictionBox` — which is the same schema in the other
+ * direction, a worker *writing* boxes by natural key. A verdict references
+ * `predictions.id`, so the row id is precisely what this direction has to hand
+ * out and the write direction cannot supply.
+ *
+ * `class_name` travels beside `class_id` rather than being looked up by the
+ * client: the UI renders the name on the box and posts nothing keyed on it, so
+ * fetching a roster to resolve ids would be a second request to render a
+ * label.
+ */
+const ProposedBox = z
+  .object({
+    id: z.int().positive().openapi({ example: 42 }),
+    class_id: z.int().positive().openapi({ example: 1 }),
+    class_name: z.string().openapi({ example: "Paimon" }),
+    x_min: z.number().openapi({ example: 0.12 }),
+    y_min: z.number().openapi({ example: 0.2 }),
+    x_max: z.number().openapi({ example: 0.5 }),
+    y_max: z.number().openapi({ example: 0.6 }),
+    confidence: z.number().openapi({ example: 0.87 }),
+    prompt_version: z.string().openapi({ example: "2026-08-08-a" }),
+    model_id: z.string().openapi({ example: "owlvit-base-patch32.onnx" }),
+  })
+  .openapi("ProposedBox");
+
+/**
+ * One frame in a labelling batch: where to fetch its bytes, and what the model
+ * proposed on it.
+ *
+ * `predictions` carries only the boxes this annotator has not already ruled
+ * on. A frame comes back into the pool while any of its boxes is unruled (see
+ * `labellingBatchHandler`), so echoing the ruled ones too would show an
+ * operator a box they just accepted with no way to tell it apart from one they
+ * had not reached.
+ */
+const LabellingImage = z
+  .object({
+    id: z.int().positive().openapi({ example: 7 }),
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    r2_key: z.string().openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    timestamp_seconds: z.number().openapi({ example: 42 }),
+    url: z.string().openapi({
+      example:
+        "https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…",
+    }),
+    predictions: z.array(ProposedBox),
+  })
+  .openapi("LabellingImage");
+
+/**
+ * A labelling session's next N frames, their boxes and their URLs (M13.4).
+ *
+ * `url_mode` is on the wire because the two modes fail differently and the UI
+ * has to know which it is holding. A `signed` URL goes straight to R2 and
+ * answers 403 once it expires — that is the case M13.4 requires the UI to
+ * treat as a re-request rather than an error. A `proxy` URL is this Worker's
+ * own Access-gated `/api/admin/image` route, which does not expire on its own
+ * and whose 403 means the operator's Access session is what ended. Guessing
+ * between those two from a status code alone is exactly the ambiguity this
+ * field removes.
+ *
+ * `expires_at` is populated in both modes so the UI has one refresh rule
+ * rather than a branch: in `proxy` mode it is when the batch would have
+ * expired had it been signed, which is a harmless early refresh.
+ */
+export const LabellingBatch = z
+  .object({
+    images: z.array(LabellingImage).max(MAX_LABELLING_BATCH),
+    url_mode: z.enum(["signed", "proxy"]).openapi({ example: "signed" }),
+    expires_at: z.int().openapi({ example: 1_754_099_900 }),
+    /** How many frames are still waiting, this batch included — the session's own progress bar. */
+    remaining: z.int().nonnegative().openapi({ example: 214 }),
+  })
+  .openapi("LabellingBatch");
+
+/**
+ * One class's labelling numbers (M13.3, M13.4).
+ *
+ * Counts rather than rates, and the denominator lives on `LabellingPool`
+ * beside them. A rate computed in SQL would have to pick a rounding and a
+ * zero-denominator convention here, in the contract, where a reader cannot see
+ * either — and the two numbers a rate is built from are worth showing anyway:
+ * "3 missing reports over 40 verified frames" says something "0.075" does not.
+ *
+ * Verdicts are counted per source (CONTEXT.md §Q10: rates are computed per
+ * source, or an anonymous troll rejecting everything is indistinguishable from
+ * a model that got worse). M13 writes only `admin` rows; M14 starts writing
+ * `anon` ones into the same columns, and the split is here from the start so
+ * that day changes no query.
+ *
+ * **Every count below is a count of boxes, not of verdict rows** — including
+ * `anon_verdicts`, which is how many of this class's boxes an anonymous
+ * visitor has ruled on. Several verdicts on one prediction is a legal state
+ * (migration 0003), so counting rows against a `predictions` denominator would
+ * render "1 box, 2 accepted". A box ruled the same way twice counts once; a
+ * box accepted and later rejected counts in both columns, because both are
+ * true of it.
+ */
+const ClassLabellingStats = z
+  .object({
+    class_id: z.int().positive().openapi({ example: 1 }),
+    name: z.string().openapi({ example: "Paimon" }),
+    active: z.boolean().openapi({ example: true }),
+    predictions: z.int().nonnegative().openapi({ example: 128 }),
+    accepted: z.int().nonnegative().openapi({ example: 90 }),
+    adjusted: z.int().nonnegative().openapi({ example: 12 }),
+    rejected: z.int().nonnegative().openapi({ example: 8 }),
+    anon_verdicts: z.int().nonnegative().openapi({ example: 0 }),
+    missing_reports: z.int().nonnegative().openapi({ example: 3 }),
+  })
+  .openapi("ClassLabellingStats");
+
+/**
+ * The pool a labelling session draws from (M13.4).
+ *
+ * Business data, and only business data — §7's "do not rebuild Grafana inside
+ * /admin". How long a prelabel job took and how deep the queue is are already
+ * on the dashboard; how many frames are left to rule on is not, and cannot be,
+ * because it is a question about rows rather than about the system.
+ */
+const LabellingPool = z
+  .object({
+    images_with_predictions: z.int().nonnegative().openapi({ example: 254 }),
+    images_verified: z.int().nonnegative().openapi({ example: 40 }),
+    images_remaining: z.int().nonnegative().openapi({ example: 214 }),
+    missing_reports: z.int().nonnegative().openapi({ example: 5 }),
+  })
+  .openapi("LabellingPool");
+
+/** Named `LabellingStats`, not after the `labellingStats` operation. */
+export const LabellingStats = z
+  .object({
+    pool: LabellingPool,
+    classes: z.array(ClassLabellingStats),
+  })
+  .openapi("LabellingStats");
+
+export type LabellingStatsRow = z.infer<typeof LabellingStats>;

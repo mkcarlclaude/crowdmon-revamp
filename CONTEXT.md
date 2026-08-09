@@ -410,6 +410,19 @@ to serve one operator fifty images. Presigned batches stay where their argument 
 bites — M13.4's labelling session, a couple of hundred images per sitting, where keeping
 bytes off Worker CPU is worth the infrastructure.
 
+**Amended again in v2 (M13.4): the batch endpoint signs when it can and proxies when it
+cannot.** `/api/admin/labelling/batch` returns N frames, their boxes and a URL each, and
+which kind of URL is decided by whether the deployment has an R2 S3 credential —
+announced on the response as `url_mode`, because the two expire differently and the UI
+has to tell an expired signature from an ended Access session. The credential is the
+reason for the fallback rather than a hedge about the decision: only a human at the
+Cloudflare dashboard can mint one (M8's bucket-scoped token sat behind the same gate),
+and a verification UI that answered 503 until somebody did would make the milestone
+undeliverable by this repo alone. Both modes keep §7's posture whole — private bucket,
+no enumeration, the same allowlist — so what the credential buys is bytes off Worker CPU,
+which is exactly what §Q25 said it was for. Setting `FRAMES_S3_BASE_URL` plus the two
+secrets switches the mode with no code change.
+
 **Amended in v2 (§12): the public path serves R2 images too, and is bounded to make that
 safe.** The public surface is no longer a detector demo over bundled samples; it is the
 verification UI, which needs real frames. Three bounds keep §7's "no republishing at

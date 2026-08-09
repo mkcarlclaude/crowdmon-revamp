@@ -4,11 +4,18 @@ import {
   AdminVideoList,
   type CreateClassRequest,
   type CreateDryRunRequest,
+  type CreateMissingReportRequest,
+  type CreateVerdictRequest,
   DryRun,
   DryRunList,
+  ImageRejection,
   JobList,
+  LabellingBatch,
+  LabellingStats,
+  MissingReport,
   type SubmitVideoRequest,
   type UpdateClassRequest,
+  Verdict,
   VideoSubmission,
 } from "@crowdmon/api/schemas";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -145,6 +152,91 @@ export function useDryRuns(classId: number) {
       if (!newest) return false;
       return newest.status === "pending" || newest.status === "claimed" ? 3_000 : false;
     },
+  });
+}
+
+export const labellingBatchKey = ["labelling", "batch"] as const;
+export const labellingStatsKey = ["labelling", "stats"] as const;
+
+/**
+ * The frames a verification session is working through (M13.4).
+ *
+ * No `refetchInterval`, and deliberately more than the reasoning `useClasses`
+ * gives: a batch is not just unchanging, it is *being consumed*. A poll
+ * landing mid-session would replace the frame under the operator's cursor with
+ * a page recomputed from verdicts they just wrote. The session refetches when
+ * it runs out and when a URL expires, both explicitly, and at no other time.
+ *
+ * `staleTime: Infinity` says the same thing to the cache: a remount inside one
+ * sitting continues where it was rather than silently starting the pool again.
+ */
+export function useLabellingBatch() {
+  return useQuery({
+    queryKey: labellingBatchKey,
+    queryFn: () => apiFetch("/api/admin/labelling/batch", LabellingBatch),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/** Verdict counts, class coverage and pool size (M13.4). Business data — §7's Grafana boundary. */
+export function useLabellingStats() {
+  return useQuery({
+    queryKey: labellingStatsKey,
+    queryFn: () => apiFetch("/api/admin/labelling/stats", LabellingStats),
+  });
+}
+
+/**
+ * One ruling on one proposed box.
+ *
+ * Invalidates the stats and nothing else. Invalidating the batch would refetch
+ * a page of frames on every click — the endpoint pages by *unruled* boxes, so
+ * the answer would shift under the session between one verdict and the next,
+ * which is the one thing `useLabellingBatch`'s own comment is about.
+ */
+export function useCreateVerdict() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      predictionId,
+      ...body
+    }: z.infer<typeof CreateVerdictRequest> & { predictionId: number }) =>
+      apiFetch(`/api/admin/predictions/${predictionId}/verdict`, Verdict, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: labellingStatsKey }),
+  });
+}
+
+/** Reject every remaining box on one frame, in one request (M13.1). */
+export function useRejectFrame() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (imageId: number) =>
+      apiFetch(`/api/admin/images/${imageId}/reject`, ImageRejection, { method: "POST" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: labellingStatsKey }),
+  });
+}
+
+/** Record something the detector never proposed (M13.3). */
+export function useReportMissing() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      imageId,
+      ...body
+    }: z.infer<typeof CreateMissingReportRequest> & { imageId: number }) =>
+      apiFetch(`/api/admin/images/${imageId}/missing`, MissingReport, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: labellingStatsKey }),
   });
 }
 
