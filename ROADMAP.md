@@ -976,7 +976,14 @@ row in D1.
       bucket, no enumeration, same allowlist — and setting `FRAMES_S3_BASE_URL` plus the
       two secrets switches the mode with no code change. Both are tested; the fallback is
       not a degraded path to be discovered in production, it is the mode every deployment
-      is in until the key exists.
+      is in until the key is set.
+
+      **No third token.** The key to set is the detector's existing read-only one, not a
+      newly minted one and not the Go worker's read-and-write one — presigning a GET
+      needs Object Read on one bucket and nothing else. The cost of sharing it is that a
+      rotation moves two systems at once, so it is written down at both ends rather than
+      discovered during one (`apps/api/wrangler.toml`, `deploy/homebox/.env.example`,
+      `CONTEXT.md` §Q25).
 - [x] The UI re-requests the batch on a 403 rather than treating expiry as an error — an
       `<img>` reports only that it failed, so the refresh is driven by the load failure,
       once per batch. A second failure on freshly-signed URLs is a missing R2 object, not

@@ -415,13 +415,26 @@ cannot.** `/api/admin/labelling/batch` returns N frames, their boxes and a URL e
 which kind of URL is decided by whether the deployment has an R2 S3 credential —
 announced on the response as `url_mode`, because the two expire differently and the UI
 has to tell an expired signature from an ended Access session. The credential is the
-reason for the fallback rather than a hedge about the decision: only a human at the
-Cloudflare dashboard can mint one (M8's bucket-scoped token sat behind the same gate),
-and a verification UI that answered 503 until somebody did would make the milestone
+reason for the fallback rather than a hedge about the decision: it is dashboard-minted
+material this repo cannot create (M8's bucket-scoped token sat behind the same gate),
+and a verification UI that answered 503 until somebody set it would make the milestone
 undeliverable by this repo alone. Both modes keep §7's posture whole — private bucket,
 no enumeration, the same allowlist — so what the credential buys is bytes off Worker CPU,
 which is exactly what §Q25 said it was for. Setting `FRAMES_S3_BASE_URL` plus the two
 secrets switches the mode with no code change.
+
+**And the credential is not a new one.** The Worker signs with the *detector's*
+read-only token (`CROWDMON_DETECTOR_R2_*`, Object Read on `crowdmon-frames`), because
+presigning a GET needs exactly that grant and a third bucket token would have been a
+third thing to rotate for no narrower a bound. It is emphatically not the Go worker's
+read-**and-write** token: a signing key never needs to write, and putting a writable
+credential in a Worker to hand out read URLs would widen the blast radius for nothing.
+That reuse does couple two systems — rotating the token stops the sidecar *and* makes
+this Worker sign URLs R2 rejects, which surfaces as broken frames rather than as a
+readable failure — and the coupling is written at both ends (`apps/api/wrangler.toml`,
+`deploy/homebox/.env.example`) rather than left to be found during an incident. Clearing
+the Worker's copy is the stopgap: it falls back to proxying, which is the mode it
+shipped in.
 
 **Amended in v2 (§12): the public path serves R2 images too, and is bounded to make that
 safe.** The public surface is no longer a detector demo over bundled samples; it is the

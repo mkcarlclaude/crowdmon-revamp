@@ -78,6 +78,28 @@ client authenticate to it is out of band.
    uploads on the next chunk job it claims — there's nothing to apply here,
    because nothing here is a Terraform resource.
 
+### Who else holds a bucket token
+
+Two, and the split is by *grant*, not by consumer:
+
+| Token | Grant | Held by |
+|---|---|---|
+| `CROWDMON_R2_ACCESS_KEY_ID` / `_SECRET` | Object Read **& Write** | the Go worker on the home box — the only thing that writes frames |
+| `CROWDMON_DETECTOR_R2_ACCESS_KEY_ID` / `_SECRET` | Object **Read** | the detector sidecar, **and** the API Worker's `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` wrangler secrets (M13.4's presigned frame URLs) |
+
+The Worker reuses the read-only token rather than getting a third one, because
+presigning a GET needs Object Read on this bucket and nothing else — a token per
+consumer would have been another thing to rotate for no narrower a grant. What it
+must never be given is the read-and-write token above: a signing key never writes,
+and a writable credential in a Worker that hands out read URLs is blast radius for
+nothing.
+
+**Rotating the read-only token moves two systems.** The sidecar recovers on
+restart; the Worker starts signing URLs R2 rejects, which shows in `/admin` as
+broken frames rather than as a readable failure. Rotate both stores together, or
+clear the Worker's secrets first — it falls back to proxying frames through its own
+Access-gated route, which is the mode it shipped in.
+
 ## Handoff to wrangler
 
 `terraform apply` emits the IDs that `apps/api/wrangler.toml` cannot know until

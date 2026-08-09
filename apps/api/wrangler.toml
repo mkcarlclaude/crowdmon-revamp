@@ -86,16 +86,31 @@ MAX_ATTEMPTS = 3
 # path and answers `url_mode: "proxy"`. Both modes keep the bucket private and
 # nothing enumerable; what differs is who moves the bytes.
 #
-# It is commented rather than filled in because the value embeds the account id
-# and, more to the point, is useless without an R2 S3 access key — which only a
-# human at the Cloudflare dashboard can mint, the same gate M8's bucket-scoped
-# worker token sat behind. Uncomment and paste the endpoint once the key
-# exists:
+# **No new token.** The credential to paste is the one the detector sidecar
+# already uses — `CROWDMON_DETECTOR_R2_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` in
+# `deploy/homebox/.env`, scoped Object Read only on `crowdmon-frames`
+# (infra/README.md, "Minting the worker's R2 token"). Presigning a GET needs
+# exactly that capability and nothing more, so minting a third bucket token
+# would have bought a second thing to rotate and no additional bound. It is
+# deliberately *not* the Go worker's `CROWDMON_R2_ACCESS_KEY_ID`, which carries
+# Object Read **&& Write**: a signing key only ever needs to read, and a signed
+# URL minted from a writable key is a writable key in a Worker for no reason.
+#
+# Commented rather than filled in only because the value embeds the account id.
+# Uncomment, paste, and set the two secrets from the same pair:
 #
 #   FRAMES_S3_BASE_URL = "https://<account-id>.r2.cloudflarestorage.com/crowdmon-frames"
 #
-#   wrangler secret put R2_ACCESS_KEY_ID
-#   wrangler secret put R2_SECRET_ACCESS_KEY
+#   wrangler secret put R2_ACCESS_KEY_ID       # = CROWDMON_DETECTOR_R2_ACCESS_KEY_ID
+#   wrangler secret put R2_SECRET_ACCESS_KEY   # = CROWDMON_DETECTOR_R2_SECRET_ACCESS_KEY
+#
+# **What sharing it costs, so it is not discovered during an incident.**
+# Rotating or revoking that token now moves two systems: the detector stops
+# fetching frames on the box, and this Worker starts signing URLs R2 rejects —
+# which shows up as broken images in /admin rather than as a message anybody
+# can read. Rotate both stores together, or set only one half here to fall back
+# (see below). `deploy/homebox/.env.example` carries the same warning at the
+# other end of the pair.
 #
 # Setting only one half leaves the Worker in proxy mode on purpose
 # (`src/frame-urls.ts`): signing with a missing secret produces URLs that look
