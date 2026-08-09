@@ -59,23 +59,12 @@ function batch(over: Record<string, unknown> = {}) {
 }
 
 /**
- * The default POST answer. A real verdict row rather than `{ ok: true }`,
+ * The default POST answer. A real submission result rather than `{ ok: true }`,
  * because `apiFetch` parses every response against the contract — a stub that
  * only looked plausible would fail at the boundary, which is `client.ts` doing
  * exactly what it is for.
  */
-const writtenVerdict = {
-  id: 1,
-  prediction_id: 10,
-  verdict: "accept",
-  adjusted_x_min: null,
-  adjusted_y_min: null,
-  adjusted_x_max: null,
-  adjusted_y_max: null,
-  source: "admin",
-  annotator_id: "admin@example.com",
-  created_at: 1_754_099_000,
-};
+const writtenVerdicts = { image_id: 1, verdicts: 1 };
 
 const CLASSES = {
   classes: [
@@ -117,7 +106,7 @@ function stubApi({
 
   const fetchMock = vi.fn((url: string, init?: RequestInit) => {
     if (init?.method === "POST") {
-      return Promise.resolve(post?.(url) ?? json(writtenVerdict, 201));
+      return Promise.resolve(post?.(url) ?? json(writtenVerdicts, 201));
     }
     if (url.startsWith("/api/admin/labelling/batch")) {
       const body = queue.length > 1 ? queue.shift() : queue[0];
@@ -161,15 +150,32 @@ const postsTo = (fetchMock: ReturnType<typeof stubApi>) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("LabellingSession", () => {
-  it("posts a verdict against the prediction the card ruled on", async () => {
-    const fetchMock = stubApi();
+  it("posts the frame's staged rulings as one request", async () => {
+    // One call per frame, not one per box. The staging area is what makes that
+    // possible, and it is also what keeps the frame still while it is judged.
+    const fetchMock = stubApi({
+      batches: [batch({ images: [image(1, [box(10), box(11, "Nahida")])] })],
+    });
 
     render(wrap(<LabellingSession />));
     await userEvent.click(await screen.findByRole("button", { name: /accept paimon/i }));
+    await userEvent.click(screen.getByRole("button", { name: /reject nahida/i }));
+
+    expect(postsTo(fetchMock)).toEqual([]);
+
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
 
     await waitFor(() =>
       expect(postsTo(fetchMock)).toEqual([
-        ["/api/admin/predictions/10/verdict", { verdict: "accept" }],
+        [
+          "/api/admin/images/1/verdicts",
+          {
+            verdicts: [
+              { prediction_id: 10, verdict: "accept" },
+              { prediction_id: 11, verdict: "reject" },
+            ],
+          },
+        ],
       ]),
     );
   });
@@ -184,19 +190,23 @@ describe("LabellingSession", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: /accept paimon/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
 
     await waitFor(() =>
       expect(screen.getByRole("img")).toHaveAttribute("alt", "frames/dQw4w9WgXcQ/00002.000.jpg"),
     );
   });
 
-  it("keeps a partly-ruled frame until its last box is gone", async () => {
+  it("keeps a partly-submitted frame until its last box is gone", async () => {
     stubApi({ batches: [batch({ images: [image(1, [box(10), box(11, "Nahida")])] })] });
 
     render(wrap(<LabellingSession />));
     await userEvent.click(await screen.findByRole("button", { name: /accept paimon/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
 
-    // Same frame, one box fewer — not the next frame, and not a refetch.
+    // Same frame, one box fewer — not the next frame, and not a refetch. The
+    // renumbering that follows is fine here: it is the consequence of an
+    // explicit submit, not something that happened under a moving cursor.
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /accept paimon/i })).not.toBeInTheDocument(),
     );
@@ -204,22 +214,23 @@ describe("LabellingSession", () => {
     expect(screen.getByRole("button", { name: /accept nahida/i })).toBeInTheDocument();
   });
 
-  it("does not advance when the verdict failed", async () => {
-    // A box silently dropped from the dataset is the one outcome this screen
+  it("does not advance when the submission failed", async () => {
+    // Boxes silently dropped from the dataset are the one outcome this screen
     // exists to prevent, so the frame stays and the failure is on screen.
     stubApi({
       batches: [batch({ images: [image(1), image(2)] })],
-      post: () => json({ error: "no prediction with id 10" }, 404),
+      post: () => json({ error: "not a prediction on image 1: 10" }, 404),
     });
 
     render(wrap(<LabellingSession />));
     await userEvent.click(await screen.findByRole("button", { name: /accept paimon/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/no prediction with id 10/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not a prediction on image 1/);
     expect(screen.getByRole("img")).toHaveAttribute("alt", "frames/dQw4w9WgXcQ/00001.000.jpg");
   });
 
-  it("rejects the whole frame and moves on", async () => {
+  it("rejects the whole frame in one submission and moves on", async () => {
     const fetchMock = stubApi({
       batches: [batch({ images: [image(1, [box(10), box(11, "Nahida")]), image(2)] })],
       post: () => json({ image_id: 1, verdicts: 2 }, 201),
@@ -227,11 +238,22 @@ describe("LabellingSession", () => {
 
     render(wrap(<LabellingSession />));
     await userEvent.click(await screen.findByRole("button", { name: /reject whole frame/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
 
     await waitFor(() =>
       expect(screen.getByRole("img")).toHaveAttribute("alt", "frames/dQw4w9WgXcQ/00002.000.jpg"),
     );
-    expect(postsTo(fetchMock)).toEqual([["/api/admin/images/1/reject", null]]);
+    expect(postsTo(fetchMock)).toEqual([
+      [
+        "/api/admin/images/1/verdicts",
+        {
+          verdicts: [
+            { prediction_id: 10, verdict: "reject" },
+            { prediction_id: 11, verdict: "reject" },
+          ],
+        },
+      ],
+    ]);
   });
 
   it("records a missing-object report without moving off the frame", async () => {
@@ -262,7 +284,7 @@ describe("LabellingSession", () => {
       post: (url) =>
         url.endsWith("/missing")
           ? json({ id: 1, image_id: 1, class_id: null, reporter: "a", created_at: 1 }, 201)
-          : json(writtenVerdict, 201),
+          : json(writtenVerdicts, 201),
     });
 
     render(wrap(<LabellingSession />));
@@ -271,6 +293,7 @@ describe("LabellingSession", () => {
     expect(await screen.findByText(/report recorded/i)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /accept paimon/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
 
     await waitFor(() =>
       expect(screen.getByRole("img")).toHaveAttribute("alt", "frames/dQw4w9WgXcQ/00002.000.jpg"),
@@ -285,10 +308,6 @@ describe("LabellingSession", () => {
     // table the append-only design exists to keep trustworthy.
     stubApi({
       batches: [batch({ images: [image(1), image(2)] })],
-      post: (url) =>
-        url.endsWith("/reject")
-          ? json({ image_id: 1, verdicts: 1 }, 201)
-          : json(writtenVerdict, 201),
     });
 
     render(wrap(<LabellingSession />));
@@ -297,6 +316,7 @@ describe("LabellingSession", () => {
     expect(screen.getByRole("button", { name: /save adjustment/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /reject whole frame/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
 
     await waitFor(() =>
       expect(screen.getByRole("img")).toHaveAttribute("alt", "frames/dQw4w9WgXcQ/00002.000.jpg"),
@@ -313,6 +333,7 @@ describe("LabellingSession", () => {
 
     render(wrap(<LabellingSession />));
     await userEvent.click(await screen.findByRole("button", { name: /accept paimon/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
 
     expect(await screen.findByText(/nothing left to verify/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /next batch/i })).not.toBeInTheDocument();
@@ -363,6 +384,7 @@ describe("LabellingSession", () => {
     // Frame 1 ruled on, so the session is showing frame 2 — a different frame,
     // and its own expiry is worth its own re-request.
     await userEvent.click(screen.getByRole("button", { name: /accept paimon/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
     await waitFor(() =>
       expect(screen.getByRole("img")).toHaveAttribute("alt", "frames/dQw4w9WgXcQ/00002.000.jpg"),
     );
@@ -417,6 +439,7 @@ describe("LabellingSession", () => {
 
     render(wrap(<LabellingSession />));
     await userEvent.click(await screen.findByRole("button", { name: /accept paimon/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
     await userEvent.click(await screen.findByRole("button", { name: /next batch/i }));
 
     // Mid-refetch: no frame at all, and nothing to click twice.

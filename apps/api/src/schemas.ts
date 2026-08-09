@@ -1047,22 +1047,15 @@ export const JobListQuery = z.object({
 });
 
 /**
- * The `{id}` path parameter for the routes keyed on a prediction (M13.2).
+ * The `{id}` path parameter for the routes keyed on an image (M13.1, M13.3).
  *
  * Same digits-then-parse treatment as `JobIdParam` and `ClassIdParam`, for
  * their reason: coercion would resolve `0x10` and `1e3` to integers, so a
- * malformed id would rule on some other prediction rather than being refused.
+ * malformed id would rule on some other frame rather than being refused.
+ *
+ * There is no prediction-keyed equivalent, and that is the shape of the whole
+ * verdict surface: a ruling is submitted with its frame, never on its own.
  */
-export const PredictionIdParam = z.object({
-  id: z
-    .string()
-    .regex(/^\d+$/)
-    .transform(Number)
-    .refine((id) => id > 0)
-    .openapi({ param: { name: "id", in: "path" }, type: "integer", example: 1 }),
-});
-
-/** The `{id}` path parameter for the routes keyed on an image (M13.2, M13.3). */
 export const ImageIdParam = z.object({
   id: z
     .string()
@@ -1074,9 +1067,6 @@ export const ImageIdParam = z.object({
 
 /** Mirrors the `verdict` CHECK constraint in migration 0003. */
 export const VerdictKind = z.enum(["accept", "adjust", "reject"]).openapi("VerdictKind");
-
-/** Mirrors the `source` CHECK constraint in migration 0003 (CONTEXT.md §Q10's two tiers). */
-export const VerdictSource = z.enum(["admin", "anon"]).openapi("VerdictSource");
 
 /**
  * A human's ruling on one model-proposed box (M13.2).
@@ -1095,8 +1085,9 @@ export const VerdictSource = z.enum(["admin", "anon"]).openapi("VerdictSource");
  * admin verdict from the public page, which is the one thing keeping untrusted
  * input out of the dataset (CONTEXT.md §Q10).
  */
-export const CreateVerdictRequest = z
+const StagedVerdict = z
   .object({
+    prediction_id: z.int().positive().openapi({ example: 42 }),
     verdict: VerdictKind,
     adjusted_x_min: z.number().min(0).max(1).optional().openapi({ example: 0.14 }),
     adjusted_y_min: z.number().min(0).max(1).optional().openapi({ example: 0.22 }),
@@ -1151,49 +1142,64 @@ export const CreateVerdictRequest = z
       }
     }
   })
-  .openapi("CreateVerdictRequest");
+  .openapi("StagedVerdict");
 
 /**
- * The verdict row as written (M13.2).
+ * The bound on one frame's rulings.
  *
- * Echoed back whole rather than answered with a bare id, and the adjusted
- * coordinates come from the row rather than from the request: this response is
- * the evidence that an `adjust` landed on the *verdict* and left the
- * prediction alone, which is the property every later exclusion of an
- * annotator depends on (CONTEXT.md §12).
+ * A frame carries one box per detected object per active class, and
+ * `MAX_ACTIVE_CLASSES` is 30 — a hundred is far past anything a real frame
+ * produces while still refusing outright a client that has confused an image
+ * id for something else. It is also comfortably inside D1's 100-parameter
+ * ceiling per *statement*, which this endpoint does not approach anyway: it
+ * writes one statement per verdict inside a single batch.
  */
-export const Verdict = z
+export const MAX_VERDICTS_PER_IMAGE = 100;
+
+/**
+ * A whole frame's rulings, submitted together (M13.1's staging area).
+ *
+ * One call per frame rather than one per box, in the idiom `reportImages` and
+ * `reportPredictions` already use — and here the reason is the operator rather
+ * than the wire. A screen that wrote each ruling the moment it was clicked had
+ * to remove the box it had just ruled on, which renumbered every box below it
+ * while the cursor was still moving toward the next one. Rulings are staged in
+ * the UI until submitted, so the frame holds still, and this endpoint is the
+ * shape that staging needs.
+ *
+ * Written as one D1 batch: all of a frame's rulings land or none do. A partial
+ * write would leave the frame in the pool with some boxes ruled and some not,
+ * which is a legal state (that is exactly how a partly-ruled frame comes back)
+ * and therefore one nothing downstream could distinguish from a deliberate
+ * partial submit.
+ *
+ * `verdicts` may be empty — see `submitVerdictsRoute`, which answers 400 for
+ * it. Bounded rather than open: a client that sent ten thousand rulings for
+ * one frame has a bug, and finding out at the ceiling beats finding out at the
+ * D1 timeout.
+ */
+export const CreateVerdictsRequest = z
   .object({
-    id: z.int().positive().openapi({ example: 1 }),
-    prediction_id: z.int().positive().openapi({ example: 42 }),
-    verdict: VerdictKind,
-    adjusted_x_min: z.number().nullable().openapi({ example: 0.14 }),
-    adjusted_y_min: z.number().nullable().openapi({ example: 0.22 }),
-    adjusted_x_max: z.number().nullable().openapi({ example: 0.48 }),
-    adjusted_y_max: z.number().nullable().openapi({ example: 0.61 }),
-    source: VerdictSource,
-    annotator_id: z.string().openapi({ example: "admin@example.com" }),
-    created_at: z.int().openapi({ example: 1_754_099_000 }),
+    verdicts: z.array(StagedVerdict).min(1).max(MAX_VERDICTS_PER_IMAGE),
   })
-  .openapi("Verdict");
-
-export type VerdictRow = z.infer<typeof Verdict>;
+  .openapi("CreateVerdictsRequest");
 
 /**
- * What rejecting a whole frame produced (M13.1's "reject-whole-image in one
- * action").
+ * What a submission wrote (M13.1).
  *
- * The count is on the wire because it is the only way the caller can tell a
- * frame whose four boxes were all rejected from one that had nothing left to
- * reject — the button is pressed on menus and loading screens, where a stale
- * screen showing boxes somebody else already ruled on is entirely possible.
+ * A count rather than the rows. The rows would be evidence that an `adjust`
+ * landed on the verdict and not on the prediction — the property CONTEXT.md
+ * §12 turns on — but that is a claim about the *schema*, held down by
+ * `verdicts.test.ts` reading `predictions` back after an adjust, not something
+ * a response echoing its own request could establish. What the caller actually
+ * needs is how many rows exist now, so a frame can leave the session.
  */
-export const ImageRejection = z
+export const VerdictBatch = z
   .object({
     image_id: z.int().positive().openapi({ example: 1 }),
     verdicts: z.int().nonnegative().openapi({ example: 4 }),
   })
-  .openapi("ImageRejection");
+  .openapi("VerdictBatch");
 
 /**
  * What reporting a missed object takes (M13.3).

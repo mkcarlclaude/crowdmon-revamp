@@ -917,8 +917,15 @@ row in D1.
       drawn by dragging a corrected box over the frame, in the same normalized [0, 1]
       coordinates the schema stores
 - [x] Reject-whole-image in one action — menus, loading screens and black frames are the
-      common case and must not cost several. One request whatever the box count:
-      `INSERT ... SELECT` over the frame's unruled boxes, two bound parameters
+      common case and must not cost several. It stages a reject for every box, so the
+      whole frame costs two clicks and one request whatever the box count
+
+      **Rulings are staged, not written as they are clicked**, and that came out of using
+      it: a frame with five boxes of one class had every ruling remove its own row and
+      renumber the rest, under a cursor already moving toward the next one. Nothing
+      leaves the component until Submit, so the frame holds still while it is judged.
+      The endpoint follows the interaction rather than the other way round — one call
+      per frame, one D1 batch, all of it or none.
 - [x] Built as one component with two mounts from the start, because M14 renders the same
       thing against different endpoints
 
@@ -934,7 +941,10 @@ row in D1.
 - [x] Append-only writes; an `adjust` carries coordinates on the verdict row and leaves
       the prediction byte-for-byte unchanged — asserted against the row rather than the
       response, because a handler that mutated `predictions` could still echo the
-      original coordinates back
+      original coordinates back. One endpoint, `POST /api/admin/images/{id}/verdicts`,
+      taking a whole frame's rulings: the per-prediction and reject-whole-frame routes
+      that shipped first were replaced by it rather than kept beside it, because two
+      ways to write a verdict is two places for the append-only rule to be got wrong
 - [x] Verdicts carry `source` and identity from the Access assertion. A body that names
       its own `source` is ignored, and that is tested: a caller who could set it could
       write an admin verdict from the public page M14 mounts the same component on

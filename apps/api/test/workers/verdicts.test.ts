@@ -1,18 +1,24 @@
 import { env } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../src/app";
+import { MAX_VERDICTS_PER_IMAGE } from "../../src/schemas";
 import { ADMIN_EMAIL, adminHeaders, configureAccess, installAdminIdentity } from "./admin-identity";
 import { seedImage, seedPool, seedPrediction, seedVerdict } from "./labelling-seed";
 
 /**
  * Verdict writes behind Access (M13.2).
  *
- * Three properties carry the milestone and each is asserted here rather than
+ * One call per frame, never one per box. That is a UI constraint that reached
+ * the contract: a screen writing each ruling as it was clicked had to remove
+ * the box it had just ruled on, renumbering every box below it under a moving
+ * cursor, so rulings are staged and submitted together.
+ *
+ * Four properties carry the milestone and each is asserted here rather than
  * left to the UI:
  *
  * 1. **Append-only.** A second verdict on one prediction is a legal state
  *    (migration 0003 refuses a uniqueness constraint on `prediction_id` on
- *    purpose), so the test that writes two and expects two rows is the test
+ *    purpose), so the test that submits twice and expects two rows is the test
  *    that would fail if somebody ever "fixed" that with an upsert.
  * 2. **An `adjust` leaves the prediction byte-for-byte unchanged.** Asserted
  *    against the row, not against the response, because a handler that
@@ -20,18 +26,22 @@ import { seedImage, seedPool, seedPrediction, seedVerdict } from "./labelling-se
  * 3. **Source and identity come from the assertion, never the body.** A caller
  *    that could name its own `source` could write an admin verdict from the
  *    public page M14 mounts the same component on.
+ * 4. **A submission is atomic and belongs to its frame.** Half a frame's
+ *    rulings landing is indistinguishable afterwards from an operator's own
+ *    partial submit, and a ruling naming a box on another frame would attach a
+ *    verdict to something nobody looked at.
  */
 
 beforeAll(installAdminIdentity);
 beforeEach(configureAccess);
 
-async function postVerdict(
-  predictionId: number,
+async function submit(
+  imageId: number,
   body: unknown,
   headers?: Record<string, string>,
 ): Promise<Response> {
   return app.request(
-    `/api/admin/predictions/${predictionId}/verdict`,
+    `/api/admin/images/${imageId}/verdicts`,
     {
       method: "POST",
       headers: { "content-type": "application/json", ...(headers ?? (await adminHeaders())) },
@@ -41,51 +51,63 @@ async function postVerdict(
   );
 }
 
-async function rejectImage(imageId: number, headers?: Record<string, string>): Promise<Response> {
-  return app.request(
-    `/api/admin/images/${imageId}/reject`,
-    { method: "POST", headers: headers ?? (await adminHeaders()) },
-    env,
-  );
-}
+const ruling = (predictionId: number, over: Record<string, unknown> = {}) => ({
+  prediction_id: predictionId,
+  verdict: "accept",
+  ...over,
+});
 
-const adjustment = {
-  verdict: "adjust" as const,
+const adjustment = (predictionId: number, over: Record<string, unknown> = {}) => ({
+  prediction_id: predictionId,
+  verdict: "adjust",
   adjusted_x_min: 0.14,
   adjusted_y_min: 0.22,
   adjusted_x_max: 0.48,
   adjusted_y_max: 0.61,
-};
+  ...over,
+});
 
-describe("recording a verdict", () => {
-  it("writes an accept with the admin's own identity", async () => {
-    const { predictionId } = await seedPool();
+describe("submitting a frame's rulings", () => {
+  it("writes every ruling with the admin's own identity", async () => {
+    const { imageId, classId, predictionId } = await seedPool();
+    const second = await seedPrediction(imageId, classId);
 
-    const res = await postVerdict(predictionId, { verdict: "accept" });
+    const res = await submit(imageId, {
+      verdicts: [ruling(predictionId), ruling(second, { verdict: "reject" })],
+    });
 
     expect(res.status).toBe(201);
-    await expect(res.json()).resolves.toMatchObject({
-      prediction_id: predictionId,
-      verdict: "accept",
-      source: "admin",
-      annotator_id: ADMIN_EMAIL,
-      adjusted_x_min: null,
-      adjusted_y_min: null,
-      adjusted_x_max: null,
-      adjusted_y_max: null,
-    });
+    await expect(res.json()).resolves.toEqual({ image_id: imageId, verdicts: 2 });
+
+    const { results } = await env.DB.prepare(
+      "SELECT prediction_id, verdict, source, annotator_id FROM verdicts ORDER BY prediction_id",
+    ).all<{ prediction_id: number; verdict: string; source: string; annotator_id: string }>();
+
+    expect(results).toEqual([
+      {
+        prediction_id: predictionId,
+        verdict: "accept",
+        source: "admin",
+        annotator_id: ADMIN_EMAIL,
+      },
+      { prediction_id: second, verdict: "reject", source: "admin", annotator_id: ADMIN_EMAIL },
+    ]);
   });
 
   it("puts an adjustment's coordinates on the verdict and leaves the prediction alone", async () => {
-    const { predictionId } = await seedPool();
+    const { imageId, predictionId } = await seedPool();
     const before = await env.DB.prepare("SELECT * FROM predictions WHERE id = ?")
       .bind(predictionId)
       .first();
 
-    const res = await postVerdict(predictionId, adjustment);
+    const res = await submit(imageId, { verdicts: [adjustment(predictionId)] });
 
     expect(res.status).toBe(201);
-    await expect(res.json()).resolves.toMatchObject({
+
+    const verdict = await env.DB.prepare("SELECT * FROM verdicts WHERE prediction_id = ?")
+      .bind(predictionId)
+      .first<Record<string, unknown>>();
+    expect(verdict).toMatchObject({
       verdict: "adjust",
       adjusted_x_min: 0.14,
       adjusted_y_min: 0.22,
@@ -103,11 +125,29 @@ describe("recording a verdict", () => {
     expect(after).toEqual(before);
   });
 
-  it("keeps both verdicts when the same prediction is ruled on twice", async () => {
-    const { predictionId } = await seedPool();
+  it("rejects a whole frame in one submission", async () => {
+    // The menu-and-black-frame case. Staging turns it into one request
+    // whatever the box count, which is what the dedicated reject endpoint used
+    // to buy on its own.
+    const { imageId, classId, predictionId } = await seedPool();
+    const second = await seedPrediction(imageId, classId);
+    const third = await seedPrediction(imageId, classId);
 
-    expect((await postVerdict(predictionId, { verdict: "accept" })).status).toBe(201);
-    expect((await postVerdict(predictionId, { verdict: "reject" })).status).toBe(201);
+    const res = await submit(imageId, {
+      verdicts: [predictionId, second, third].map((id) => ruling(id, { verdict: "reject" })),
+    });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toEqual({ image_id: imageId, verdicts: 3 });
+  });
+
+  it("keeps both verdicts when the same prediction is ruled on in two submissions", async () => {
+    const { imageId, predictionId } = await seedPool();
+
+    expect((await submit(imageId, { verdicts: [ruling(predictionId)] })).status).toBe(201);
+    expect(
+      (await submit(imageId, { verdicts: [ruling(predictionId, { verdict: "reject" })] })).status,
+    ).toBe(201);
 
     const { results } = await env.DB.prepare(
       "SELECT verdict FROM verdicts WHERE prediction_id = ? ORDER BY id",
@@ -119,131 +159,125 @@ describe("recording a verdict", () => {
   });
 
   it("ignores a source the caller tries to name", async () => {
-    const { predictionId } = await seedPool();
+    const { imageId, predictionId } = await seedPool();
 
-    const res = await postVerdict(predictionId, {
-      verdict: "accept",
-      source: "anon",
-      annotator_id: "somebody-else",
+    const res = await submit(imageId, {
+      verdicts: [ruling(predictionId, { source: "anon", annotator_id: "somebody-else" })],
     });
 
     expect(res.status).toBe(201);
-    await expect(res.json()).resolves.toMatchObject({
-      source: "admin",
-      annotator_id: ADMIN_EMAIL,
+    const row = await env.DB.prepare("SELECT source, annotator_id FROM verdicts").first();
+    expect(row).toEqual({ source: "admin", annotator_id: ADMIN_EMAIL });
+  });
+
+  it("refuses an empty submission", async () => {
+    // Not a no-op answering 201: a submit button that fired with nothing
+    // staged is a bug on the screen, and answering success would hide it.
+    const { imageId } = await seedPool();
+
+    expect((await submit(imageId, { verdicts: [] })).status).toBe(400);
+  });
+
+  it("refuses more rulings than a frame could carry", async () => {
+    const { imageId, predictionId } = await seedPool();
+
+    const res = await submit(imageId, {
+      verdicts: Array.from({ length: MAX_VERDICTS_PER_IMAGE + 1 }, () => ruling(predictionId)),
     });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses the same prediction ruled on twice in one submission", async () => {
+    // The staging area holds one ruling per box by construction, so this is a
+    // UI bug — and two rows appended together are indistinguishable afterwards
+    // from a deliberate re-ruling, which is a state the schema does allow.
+    const { imageId, predictionId } = await seedPool();
+
+    const res = await submit(imageId, {
+      verdicts: [ruling(predictionId), ruling(predictionId, { verdict: "reject" })],
+    });
+
+    expect(res.status).toBe(400);
+    const { results } = await env.DB.prepare("SELECT id FROM verdicts").all();
+    expect(results).toHaveLength(0);
   });
 
   it("refuses an adjust with no coordinates", async () => {
-    const { predictionId } = await seedPool();
+    const { imageId, predictionId } = await seedPool();
 
-    const res = await postVerdict(predictionId, { verdict: "adjust" });
+    const res = await submit(imageId, { verdicts: [ruling(predictionId, { verdict: "adjust" })] });
 
     expect(res.status).toBe(400);
   });
 
   it("refuses an accept that carries coordinates", async () => {
-    const { predictionId } = await seedPool();
+    const { imageId, predictionId } = await seedPool();
 
-    const res = await postVerdict(predictionId, { ...adjustment, verdict: "accept" });
+    const res = await submit(imageId, {
+      verdicts: [adjustment(predictionId, { verdict: "accept" })],
+    });
 
     expect(res.status).toBe(400);
   });
 
   it("refuses an inverted adjusted box", async () => {
-    const { predictionId } = await seedPool();
+    const { imageId, predictionId } = await seedPool();
 
-    const res = await postVerdict(predictionId, { ...adjustment, adjusted_x_max: 0.01 });
+    const res = await submit(imageId, {
+      verdicts: [adjustment(predictionId, { adjusted_x_max: 0.01 })],
+    });
 
     expect(res.status).toBe(400);
   });
 
-  it("answers 404 for a prediction that does not exist", async () => {
-    await seedPool();
+  it("writes nothing when one ruling in the batch is unusable", async () => {
+    // Atomicity, from the caller's side: a frame half-ruled is a legal state
+    // this schema cannot tell apart from a deliberate partial submit, so a
+    // batch that cannot land whole must not land at all.
+    const { imageId, classId, predictionId } = await seedPool();
+    const second = await seedPrediction(imageId, classId);
 
-    const res = await postVerdict(9_999, { verdict: "accept" });
+    const res = await submit(imageId, {
+      verdicts: [ruling(predictionId), ruling(second, { verdict: "not-a-verdict" })],
+    });
 
-    expect(res.status).toBe(404);
-    // A foreign-key failure would also stop the write, but with no field to
-    // point at — the reason the handler resolves the reference itself.
+    expect(res.status).toBe(400);
     const { results } = await env.DB.prepare("SELECT id FROM verdicts").all();
     expect(results).toHaveLength(0);
   });
 
-  it("is gated: no assertion, no verdict", async () => {
-    const { predictionId } = await seedPool();
-
-    const res = await postVerdict(predictionId, { verdict: "accept" }, {});
-
-    expect(res.status).toBe(401);
-  });
-});
-
-describe("rejecting a whole frame", () => {
-  it("writes one reject per proposed box in a single action", async () => {
-    const { imageId, classId, predictionId } = await seedPool();
-    const second = await seedPrediction(imageId, classId);
-
-    const res = await rejectImage(imageId);
-
-    expect(res.status).toBe(201);
-    await expect(res.json()).resolves.toEqual({ image_id: imageId, verdicts: 2 });
-
-    const { results } = await env.DB.prepare(
-      `SELECT v.prediction_id, v.verdict, v.source, v.annotator_id
-         FROM verdicts v ORDER BY v.prediction_id`,
-    ).all<{ prediction_id: number; verdict: string; source: string; annotator_id: string }>();
-
-    expect(results).toEqual([
-      {
-        prediction_id: predictionId,
-        verdict: "reject",
-        source: "admin",
-        annotator_id: ADMIN_EMAIL,
-      },
-      { prediction_id: second, verdict: "reject", source: "admin", annotator_id: ADMIN_EMAIL },
-    ]);
-  });
-
-  it("does not touch another frame's boxes", async () => {
-    const { videoId, classId, imageId } = await seedPool();
+  it("refuses a prediction that belongs to another frame", async () => {
+    const { videoId, imageId, classId } = await seedPool();
     const otherImage = await seedImage(videoId, 2);
-    const untouched = await seedPrediction(otherImage, classId);
+    const elsewhere = await seedPrediction(otherImage, classId);
 
-    await rejectImage(imageId);
+    const res = await submit(imageId, { verdicts: [ruling(elsewhere)] });
 
-    const survivor = await env.DB.prepare(
-      "SELECT COUNT(*) AS count FROM verdicts WHERE prediction_id = ?",
-    )
-      .bind(untouched)
-      .first<{ count: number }>();
-
-    expect(survivor?.count).toBe(0);
-  });
-
-  it("reports zero on a frame whose boxes are already ruled on", async () => {
-    // A menu frame somebody rejected from another tab. The button is still
-    // there and pressing it must not be an error — a stale screen is the
-    // normal case, not a bug worth a 409.
-    const { imageId, predictionId } = await seedPool();
-    await seedVerdict(predictionId, { verdict: "reject" });
-
-    const res = await rejectImage(imageId);
-
-    expect(res.status).toBe(201);
-    await expect(res.json()).resolves.toEqual({ image_id: imageId, verdicts: 0 });
+    expect(res.status).toBe(404);
+    const { results } = await env.DB.prepare("SELECT id FROM verdicts").all();
+    expect(results).toHaveLength(0);
   });
 
   it("answers 404 for an image that does not exist", async () => {
-    const res = await rejectImage(9_999);
+    const { predictionId } = await seedPool();
 
-    expect(res.status).toBe(404);
+    expect((await submit(9_999, { verdicts: [ruling(predictionId)] })).status).toBe(404);
   });
 
-  it("is gated: no assertion, no rejection", async () => {
-    const { imageId } = await seedPool();
+  it("does not care that another tier already ruled on the box", async () => {
+    // CONTEXT.md §Q10's two tiers: an anonymous visitor's click (M14) is not a
+    // reason to refuse the authoritative annotator's.
+    const { imageId, predictionId } = await seedPool();
+    await seedVerdict(predictionId, { source: "anon", annotatorId: "session-abc" });
 
-    const res = await rejectImage(imageId, {});
+    expect((await submit(imageId, { verdicts: [ruling(predictionId)] })).status).toBe(201);
+  });
+
+  it("is gated: no assertion, no verdicts", async () => {
+    const { imageId, predictionId } = await seedPool();
+
+    const res = await submit(imageId, { verdicts: [ruling(predictionId)] }, {});
 
     expect(res.status).toBe(401);
   });

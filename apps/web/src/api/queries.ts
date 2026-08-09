@@ -5,17 +5,16 @@ import {
   type CreateClassRequest,
   type CreateDryRunRequest,
   type CreateMissingReportRequest,
-  type CreateVerdictRequest,
+  type CreateVerdictsRequest,
   DryRun,
   DryRunList,
-  ImageRejection,
   JobList,
   LabellingBatch,
   LabellingStats,
   MissingReport,
   type SubmitVideoRequest,
   type UpdateClassRequest,
-  Verdict,
+  VerdictBatch,
   VideoSubmission,
 } from "@crowdmon/api/schemas";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -187,37 +186,30 @@ export function useLabellingStats() {
 }
 
 /**
- * One ruling on one proposed box.
+ * A whole frame's staged rulings, in one request (M13.1).
  *
  * Invalidates the stats and nothing else. Invalidating the batch would refetch
- * a page of frames on every click — the endpoint pages by *unruled* boxes, so
- * the answer would shift under the session between one verdict and the next,
- * which is the one thing `useLabellingBatch`'s own comment is about.
+ * a page of frames on every submit — the endpoint pages by *unruled* boxes, so
+ * the answer would shift under the session between one frame and the next,
+ * which is what `useLabellingBatch`'s own comment is about.
+ *
+ * One request per frame rather than per box is also what keeps that stats
+ * invalidation affordable: the stats query counts over `images`, `predictions`
+ * and `verdicts`, and D1 bills every row those counts scan.
  */
-export function useCreateVerdict() {
+export function useSubmitVerdicts() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: ({
-      predictionId,
+      imageId,
       ...body
-    }: z.infer<typeof CreateVerdictRequest> & { predictionId: number }) =>
-      apiFetch(`/api/admin/predictions/${predictionId}/verdict`, Verdict, {
+    }: z.infer<typeof CreateVerdictsRequest> & { imageId: number }) =>
+      apiFetch(`/api/admin/images/${imageId}/verdicts`, VerdictBatch, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: labellingStatsKey }),
-  });
-}
-
-/** Reject every remaining box on one frame, in one request (M13.1). */
-export function useRejectFrame() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (imageId: number) =>
-      apiFetch(`/api/admin/images/${imageId}/reject`, ImageRejection, { method: "POST" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: labellingStatsKey }),
   });
 }
