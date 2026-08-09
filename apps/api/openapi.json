@@ -1313,6 +1313,172 @@
           }
         }
       },
+      "AdminImage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "public_sample": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "id",
+          "public_sample"
+        ]
+      },
+      "UpdatePublicSampleRequest": {
+        "type": "object",
+        "properties": {
+          "public_sample": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "public_sample"
+        ]
+      },
+      "PublicFrame": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "r2_key": {
+            "type": "string",
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "url": {
+            "type": "string",
+            "example": "https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…"
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicProposedBox"
+            }
+          },
+          "expires_at": {
+            "type": "integer",
+            "example": 1754099900
+          }
+        },
+        "required": [
+          "id",
+          "r2_key",
+          "url",
+          "predictions",
+          "expires_at"
+        ]
+      },
+      "PublicProposedBox": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 42
+          },
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "class_name": {
+            "type": "string",
+            "example": "Paimon"
+          },
+          "x_min": {
+            "type": "number",
+            "example": 0.12
+          },
+          "y_min": {
+            "type": "number",
+            "example": 0.2
+          },
+          "x_max": {
+            "type": "number",
+            "example": 0.5
+          },
+          "y_max": {
+            "type": "number",
+            "example": 0.6
+          },
+          "confidence": {
+            "type": "number",
+            "example": 0.87
+          }
+        },
+        "required": [
+          "id",
+          "class_id",
+          "class_name",
+          "x_min",
+          "y_min",
+          "x_max",
+          "y_max",
+          "confidence"
+        ]
+      },
+      "CreatePublicVerdictsRequest": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "example": "b3f1c2a4-8e5d-4c6a-9b1a-2f3e4d5c6b7a"
+          },
+          "verdicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicStagedVerdict"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "session_id",
+          "verdicts"
+        ]
+      },
+      "PublicStagedVerdict": {
+        "type": "object",
+        "properties": {
+          "prediction_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 42
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/PublicVerdictKind"
+          }
+        },
+        "required": [
+          "prediction_id",
+          "verdict"
+        ]
+      },
+      "PublicVerdictKind": {
+        "type": "string",
+        "enum": [
+          "accept",
+          "reject"
+        ]
+      },
       "LabellingBatch": {
         "type": "object",
         "properties": {
@@ -1536,7 +1702,17 @@
             "minimum": 0,
             "example": 8
           },
-          "anon_verdicts": {
+          "anon_accepted": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
+          },
+          "anon_adjusted": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
+          },
+          "anon_rejected": {
             "type": "integer",
             "minimum": 0,
             "example": 0
@@ -1555,7 +1731,9 @@
           "accepted",
           "adjusted",
           "rejected",
-          "anon_verdicts",
+          "anon_accepted",
+          "anon_adjusted",
+          "anon_rejected",
           "missing_reports"
         ]
       }
@@ -3017,6 +3195,224 @@
           },
           "503": {
             "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/images/{id}/public-sample": {
+      "patch": {
+        "operationId": "updatePublicSample",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Flag or unflag an image for the public verification page",
+        "description": "Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePublicSampleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The image's id and its public_sample flag as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminImage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No image with this id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/frame": {
+      "get": {
+        "operationId": "publicFrame",
+        "tags": [
+          "public"
+        ],
+        "summary": "One frame from the hand-curated public sample, for a visitor with no account",
+        "description": "A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.",
+        "responses": {
+          "200": {
+            "description": "One frame, its boxes, and where to fetch its bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicFrame"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No image is currently flagged into the public sample",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests from this visitor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This deployment has no R2 signing credential configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/images/{id}/verdicts": {
+      "post": {
+        "operationId": "submitPublicVerdicts",
+        "tags": [
+          "public"
+        ],
+        "summary": "Submit an anonymous visitor's rulings on one frame",
+        "description": "Appends one `source = 'anon'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame. `annotator_id` is the caller-supplied `session_id`, not an Access identity: this surface has none. Only `accept` and `reject` are legal here; `PublicStagedVerdict` has no adjusted- coordinate fields for an `adjust` verdict to carry. The image must be in `public_sample` — a verdict cannot be attached to a frame this visitor was never shown. No Access assertion; rate limited.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePublicVerdictsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "How many verdicts the submission wrote",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerdictBatch"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, an empty submission, or a duplicated prediction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No public-sample image with this id, or a prediction not on this frame",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests from this visitor",
             "content": {
               "application/json": {
                 "schema": {

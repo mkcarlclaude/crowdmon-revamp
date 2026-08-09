@@ -1,9 +1,13 @@
+import { Link } from "react-router";
+
 /**
- * The public surface's slot, empty by design.
+ * The public surface's landing slot.
  *
- * CONTEXT.md §Q11 puts the landing page, about page and in-browser demo in v2.
- * This route exists now only so `/admin` is a route rather than the root — the
- * app's shape does not have to change when the public page arrives.
+ * CONTEXT.md §Q11 originally put a detector demo behind this page; §12
+ * reshaped the public surface into the verification page instead (M14). This
+ * still exists mainly so `/admin` and `/verify` are routes rather than the
+ * root, but it is also the one link a visitor pasted into Discord actually
+ * needs — the way in to `/verify`.
  */
 export function Home() {
   return (
@@ -12,6 +16,12 @@ export function Home() {
       <p className="mt-2 text-[var(--color-text-muted)]">
         A labelled image dataset of Genshin Impact characters, built by a data flywheel.
       </p>
+      <Link
+        to="/verify"
+        className="mt-4 inline-block rounded border border-[var(--color-border)] px-3 py-1 text-sm"
+      >
+        Try verifying a frame
+      </Link>
     </main>
   );
 }

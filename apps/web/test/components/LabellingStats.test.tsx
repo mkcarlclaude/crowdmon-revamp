@@ -40,7 +40,9 @@ const klass = (over: Record<string, unknown> = {}) => ({
   accepted: 90,
   adjusted: 12,
   rejected: 8,
-  anon_verdicts: 0,
+  anon_accepted: 0,
+  anon_adjusted: 0,
+  anon_rejected: 0,
   missing_reports: 3,
   ...over,
 });

@@ -1351,17 +1351,21 @@ export const LabellingBatch = z
  *
  * Verdicts are counted per source (CONTEXT.md §Q10: rates are computed per
  * source, or an anonymous troll rejecting everything is indistinguishable from
- * a model that got worse). M13 writes only `admin` rows; M14 starts writing
- * `anon` ones into the same columns, and the split is here from the start so
- * that day changes no query.
+ * a model that got worse). M13 writes only `admin` rows into `accepted` /
+ * `adjusted` / `rejected`; M14.4 adds the matching `anon_*` triple rather than
+ * a single lumped `anon_verdicts` count, because "per source" means the same
+ * breakdown for both, not a headline number for one and three for the other.
+ * `anon_adjusted` stays in the shape even though `submitPublicVerdictsHandler`
+ * currently refuses the `adjust` kind at the schema layer — the `verdicts`
+ * table itself has no CHECK tying `source` to which `verdict` values are
+ * legal, so the column names the state honestly rather than by what today's
+ * one caller happens to send.
  *
- * **Every count below is a count of boxes, not of verdict rows** — including
- * `anon_verdicts`, which is how many of this class's boxes an anonymous
- * visitor has ruled on. Several verdicts on one prediction is a legal state
- * (migration 0003), so counting rows against a `predictions` denominator would
- * render "1 box, 2 accepted". A box ruled the same way twice counts once; a
- * box accepted and later rejected counts in both columns, because both are
- * true of it.
+ * **Every count below is a count of boxes, not of verdict rows.** Several
+ * verdicts on one prediction is a legal state (migration 0003), so counting
+ * rows against a `predictions` denominator would render "1 box, 2 accepted".
+ * A box ruled the same way twice counts once; a box accepted and later
+ * rejected counts in both columns, because both are true of it.
  */
 const ClassLabellingStats = z
   .object({
@@ -1372,7 +1376,9 @@ const ClassLabellingStats = z
     accepted: z.int().nonnegative().openapi({ example: 90 }),
     adjusted: z.int().nonnegative().openapi({ example: 12 }),
     rejected: z.int().nonnegative().openapi({ example: 8 }),
-    anon_verdicts: z.int().nonnegative().openapi({ example: 0 }),
+    anon_accepted: z.int().nonnegative().openapi({ example: 0 }),
+    anon_adjusted: z.int().nonnegative().openapi({ example: 0 }),
+    anon_rejected: z.int().nonnegative().openapi({ example: 0 }),
     missing_reports: z.int().nonnegative().openapi({ example: 3 }),
   })
   .openapi("ClassLabellingStats");
@@ -1403,3 +1409,118 @@ export const LabellingStats = z
   .openapi("LabellingStats");
 
 export type LabellingStatsRow = z.infer<typeof LabellingStats>;
+
+/**
+ * Curating the public pool (M14.1).
+ *
+ * One field, and it is the only one this route may set: `selection_reason`
+ * (migration 0004) is written at selection time by a different actor and has
+ * no business changing when an admin flags a frame for the public page.
+ */
+export const UpdatePublicSampleRequest = z
+  .object({
+    public_sample: z.boolean().openapi({ example: true }),
+  })
+  .openapi("UpdatePublicSampleRequest");
+
+/** An image as the public-sample toggle reads and writes it (M14.1). */
+export const AdminImage = z
+  .object({
+    id: z.int().positive().openapi({ example: 7 }),
+    public_sample: z.boolean().openapi({ example: true }),
+  })
+  .openapi("AdminImage");
+
+/**
+ * One box on the public verification page (M14.2).
+ *
+ * A trimmed `ProposedBox`: no `prompt_version`, no `model_id`. Those name
+ * this deployment's internal versioning to an operator debugging a labelling
+ * session; a stranger trying the interface has no use for them, and CONTEXT.md
+ * §12's verify-only gate already keeps everything about *how* the box was
+ * proposed off this surface.
+ */
+const PublicProposedBox = z
+  .object({
+    id: z.int().positive().openapi({ example: 42 }),
+    class_id: z.int().positive().openapi({ example: 1 }),
+    class_name: z.string().openapi({ example: "Paimon" }),
+    x_min: z.number().openapi({ example: 0.12 }),
+    y_min: z.number().openapi({ example: 0.2 }),
+    x_max: z.number().openapi({ example: 0.5 }),
+    y_max: z.number().openapi({ example: 0.6 }),
+    confidence: z.number().openapi({ example: 0.87 }),
+  })
+  .openapi("PublicProposedBox");
+
+/**
+ * One frame for an anonymous visitor (M14.2).
+ *
+ * One frame, not a batch: CONTEXT.md §Q25's public bound is "one short-lived
+ * signed URL per request, no enumeration" — the batched form of
+ * `LabellingBatch` stays on the authenticated path where throughput matters.
+ * `url` is always a presigned R2 URL, never `frameUrls`' proxy fallback:
+ * proxying goes through the Access-gated `/api/admin/image` route, which a
+ * visitor with no Access session cannot reach, so a deployment with no R2
+ * credential configured answers `503` on this route rather than serving a
+ * broken image (see `publicFrameHandler`).
+ */
+export const PublicFrame = z
+  .object({
+    id: z.int().positive().openapi({ example: 7 }),
+    r2_key: z.string().openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    url: z.string().openapi({
+      example:
+        "https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…",
+    }),
+    predictions: z.array(PublicProposedBox),
+    expires_at: z.int().openapi({ example: 1_754_099_900 }),
+  })
+  .openapi("PublicFrame");
+
+/**
+ * A verdict-kind offered on the public page (M14.2's "adjust hidden on this
+ * mount"). Enforced here rather than only in the UI: `VerificationCard`'s
+ * `allowAdjust={false}` keeps the button off screen, but a caller that could
+ * still POST `verdict: "adjust"` would have the same drawing surface as an
+ * admin with none of the trust an admin's Access assertion establishes.
+ */
+export const PublicVerdictKind = z.enum(["accept", "reject"]).openapi("PublicVerdictKind");
+
+/**
+ * One anonymous ruling (M14.2, M14.4).
+ *
+ * No adjusted-coordinate fields at all, unlike `StagedVerdict` — there is no
+ * `adjust` verdict on this surface for them to belong to.
+ */
+const PublicStagedVerdict = z
+  .object({
+    prediction_id: z.int().positive().openapi({ example: 42 }),
+    verdict: PublicVerdictKind,
+  })
+  .openapi("PublicStagedVerdict");
+
+/**
+ * How long an opaque anonymous session id may be (CONTEXT.md §Q10, §12).
+ *
+ * There is no Access assertion on this surface to read an identity off, so
+ * the caller supplies its own — generated client-side once and reused across
+ * requests (`apps/web/src/api/anon-session.ts`). It carries no trust: nothing
+ * downstream authenticates it, and `submitPublicVerdictsHandler` writes it
+ * verbatim as `verdicts.annotator_id`. Its only job is letting one visitor's
+ * contributions be told apart from another's later — "excluding one bad actor
+ * does not mean discarding every anonymous contribution" (ROADMAP M14.4) — so
+ * it is bounded in length and nothing else: a `crypto.randomUUID()` is 36
+ * characters, and 128 leaves headroom without accepting an essay.
+ */
+export const MAX_SESSION_ID_LENGTH = 128;
+
+/** The bound on one anonymous frame's rulings — same ceiling as `CreateVerdictsRequest`. */
+export const CreatePublicVerdictsRequest = z
+  .object({
+    session_id: z.string().min(1).max(MAX_SESSION_ID_LENGTH).openapi({
+      example: "b3f1c2a4-8e5d-4c6a-9b1a-2f3e4d5c6b7a",
+    }),
+    verdicts: z.array(PublicStagedVerdict).min(1).max(MAX_VERDICTS_PER_IMAGE),
+  })
+  .openapi("CreatePublicVerdictsRequest");

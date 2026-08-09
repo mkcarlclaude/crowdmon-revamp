@@ -5,6 +5,7 @@ import {
   type CreateClassRequest,
   type CreateDryRunRequest,
   type CreateMissingReportRequest,
+  type CreatePublicVerdictsRequest,
   type CreateVerdictsRequest,
   DryRun,
   DryRunList,
@@ -12,6 +13,7 @@ import {
   LabellingBatch,
   LabellingStats,
   MissingReport,
+  PublicFrame,
   type SubmitVideoRequest,
   type UpdateClassRequest,
   VerdictBatch,
@@ -19,6 +21,7 @@ import {
 } from "@crowdmon/api/schemas";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { z } from "zod";
+import { getAnonSessionId } from "./anon-session";
 import { apiFetch } from "./client";
 
 export const jobsKey = ["jobs"] as const;
@@ -248,5 +251,48 @@ export function useCreateDryRun(classId: number) {
       queryClient.invalidateQueries({ queryKey: dryRunsKey(classId) });
       queryClient.invalidateQueries({ queryKey: jobsKey });
     },
+  });
+}
+
+export const publicFrameKey = ["public", "frame"] as const;
+
+/**
+ * One frame for a visitor with no account (M14.2).
+ *
+ * `staleTime: Infinity` for `useLabellingBatch`'s own reason: the frame on
+ * screen is being judged, not polled, and a background refetch landing
+ * mid-judgement would swap the picture out from under the visitor's cursor.
+ * `PublicVerify` asks for a new one explicitly, once a verdict has been
+ * submitted.
+ */
+export function usePublicFrame() {
+  return useQuery({
+    queryKey: publicFrameKey,
+    queryFn: () => apiFetch("/api/public/frame", PublicFrame),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/**
+ * An anonymous visitor's rulings on one frame (M14.2, M14.4).
+ *
+ * `session_id` is read off `getAnonSessionId()` here rather than threaded in
+ * by the caller — every submission on this surface carries the same one, so
+ * there is exactly one place to get that right rather than one per call
+ * site. No query invalidation: unlike `useSubmitVerdicts`, there is no
+ * public-facing stats panel this write should refresh, and the batch it
+ * belongs to is unrelated to what `/api/public/frame` returns next.
+ */
+export function useSubmitPublicVerdicts() {
+  return useMutation({
+    mutationFn: ({
+      imageId,
+      verdicts,
+    }: { imageId: number } & Pick<z.infer<typeof CreatePublicVerdictsRequest>, "verdicts">) =>
+      apiFetch(`/api/public/images/${imageId}/verdicts`, VerdictBatch, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session_id: getAnonSessionId(), verdicts }),
+      }),
   });
 }

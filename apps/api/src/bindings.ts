@@ -75,4 +75,9 @@ export type Bindings = {
   FRAMES_S3_BASE_URL?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
+
+  // M14.3: the public verification surface's rate limit. Provisioned entirely
+  // in wrangler.toml — unlike every other binding above, there is no
+  // dashboard step and nothing to mint.
+  PUBLIC_RATE_LIMITER: RateLimit;
 };
