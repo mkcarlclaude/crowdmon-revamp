@@ -46,6 +46,7 @@ const image = (id: number, boxes = [box(id * 10)]) => ({
   timestamp_seconds: id,
   url: `https://r2.example/frames/0000${id}.jpg?X-Amz-Signature=abc`,
   predictions: boxes,
+  public_sample: false,
 });
 
 function batch(over: Record<string, unknown> = {}) {
@@ -88,10 +89,12 @@ const CLASSES = {
 function stubApi({
   batches = [batch()],
   post,
+  patch,
   holdBatchAfterFirst = false,
 }: {
   batches?: unknown[];
   post?: (url: string) => Response;
+  patch?: (url: string, body: unknown) => Response;
   /**
    * Holds every batch response after the first until `releaseBatch` is called,
    * so a test can look at the screen *while* a refetch is in flight. That
@@ -107,6 +110,13 @@ function stubApi({
   const fetchMock = vi.fn((url: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       return Promise.resolve(post?.(url) ?? json(writtenVerdicts, 201));
+    }
+    if (init?.method === "PATCH") {
+      const body = JSON.parse((init.body as string) ?? "null");
+      return Promise.resolve(
+        patch?.(url, body) ??
+          json({ id: Number(url.match(/\/images\/(\d+)\//)?.[1]), ...body }, 200),
+      );
     }
     if (url.startsWith("/api/admin/labelling/batch")) {
       const body = queue.length > 1 ? queue.shift() : queue[0];
@@ -460,5 +470,44 @@ describe("LabellingSession", () => {
 
     expect(await screen.findByText(/214 frames still waiting/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /next batch/i })).toBeInTheDocument();
+  });
+
+  it("flags the frame on screen into the public sample (M14.1)", async () => {
+    const fetchMock = stubApi();
+
+    render(wrap(<LabellingSession />));
+    const checkbox = await screen.findByRole("checkbox", { name: /in public sample/i });
+    expect(checkbox).not.toBeChecked();
+
+    await userEvent.click(checkbox);
+
+    await waitFor(() => expect(checkbox).toBeChecked());
+    const patchCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === "PATCH",
+    );
+    expect(patchCalls).toEqual([
+      [
+        "/api/admin/images/1/public-sample",
+        expect.objectContaining({ body: JSON.stringify({ public_sample: true }) }),
+      ],
+    ]);
+  });
+
+  it("does not refetch the batch when the flag changes", async () => {
+    // The pool query pages by unruled boxes and does not filter on
+    // `public_sample` — a refetch here would reshuffle the operator's page
+    // for a field that batch has no opinion about.
+    const fetchMock = stubApi();
+
+    render(wrap(<LabellingSession />));
+    await userEvent.click(await screen.findByRole("checkbox", { name: /in public sample/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: /in public sample/i })).toBeChecked(),
+    );
+
+    const batchCalls = fetchMock.mock.calls.filter(([url]) =>
+      (url as string).startsWith("/api/admin/labelling/batch"),
+    );
+    expect(batchCalls).toHaveLength(1);
   });
 });

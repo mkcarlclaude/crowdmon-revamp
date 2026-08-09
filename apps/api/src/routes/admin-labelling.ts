@@ -47,6 +47,7 @@ interface BatchImageRow {
   video_id: string;
   r2_key: string;
   timestamp_seconds: number;
+  public_sample: number | null;
 }
 
 interface BatchBoxRow {
@@ -103,7 +104,7 @@ export const labellingBatchHandler: RouteHandler<typeof labellingBatchRoute, App
   const [pageResult, remainingResult] = await c.env.DB.batch<BatchImageRow | { remaining: number }>(
     [
       c.env.DB.prepare(
-        `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds
+        `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.public_sample
          FROM images i
         WHERE EXISTS (${UNRULED_BOX})
         ORDER BY i.id
@@ -170,6 +171,7 @@ export const labellingBatchHandler: RouteHandler<typeof labellingBatchRoute, App
         // — and is here because a Map lookup is typed as possibly absent.
         url: byKey.get(image.r2_key) ?? "",
         predictions: (boxesByImage.get(image.id) ?? []).map(({ image_id: _, ...box }) => box),
+        public_sample: image.public_sample === 1,
       })),
       url_mode: mode,
       expires_at: expiresAt,

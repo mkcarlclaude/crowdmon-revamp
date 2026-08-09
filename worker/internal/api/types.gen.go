@@ -633,6 +633,9 @@ type LabellingImage struct {
 	Id          int           `json:"id"`
 	Predictions []ProposedBox `json:"predictions"`
 
+	// PublicSample Example: false
+	PublicSample bool `json:"public_sample"`
+
 	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
 	R2Key string `json:"r2_key"`
 
