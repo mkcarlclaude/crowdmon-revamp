@@ -58,6 +58,7 @@ interface Batch {
     r2_key: string;
     url: string;
     predictions: Array<{ id: number; class_name: string; confidence: number }>;
+    public_sample: boolean;
   }>;
   url_mode: "signed" | "proxy";
   expires_at: number;
@@ -79,6 +80,21 @@ describe("the frames a session is handed", () => {
       confidence: 0.87,
     });
     expect(batch.remaining).toBe(1);
+  });
+
+  it("carries the public_sample flag so the toggle can render its current state (M14.1)", async () => {
+    const { videoId, classId } = await seedPool();
+    // A second frame, flagged, alongside seedPool()'s unflagged one — proves
+    // the field round-trips both ways rather than always reading true or
+    // always reading false.
+    const flaggedId = await seedImage(videoId, 2, { publicSample: 1 });
+    await seedPrediction(flaggedId, classId);
+
+    const batch = (await (await getBatch()).json()) as Batch;
+
+    const byId = new Map(batch.images.map((image) => [image.id, image.public_sample]));
+    expect(byId.get(flaggedId)).toBe(true);
+    expect([...byId.values()].some((flagged) => flagged === false)).toBe(true);
   });
 
   it("drops a frame once every box has an admin verdict", async () => {

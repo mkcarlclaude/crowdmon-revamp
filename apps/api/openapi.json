@@ -1544,6 +1544,10 @@
             "items": {
               "$ref": "#/components/schemas/ProposedBox"
             }
+          },
+          "public_sample": {
+            "type": "boolean",
+            "example": false
           }
         },
         "required": [
@@ -1552,7 +1556,8 @@
           "r2_key",
           "timestamp_seconds",
           "url",
-          "predictions"
+          "predictions",
+          "public_sample"
         ]
       },
       "ProposedBox": {

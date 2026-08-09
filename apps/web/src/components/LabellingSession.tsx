@@ -5,6 +5,7 @@ import {
   useClasses,
   useLabellingBatch,
   useReportMissing,
+  useSetPublicSample,
   useSubmitVerdicts,
 } from "../api/queries";
 import { VerificationCard } from "./VerificationCard";
@@ -36,6 +37,7 @@ export function LabellingSession() {
   const classes = useClasses();
   const submit = useSubmitVerdicts();
   const reportMissing = useReportMissing();
+  const setPublicSample = useSetPublicSample();
 
   // Prediction and image ids this session has finished with. Kept as ids
   // rather than an index, because a frame is finished by having no boxes left
@@ -120,11 +122,29 @@ export function LabellingSession() {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-[var(--color-text-muted)]">
-        <span className="font-mono">{remainingFrames.length}</span> in this batch,{" "}
-        <span className="font-mono">{stillWaiting}</span> in the pool · {frame.video_id} @{" "}
-        {frame.timestamp_seconds}s
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-[var(--color-text-muted)]">
+          <span className="font-mono">{remainingFrames.length}</span> in this batch,{" "}
+          <span className="font-mono">{stillWaiting}</span> in the pool · {frame.video_id} @{" "}
+          {frame.timestamp_seconds}s
+        </p>
+
+        {/* M14.1: the only place an admin flags a legible frame into the
+            public verification page. A checkbox rather than a button, so its
+            own state is the only indicator needed — no separate "flagged"
+            badge to keep in sync with it. */}
+        <label className="flex items-center gap-1.5 text-sm">
+          <input
+            type="checkbox"
+            checked={frame.public_sample}
+            disabled={setPublicSample.isPending}
+            onChange={(event) =>
+              setPublicSample.mutate({ imageId: frame.id, publicSample: event.target.checked })
+            }
+          />
+          In public sample
+        </label>
+      </div>
 
       {brokenFrames.has(frame.id) && (
         <p role="alert" className="text-sm text-[var(--color-failed)]">

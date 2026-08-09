@@ -1,6 +1,7 @@
 import {
   AdminClass,
   AdminClassList,
+  AdminImage,
   AdminVideoList,
   type CreateClassRequest,
   type CreateDryRunRequest,
@@ -177,6 +178,40 @@ export function useLabellingBatch() {
     queryKey: labellingBatchKey,
     queryFn: () => apiFetch("/api/admin/labelling/batch", LabellingBatch),
     staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/**
+ * Flag or unflag the frame on screen for the public verification page (M14.1).
+ *
+ * Patched into the batch already in the cache rather than refetched or
+ * invalidated: `useLabellingBatch`'s own comment is why — the batch pages by
+ * *unruled boxes*, and this flag has no bearing on that, so a refetch would
+ * reshuffle the operator's page for a change to a field the pool query does
+ * not even filter on.
+ */
+export function useSetPublicSample() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ imageId, publicSample }: { imageId: number; publicSample: boolean }) =>
+      apiFetch(`/api/admin/images/${imageId}/public-sample`, AdminImage, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ public_sample: publicSample }),
+      }),
+    onSuccess: (result) => {
+      queryClient.setQueryData(
+        labellingBatchKey,
+        (current: z.infer<typeof LabellingBatch> | undefined) =>
+          current && {
+            ...current,
+            images: current.images.map((image) =>
+              image.id === result.id ? { ...image, public_sample: result.public_sample } : image,
+            ),
+          },
+      );
+    },
   });
 }
 

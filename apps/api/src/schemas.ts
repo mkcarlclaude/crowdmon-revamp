@@ -1299,6 +1299,11 @@ const ProposedBox = z
  * `labellingBatchHandler`), so echoing the ruled ones too would show an
  * operator a box they just accepted with no way to tell it apart from one they
  * had not reached.
+ *
+ * `public_sample` travels with the frame (M14.1) so the verification screen
+ * can render the flag's current state without a second request per frame —
+ * the same reason `class_name` rides beside `class_id` on `ProposedBox`
+ * rather than being looked up separately.
  */
 const LabellingImage = z
   .object({
@@ -1311,6 +1316,7 @@ const LabellingImage = z
         "https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…",
     }),
     predictions: z.array(ProposedBox),
+    public_sample: z.boolean().openapi({ example: false }),
   })
   .openapi("LabellingImage");
 
