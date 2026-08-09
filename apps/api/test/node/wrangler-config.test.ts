@@ -31,6 +31,12 @@ const EXPECTED_VARS = [
   "ACCESS_AUD",
   "LEASE_STALE_SECONDS",
   "MAX_ATTEMPTS",
+  // M13.4. Optional to the *code* — `src/frame-urls.ts` falls back to proxying
+  // when it is absent — but not optional to this check once it is set, and the
+  // failure it guards against is worse here than for the others: a var that
+  // TOML rebound into a later table leaves the Worker proxying, which is a
+  // working screen. Nobody would notice the deploy had silently dropped it.
+  "FRAMES_S3_BASE_URL",
 ];
 
 function varsSection(): string {

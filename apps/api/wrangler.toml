@@ -79,27 +79,26 @@ MAX_ATTEMPTS = 3
 
 # Presigned frame serving for a labelling session (M13.4, CONTEXT.md §Q25).
 #
-# Commented out deliberately, and this is the whole switch: with it set — plus
-# the two secrets below — `/api/admin/labelling/batch` returns short-lived
-# presigned URLs and the browser fetches frames straight from R2. Without it,
-# the same endpoint returns this Worker's own Access-gated /api/admin/image
-# path and answers `url_mode: "proxy"`. Both modes keep the bucket private and
-# nothing enumerable; what differs is who moves the bytes.
+# This plus the two secrets below is the whole switch: with all three set,
+# `/api/admin/labelling/batch` returns short-lived presigned URLs and the
+# browser fetches frames straight from R2. With any of them missing, the same
+# endpoint returns this Worker's own Access-gated /api/admin/image path and
+# answers `url_mode: "proxy"`. Both modes keep the bucket private and nothing
+# enumerable; what differs is who moves the bytes.
 #
-# **No new token.** The credential to paste is the one the detector sidecar
+# The account id is not a secret — it is in every R2 S3 endpoint the box
+# already talks to (`CROWDMON_R2_ACCOUNT_ID` in deploy/homebox/.env) and it
+# authorises nothing on its own, exactly as ACCESS_TEAM_DOMAIN above does not.
+#
+# **No new token.** The two secrets are the credential the detector sidecar
 # already uses — `CROWDMON_DETECTOR_R2_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` in
 # `deploy/homebox/.env`, scoped Object Read only on `crowdmon-frames`
-# (infra/README.md, "Minting the worker's R2 token"). Presigning a GET needs
+# (infra/README.md, "Who else holds a bucket token"). Presigning a GET needs
 # exactly that capability and nothing more, so minting a third bucket token
-# would have bought a second thing to rotate and no additional bound. It is
+# would have bought another thing to rotate and no narrower a grant. It is
 # deliberately *not* the Go worker's `CROWDMON_R2_ACCESS_KEY_ID`, which carries
-# Object Read **&& Write**: a signing key only ever needs to read, and a signed
+# Object Read *and Write*: a signing key only ever needs to read, and a signed
 # URL minted from a writable key is a writable key in a Worker for no reason.
-#
-# Commented rather than filled in only because the value embeds the account id.
-# Uncomment, paste, and set the two secrets from the same pair:
-#
-#   FRAMES_S3_BASE_URL = "https://<account-id>.r2.cloudflarestorage.com/crowdmon-frames"
 #
 #   wrangler secret put R2_ACCESS_KEY_ID       # = CROWDMON_DETECTOR_R2_ACCESS_KEY_ID
 #   wrangler secret put R2_SECRET_ACCESS_KEY   # = CROWDMON_DETECTOR_R2_SECRET_ACCESS_KEY
@@ -108,14 +107,15 @@ MAX_ATTEMPTS = 3
 # Rotating or revoking that token now moves two systems: the detector stops
 # fetching frames on the box, and this Worker starts signing URLs R2 rejects —
 # which shows up as broken images in /admin rather than as a message anybody
-# can read. Rotate both stores together, or set only one half here to fall back
-# (see below). `deploy/homebox/.env.example` carries the same warning at the
-# other end of the pair.
+# can read. Rotate both stores together, or clear the Worker's two secrets
+# first to fall back to proxying. `deploy/homebox/.env.example` carries the
+# same warning at the other end of the pair.
 #
 # Setting only one half leaves the Worker in proxy mode on purpose
 # (`src/frame-urls.ts`): signing with a missing secret produces URLs that look
 # right and are rejected by R2, which surfaces as broken images rather than as
 # anything an operator could read.
+FRAMES_S3_BASE_URL = "https://8bc2471b1508c2b5e87a86c45f9c9db5.r2.cloudflarestorage.com/crowdmon-frames"
 
 # D1 and R2 are provisioned by Terraform (M1.3). The IDs below come from
 # `terraform -chdir=infra output`; wrangler binds to them, it does not create
