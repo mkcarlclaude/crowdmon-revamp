@@ -20,15 +20,15 @@ import (
 // comment says queue_depth exists to rule out. This test would have failed
 // against that version: it asserts every (status, kind) pair the stats
 // endpoint's zero-fill promises, prelabel included, not just that the call
-// succeeds — prelabel (M11.1) and dryrun (M12.2) included.
+// succeeds — prelabel (M11.1), dryrun (M12.2) and snapshot (M15.1) included.
 func TestQueueDepthCountsIncludesEveryKind(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{
-			"pending": {"download": 1, "chunk": 5,  "prelabel": 2, "dryrun": 4},
-			"claimed": {"download": 0, "chunk": 1,  "prelabel": 1, "dryrun": 1},
-			"done":    {"download": 40, "chunk": 300, "prelabel": 12, "dryrun": 7},
-			"failed":  {"download": 0, "chunk": 2,  "prelabel": 3, "dryrun": 0}
+			"pending": {"download": 1, "chunk": 5,  "prelabel": 2, "dryrun": 4, "snapshot": 1},
+			"claimed": {"download": 0, "chunk": 1,  "prelabel": 1, "dryrun": 1, "snapshot": 0},
+			"done":    {"download": 40, "chunk": 300, "prelabel": 12, "dryrun": 7, "snapshot": 3},
+			"failed":  {"download": 0, "chunk": 2,  "prelabel": 3, "dryrun": 0, "snapshot": 0}
 		}`)
 	}))
 	defer server.Close()
@@ -48,22 +48,26 @@ func TestQueueDepthCountsIncludesEveryKind(t *testing.T) {
 		{Status: "pending", Kind: "chunk", Count: 5},
 		{Status: "pending", Kind: "prelabel", Count: 2},
 		{Status: "pending", Kind: "dryrun", Count: 4},
+		{Status: "pending", Kind: "snapshot", Count: 1},
 		{Status: "claimed", Kind: "download", Count: 0},
 		{Status: "claimed", Kind: "chunk", Count: 1},
 		{Status: "claimed", Kind: "prelabel", Count: 1},
 		{Status: "claimed", Kind: "dryrun", Count: 1},
+		{Status: "claimed", Kind: "snapshot", Count: 0},
 		{Status: "done", Kind: "download", Count: 40},
 		{Status: "done", Kind: "chunk", Count: 300},
 		{Status: "done", Kind: "prelabel", Count: 12},
 		{Status: "done", Kind: "dryrun", Count: 7},
+		{Status: "done", Kind: "snapshot", Count: 3},
 		{Status: "failed", Kind: "download", Count: 0},
 		{Status: "failed", Kind: "chunk", Count: 2},
 		{Status: "failed", Kind: "prelabel", Count: 3},
 		{Status: "failed", Kind: "dryrun", Count: 0},
+		{Status: "failed", Kind: "snapshot", Count: 0},
 	}
 
 	if len(got) != len(want) {
-		t.Fatalf("queueDepthCounts returned %d entries, want %d (sixteen — four statuses times four kinds): %+v",
+		t.Fatalf("queueDepthCounts returned %d entries, want %d (twenty — four statuses times five kinds): %+v",
 			len(got), len(want), got)
 	}
 	for i := range want {

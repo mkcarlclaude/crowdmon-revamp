@@ -85,8 +85,8 @@ func aJob() *api.Job {
 	return &api.Job{
 		Id:       7,
 		Kind:     "download",
-		VideoId:  "dQw4w9WgXcQ",
-		VideoUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		VideoId:  strPtr("dQw4w9WgXcQ"),
+		VideoUrl: strPtr("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
 		Attempts: 1,
 	}
 }

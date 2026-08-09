@@ -6,6 +6,7 @@ import { JobList } from "../components/JobList";
 import { LabellingSession } from "../components/LabellingSession";
 import { LabellingStats } from "../components/LabellingStats";
 import { SessionExpiredBanner } from "../components/SessionExpiredBanner";
+import { SnapshotPanel } from "../components/SnapshotPanel";
 import { SubmitForm } from "../components/SubmitForm";
 
 export function Admin() {
@@ -59,6 +60,15 @@ export function Admin() {
           <AddClassForm />
           <ClassRoster />
         </div>
+      </section>
+      {/* M15.1. Last: the export the whole pipeline builds toward, and the
+          least frequent action on the page — an admin looks at this once a
+          dataset is worth pulling, not every visit. */}
+      <section>
+        <h2 className="mb-2 text-sm uppercase tracking-wide text-[var(--color-text-muted)]">
+          Dataset snapshots
+        </h2>
+        <SnapshotPanel />
       </section>
     </main>
   );

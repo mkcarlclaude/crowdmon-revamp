@@ -27,9 +27,12 @@ export const listJobsRoute = createRoute({
 /** The shape D1 returns. Flat, because SQLite has no nested rows. */
 interface JobRow {
   id: number;
-  kind: "download" | "chunk" | "prelabel" | "dryrun";
-  video_id: string;
-  video_url: string;
+  kind: "download" | "chunk" | "prelabel" | "dryrun" | "snapshot";
+  // Null for a `snapshot` job (migration 0008) — it names no video, so
+  // `video_url` below is `LEFT JOIN`ed rather than `JOIN`ed, and is null for
+  // exactly the same rows.
+  video_id: string | null;
+  video_url: string | null;
   status: "pending" | "claimed" | "done" | "failed";
   attempts: number;
   claimed_by: string | null;
@@ -48,10 +51,16 @@ const DEFAULT_LIMIT = 50;
 export const listJobsHandler: RouteHandler<typeof listJobsRoute, AppEnv> = async (c) => {
   const { status, limit } = c.req.valid("query");
 
-  // One query with a JOIN and a LEFT JOIN rather than a jobs query followed by
-  // a chunks query: the second query would be another D1 round trip on every
+  // One query with two LEFT JOINs rather than a jobs query followed by a
+  // chunks query: the second query would be another D1 round trip on every
   // poll from every open tab, and `chunks` is 1:1 with a chunk job by unique
   // index, so the join cannot fan the result out.
+  //
+  // `videos` is `LEFT JOIN`ed, not `JOIN`ed — a `snapshot` job (migration
+  // 0008, M15.1) names no video, and an inner join would silently drop every
+  // one of those rows from this list rather than showing them with no video
+  // to display. Every other kind still resolves a real row here exactly as
+  // before; only `snapshot` ever sees the null side of this join.
   //
   // The WHERE clause is assembled rather than the whole statement being written
   // out twice. `status` is never interpolated — it is bound like every other
@@ -63,7 +72,7 @@ export const listJobsHandler: RouteHandler<typeof listJobsRoute, AppEnv> = async
     `SELECT j.*, v.url AS video_url,
             ch.segment_index, ch.start_seconds, ch.end_seconds
        FROM jobs j
-       JOIN videos v ON v.id = j.video_id
+       LEFT JOIN videos v ON v.id = j.video_id
        LEFT JOIN chunks ch ON ch.job_id = j.id
        ${filter}
       ORDER BY j.id DESC

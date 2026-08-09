@@ -209,6 +209,30 @@ type DryRunReporter interface {
 	ReportDryRun(ctx context.Context, jobID int, result queue.DryRunResult) error
 }
 
+// SnapshotFetcher fetches every image and label the current inclusion policy
+// admits (M15.1's `GET /api/jobs/{id}/snapshot-source`) — the whole input to
+// one snapshot build. The method name matches *queue.Client's own
+// SnapshotSource so that value satisfies this interface directly, the same
+// arrangement ImageReporter and PredictionReporter already have.
+type SnapshotFetcher interface {
+	SnapshotSource(ctx context.Context, jobID int) (queue.SnapshotSource, error)
+}
+
+// SnapshotBuilder copies the admitted images into R2 under one prefix and
+// writes the manifest tying them to their labels and their train/eval split
+// (M15.1, M15.2). Declared here, on the side that depends on it, so a test
+// can substitute a fake with no R2 — the same pattern FrameUploader gives
+// frames.Uploader.
+type SnapshotBuilder interface {
+	Build(ctx context.Context, prefix string, source queue.SnapshotSource) (queue.SnapshotArtifact, error)
+}
+
+// SnapshotReporter records a finished snapshot build (M15.1's `POST
+// /api/jobs/{id}/snapshot`).
+type SnapshotReporter interface {
+	ReportSnapshot(ctx context.Context, jobID int, artifact queue.SnapshotArtifact) error
+}
+
 // Metrics is the chunk pipeline's view of telemetry.FrameMetrics: the four
 // measurements M8.2 asks for.
 //
@@ -257,6 +281,12 @@ type Pipeline struct {
 	// out of this worker's configuration.
 	DryRunSampler BoundedImageSampler
 	DryRuns       DryRunReporter
+	// The snapshot branch's three dependencies (M15.1), nil until wired —
+	// treated as a misconfiguration rather than a crash, in prelabel's and
+	// dry-run's own idiom, see the branch's own comment.
+	SnapshotSource   SnapshotFetcher
+	SnapshotBuilder  SnapshotBuilder
+	SnapshotReporter SnapshotReporter
 	// Extraction is the settings in force, and therefore what gets stamped
 	// onto the rows this pipeline produces (M8.4).
 	Extraction frames.Config
@@ -279,14 +309,16 @@ func (p Pipeline) Work(ctx context.Context, job *api.Job) error {
 	p.recordClaimed(ctx, job)
 
 	switch job.Kind {
-	case api.Download:
+	case api.JobKindDownload:
 		return p.download(ctx, job)
-	case api.Chunk:
+	case api.JobKindChunk:
 		return p.chunk(ctx, job)
-	case api.Prelabel:
+	case api.JobKindPrelabel:
 		return p.prelabel(ctx, job)
-	case api.Dryrun:
+	case api.JobKindDryrun:
 		return p.dryrun(ctx, job)
+	case api.JobKindSnapshot:
+		return p.snapshot(ctx, job)
 	default:
 		// Terminal, not retryable: a kind this binary does not understand will
 		// still be unknown on the next attempt. It means the API is ahead of
@@ -334,7 +366,7 @@ func (p Pipeline) recordClaimed(ctx context.Context, job *api.Job) {
 func (p Pipeline) download(ctx context.Context, job *api.Job) error {
 	ctx, span := tracer().Start(ctx, "job.download", trace.WithAttributes(
 		attribute.Int("crowdmon.job.id", job.Id),
-		attribute.String("crowdmon.video.id", job.VideoId),
+		attribute.String("crowdmon.video.id", *job.VideoId),
 	))
 	defer span.End()
 
@@ -365,7 +397,7 @@ func (p Pipeline) downloadSource(ctx context.Context, job *api.Job) (video.Sourc
 	defer span.End()
 
 	start := time.Now()
-	source, err := p.Downloader.Download(ctx, job.VideoId, job.VideoUrl)
+	source, err := p.Downloader.Download(ctx, *job.VideoId, *job.VideoUrl)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -376,7 +408,7 @@ func (p Pipeline) downloadSource(ctx context.Context, job *api.Job) (video.Sourc
 		if errors.Is(err, video.ErrUnavailable) {
 			err = Terminal(err)
 		}
-		return video.Source{}, recordErr(span, fmt.Errorf("downloading %s: %w", job.VideoId, err))
+		return video.Source{}, recordErr(span, fmt.Errorf("downloading %s: %w", *job.VideoId, err))
 	}
 
 	// M7.1 asks for both as attributes. The span's own duration covers the
@@ -393,7 +425,7 @@ func (p Pipeline) downloadSource(ctx context.Context, job *api.Job) (video.Sourc
 	)
 
 	p.log().InfoContext(ctx, "source video ready",
-		"video_id", job.VideoId, "path", source.Path, "bytes", source.Bytes,
+		"video_id", *job.VideoId, "path", source.Path, "bytes", source.Bytes,
 		"download_ms", elapsed.Milliseconds())
 
 	return source, nil
@@ -445,7 +477,7 @@ func (p Pipeline) fanOut(
 	)
 
 	p.log().InfoContext(ctx, "fanned out",
-		"video_id", job.VideoId, "segments", result.Segments, "created", result.Created)
+		"video_id", *job.VideoId, "segments", result.Segments, "created", result.Created)
 
 	return nil
 }
@@ -461,7 +493,7 @@ func (p Pipeline) fanOut(
 func (p Pipeline) chunk(ctx context.Context, job *api.Job) error {
 	ctx, span := tracer().Start(ctx, "job.chunk", trace.WithAttributes(
 		attribute.Int("crowdmon.job.id", job.Id),
-		attribute.String("crowdmon.video.id", job.VideoId),
+		attribute.String("crowdmon.video.id", *job.VideoId),
 	))
 	defer span.End()
 
@@ -481,7 +513,7 @@ func (p Pipeline) chunk(ctx context.Context, job *api.Job) error {
 		attribute.Int("crowdmon.chunk.end_seconds", job.Chunk.EndSeconds),
 	)
 
-	path, err := p.Store.Path(job.VideoId)
+	path, err := p.Store.Path(*job.VideoId)
 	if err != nil {
 		if errors.Is(err, video.ErrNotDownloaded) {
 			// Terminal, and terminal here is the point: no amount of retrying
@@ -490,7 +522,7 @@ func (p Pipeline) chunk(ctx context.Context, job *api.Job) error {
 			// operator reading it needs to know the job ran in the wrong place.
 			return recordErr(span, Terminal(fmt.Errorf(
 				"the source video for %s is not on this worker: chunk jobs must run on the box that downloaded it",
-				job.VideoId)))
+				*job.VideoId)))
 		}
 		return recordErr(span, err)
 	}
@@ -525,7 +557,7 @@ func (p Pipeline) chunk(ctx context.Context, job *api.Job) error {
 		return recordErr(span, err)
 	}
 
-	keys, err := p.upload(ctx, job.VideoId, deduped.Kept)
+	keys, err := p.upload(ctx, *job.VideoId, deduped.Kept)
 	if err != nil {
 		return recordErr(span, err)
 	}
@@ -554,7 +586,7 @@ func (p Pipeline) chunk(ctx context.Context, job *api.Job) error {
 	}
 
 	p.log().InfoContext(ctx, "chunk extracted",
-		"video_id", job.VideoId, "segment_index", job.Chunk.SegmentIndex,
+		"video_id", *job.VideoId, "segment_index", job.Chunk.SegmentIndex,
 		"extracted", deduped.Extracted, "kept", len(deduped.Kept),
 		"dedup_ratio", deduped.Ratio, "duration_ms", elapsed.Milliseconds())
 
@@ -685,7 +717,7 @@ func (p Pipeline) report(
 func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 	ctx, span := tracer().Start(ctx, "job.prelabel", trace.WithAttributes(
 		attribute.Int("crowdmon.job.id", job.Id),
-		attribute.String("crowdmon.video.id", job.VideoId),
+		attribute.String("crowdmon.video.id", *job.VideoId),
 	))
 	defer span.End()
 
@@ -722,9 +754,9 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 			"no active class prompts: prelabel job %d has nothing to detect", job.Id))
 	}
 
-	sampled, err := p.sample(ctx, job.VideoId)
+	sampled, err := p.sample(ctx, *job.VideoId)
 	if err != nil {
-		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", job.VideoId, err))
+		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", *job.VideoId, err))
 	}
 
 	span.SetAttributes(
@@ -826,7 +858,7 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 func (p Pipeline) dryrun(ctx context.Context, job *api.Job) error {
 	ctx, span := tracer().Start(ctx, "job.dryrun", trace.WithAttributes(
 		attribute.Int("crowdmon.job.id", job.Id),
-		attribute.String("crowdmon.video.id", job.VideoId),
+		attribute.String("crowdmon.video.id", *job.VideoId),
 	))
 	defer span.End()
 
@@ -858,9 +890,9 @@ func (p Pipeline) dryrun(ctx context.Context, job *api.Job) error {
 		Version:    "candidate",
 	}}
 
-	sampled, err := p.sampleN(ctx, job.VideoId, job.Dryrun.SampleSize)
+	sampled, err := p.sampleN(ctx, *job.VideoId, job.Dryrun.SampleSize)
 	if err != nil {
-		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", job.VideoId, err))
+		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", *job.VideoId, err))
 	}
 
 	span.SetAttributes(
@@ -914,6 +946,128 @@ func (p Pipeline) dryrun(ctx context.Context, job *api.Job) error {
 		if errors.Is(err, queue.ErrRejected) {
 			return recordErr(span, Terminal(err))
 		}
+		return recordErr(span, err)
+	}
+
+	return nil
+}
+
+// snapshotKeyPrefix is where dataset snapshots live in the bucket —
+// frames.KeyPrefix's sibling, matching that constant's own comment
+// anticipating this: "models, dataset snapshots... are a sibling of this
+// prefix rather than mixed into it."
+const snapshotKeyPrefix = "snapshots"
+
+// snapshot is phase five: package everything the current inclusion policy
+// admits into one R2 artifact and record it (M15.1).
+//
+// Unlike every other kind, this job names no video (migration 0008) — it is
+// not about one video, but the whole dataset's current qualifying rows
+// across every video at once — so job.VideoId is nil here and nothing in
+// this branch may dereference it, unlike download/chunk/prelabel/dryrun
+// above.
+func (p Pipeline) snapshot(ctx context.Context, job *api.Job) error {
+	ctx, span := tracer().Start(ctx, "job.snapshot", trace.WithAttributes(
+		attribute.Int("crowdmon.job.id", job.Id),
+	))
+	defer span.End()
+
+	// Retryable, not terminal, in prelabel's and dry-run's own idiom: a
+	// worker built without snapshot building configured is a deployment that
+	// is wrong right now and may be right in a minute.
+	if p.SnapshotSource == nil || p.SnapshotBuilder == nil || p.SnapshotReporter == nil {
+		return recordErr(span, fmt.Errorf(
+			"this worker has no snapshot building configured: it cannot run the snapshot job %d",
+			job.Id))
+	}
+
+	source, err := p.fetchSnapshotSource(ctx, job.Id)
+	if err != nil {
+		return recordErr(span, fmt.Errorf("fetching the snapshot source for job %d: %w", job.Id, err))
+	}
+
+	span.SetAttributes(attribute.Int("crowdmon.snapshot.images", len(source.Images)))
+
+	// One prefix per job, not per snapshot row: the row does not exist yet
+	// when the build starts, and the job id is already a stable, unique
+	// handle this worker holds without a second round trip (migration 0003's
+	// own comment on `snapshots.r2_key`: "expected to embed this row's own id
+	// or a timestamp" — the job id serves the same purpose).
+	prefix := fmt.Sprintf("%s/job-%d", snapshotKeyPrefix, job.Id)
+
+	artifact, err := p.buildSnapshot(ctx, prefix, source)
+	if err != nil {
+		return recordErr(span, fmt.Errorf("building snapshot job %d: %w", job.Id, err))
+	}
+
+	span.SetAttributes(
+		attribute.String("crowdmon.snapshot.r2_key", artifact.R2Key),
+		attribute.Int("crowdmon.snapshot.image_count", artifact.ImageCount),
+		attribute.Int("crowdmon.snapshot.label_count", artifact.LabelCount),
+	)
+
+	// Reported before Complete, the ordering every other report in this file
+	// uses: reporting on a lease this worker still holds is what makes the
+	// 404 meaningful.
+	if err := p.reportSnapshot(ctx, job.Id, artifact); err != nil {
+		if errors.Is(err, queue.ErrRejected) {
+			return recordErr(span, Terminal(err))
+		}
+		return recordErr(span, err)
+	}
+
+	return nil
+}
+
+// fetchSnapshotSource reads the current inclusion policy's whole admitted
+// set inside its own span — snapshot.fetch, not job.snapshot.fetch: the same
+// flat naming sample.select and dryrun.select already use, so a Tempo query
+// for one step is not nested inside a name naming the whole job.
+func (p Pipeline) fetchSnapshotSource(ctx context.Context, jobID int) (queue.SnapshotSource, error) {
+	ctx, span := tracer().Start(ctx, "snapshot.fetch")
+	defer span.End()
+
+	source, err := p.SnapshotSource.SnapshotSource(ctx, jobID)
+	if err != nil {
+		return queue.SnapshotSource{}, recordErr(span, err)
+	}
+
+	span.SetAttributes(attribute.Int("crowdmon.snapshot.images", len(source.Images)))
+	return source, nil
+}
+
+// buildSnapshot copies the admitted images and writes the manifest inside
+// its own span.
+func (p Pipeline) buildSnapshot(
+	ctx context.Context, prefix string, source queue.SnapshotSource,
+) (queue.SnapshotArtifact, error) {
+	ctx, span := tracer().Start(ctx, "snapshot.build", trace.WithAttributes(
+		attribute.String("crowdmon.snapshot.prefix", prefix),
+	))
+	defer span.End()
+
+	artifact, err := p.SnapshotBuilder.Build(ctx, prefix, source)
+	if err != nil {
+		return queue.SnapshotArtifact{}, recordErr(span, err)
+	}
+
+	span.SetAttributes(
+		attribute.Int("crowdmon.snapshot.image_count", artifact.ImageCount),
+		attribute.Int("crowdmon.snapshot.label_count", artifact.LabelCount),
+	)
+	return artifact, nil
+}
+
+// reportSnapshot writes the `snapshots` row inside its own span.
+// snapshot.report, not job.snapshot.report, matching predictions.report and
+// dryrun.report's own flat naming.
+func (p Pipeline) reportSnapshot(ctx context.Context, jobID int, artifact queue.SnapshotArtifact) error {
+	ctx, span := tracer().Start(ctx, "snapshot.report", trace.WithAttributes(
+		attribute.String("crowdmon.snapshot.r2_key", artifact.R2Key),
+	))
+	defer span.End()
+
+	if err := p.SnapshotReporter.ReportSnapshot(ctx, jobID, artifact); err != nil {
 		return recordErr(span, err)
 	}
 

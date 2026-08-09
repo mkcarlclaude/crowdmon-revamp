@@ -152,6 +152,11 @@ type StatusCounts struct {
 	// single worker as everything else, so a backlog of them is precisely what
 	// queue depth is for.
 	Dryrun int
+	// Snapshot is M15.1's fifth kind, added here at the same time as the field
+	// it mirrors for `Dryrun`'s own reason: a snapshot build competes for the
+	// same single worker as everything else, so a backlog of them belongs in
+	// queue depth too.
+	Snapshot int
 }
 
 // Stats is what the queue looked like the moment this was read: job counts
@@ -188,6 +193,7 @@ func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	counts := func(c api.JobStatusCounts) StatusCounts {
 		return StatusCounts{
 			Download: c.Download, Chunk: c.Chunk, Prelabel: c.Prelabel, Dryrun: c.Dryrun,
+			Snapshot: c.Snapshot,
 		}
 	}
 
@@ -734,5 +740,128 @@ func (c *Client) ReportDryRun(ctx context.Context, jobID int, result DryRunResul
 		return fmt.Errorf("reporting the dry-run for job %d: %w: %s", jobID, ErrRejected, statusError(resp))
 	default:
 		return fmt.Errorf("reporting the dry-run for job %d: %w", jobID, statusError(resp))
+	}
+}
+
+// SnapshotLabel is one label a snapshot admits for one image (M15.1, M15.3):
+// the resolved outcome of a ruling, not a proposal — see the contract's own
+// comment on why there is no verdict kind or prediction id here.
+type SnapshotLabel struct {
+	ClassName              string
+	XMin, YMin, XMax, YMax float64
+}
+
+// SnapshotImage is one image the inclusion policy currently admits, and its
+// labels.
+type SnapshotImage struct {
+	// Key is the R2 object key of the original frame — the same handle
+	// Box.Key and Image.Key use, and what worker.SnapshotBuilder copies into
+	// the snapshot's own prefix.
+	Key              string
+	VideoID          string
+	TimestampSeconds float64
+	// SelectionReason is nil for an image with no stamp (unreachable in v2:
+	// an image only qualifies by carrying a prediction, and every predicted
+	// image has been through reportPredictionsHandler's stamp — see
+	// SnapshotSourceImage's own comment in schemas.ts) or "random", the only
+	// value v2 ever writes. worker.SnapshotBuilder reads it to decide the
+	// split (M15.2): "random" is held out of train.
+	SelectionReason *string
+	Labels          []SnapshotLabel
+}
+
+// SnapshotSource is the whole input to one snapshot build (M15.1's `GET
+// /api/jobs/{id}/snapshot-source`).
+type SnapshotSource struct {
+	Images []SnapshotImage
+}
+
+// SnapshotSource fetches every image and label the current inclusion policy
+// admits — the whole input to one snapshot build. Scoped by job id rather
+// than by video, unlike Images: a snapshot job is not about any one video
+// (migration 0008), so its own primary key is the only handle the lease
+// check has.
+func (c *Client) SnapshotSource(ctx context.Context, jobID int) (SnapshotSource, error) {
+	resp, err := c.api.SnapshotSource(ctx, jobID, &api.SnapshotSourceParams{WorkerId: c.workerID})
+	if err != nil {
+		return SnapshotSource{}, fmt.Errorf("fetching the snapshot source for job %d: %w", jobID, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var body api.SnapshotSource
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			return SnapshotSource{}, fmt.Errorf(
+				"decoding the snapshot source for job %d: %w", jobID, err)
+		}
+		images := make([]SnapshotImage, len(body.Images))
+		for i, image := range body.Images {
+			labels := make([]SnapshotLabel, len(image.Labels))
+			for j, label := range image.Labels {
+				labels[j] = SnapshotLabel{
+					ClassName: label.ClassName,
+					XMin:      float64(label.XMin),
+					YMin:      float64(label.YMin),
+					XMax:      float64(label.XMax),
+					YMax:      float64(label.YMax),
+				}
+			}
+			images[i] = SnapshotImage{
+				Key:              image.R2Key,
+				VideoID:          image.VideoId,
+				TimestampSeconds: float64(image.TimestampSeconds),
+				SelectionReason:  image.SelectionReason,
+				Labels:           labels,
+			}
+		}
+		return SnapshotSource{Images: images}, nil
+	case http.StatusNotFound:
+		return SnapshotSource{}, fmt.Errorf(
+			"fetching the snapshot source for job %d: %w", jobID, ErrLeaseLost)
+	default:
+		return SnapshotSource{}, fmt.Errorf(
+			"fetching the snapshot source for job %d: %w", jobID, statusError(resp))
+	}
+}
+
+// SnapshotArtifact is what a finished snapshot build reports (M15.1): where
+// the worker wrote it, and what it contains.
+type SnapshotArtifact struct {
+	R2Key      string
+	ImageCount int
+	LabelCount int
+}
+
+// ReportSnapshot records a finished snapshot build.
+//
+// Called before Complete, the ordering every other report in this file uses:
+// reporting on a lease this worker still holds is what makes the 404
+// meaningful.
+func (c *Client) ReportSnapshot(ctx context.Context, jobID int, artifact SnapshotArtifact) error {
+	resp, err := c.api.ReportSnapshot(ctx, jobID, api.ReportSnapshotJSONRequestBody{
+		WorkerId:   c.workerID,
+		R2Key:      artifact.R2Key,
+		ImageCount: artifact.ImageCount,
+		LabelCount: artifact.LabelCount,
+	})
+	if err != nil {
+		return fmt.Errorf("reporting the snapshot for job %d: %w", jobID, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusNotFound:
+		return fmt.Errorf("reporting the snapshot for job %d: %w", jobID, ErrLeaseLost)
+	case http.StatusBadRequest:
+		// A job that is not a snapshot job — this worker's bug, identical on
+		// the next attempt, so it joins every other wrong-kind report in this
+		// file rather than being left for the reaper.
+		return fmt.Errorf(
+			"reporting the snapshot for job %d: %w: %s", jobID, ErrRejected, statusError(resp))
+	default:
+		return fmt.Errorf("reporting the snapshot for job %d: %w", jobID, statusError(resp))
 	}
 }

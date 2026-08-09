@@ -14,8 +14,11 @@
 /** A job the reaper moved, carried out so the caller can record it (M6.3). */
 export interface ReapedJob {
   id: number;
-  kind: "download" | "chunk";
-  video_id: string;
+  kind: "download" | "chunk" | "prelabel" | "dryrun" | "snapshot";
+  // Null exactly for a stale `snapshot` job (migration 0008, M15.1) — it
+  // names no video, so `recordReclaims` (reclaim-spans.ts) has to leave the
+  // `crowdmon.video.id` attribute off its span rather than reading one.
+  video_id: string | null;
   attempts: number;
 }
 

@@ -49,8 +49,8 @@ func (r *fakeDryRunReporter) ReportDryRun(
 func dryRunJob() *api.Job {
 	return &api.Job{
 		Id:      11,
-		Kind:    api.Dryrun,
-		VideoId: "dQw4w9WgXcQ",
+		Kind:    api.JobKindDryrun,
+		VideoId: strPtr("dQw4w9WgXcQ"),
 		Dryrun: &api.DryRunWork{
 			ClassName:        "Paimon",
 			AppearancePrompt: "a tiny white-haired floating companion",
@@ -164,7 +164,7 @@ func TestDryRunWithoutAWorkDefinitionIsTerminal(t *testing.T) {
 		DryRuns:       &fakeDryRunReporter{},
 	}
 
-	err := p.Work(context.Background(), &api.Job{Id: 11, Kind: api.Dryrun, VideoId: "v"})
+	err := p.Work(context.Background(), &api.Job{Id: 11, Kind: api.JobKindDryrun, VideoId: strPtr("v")})
 
 	if err == nil {
 		t.Fatal("Work: want an error for a dry-run with no candidate prompt")

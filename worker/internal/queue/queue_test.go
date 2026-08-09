@@ -88,7 +88,7 @@ func TestClaimReturnsTheJobTheAPIHandedOut(t *testing.T) {
 		t.Fatal("Claim() returned no job for a 200 response")
 	}
 
-	if job.Id != 7 || job.Kind != "chunk" || job.VideoId != "dQw4w9WgXcQ" {
+	if job.Id != 7 || job.Kind != "chunk" || job.VideoId == nil || *job.VideoId != "dQw4w9WgXcQ" {
 		t.Errorf("job = %+v, want id 7, kind chunk, video dQw4w9WgXcQ", *job)
 	}
 	// The nil-able chunk is the reason one Job type can carry both kinds of

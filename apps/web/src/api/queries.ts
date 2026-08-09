@@ -15,6 +15,8 @@ import {
   LabellingStats,
   MissingReport,
   PublicFrame,
+  SnapshotJob,
+  SnapshotList,
   type SubmitVideoRequest,
   type UpdateClassRequest,
   VerdictBatch,
@@ -329,5 +331,43 @@ export function useSubmitPublicVerdicts() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ session_id: getAnonSessionId(), verdicts }),
       }),
+  });
+}
+
+export const snapshotsKey = ["snapshots"] as const;
+
+/**
+ * Every dataset snapshot built so far (M15.1's "listable with counts and
+ * dates"). No `refetchInterval` — the same reasoning `useClasses` gives: a
+ * finished snapshot never changes, and `useCreateSnapshot` invalidates this
+ * key the moment a new build is queued so a poller sees it land without
+ * re-fetching a table nobody else is writing to in the meantime.
+ */
+export function useSnapshots() {
+  return useQuery({
+    queryKey: snapshotsKey,
+    queryFn: () => apiFetch("/api/admin/snapshots", SnapshotList),
+  });
+}
+
+/**
+ * Triggers a snapshot build (M15.1). Building itself runs as a queued job on
+ * the home box, not inside this request — this only ever writes one `jobs`
+ * row — so `onSuccess` invalidates the jobs list too, the same place a
+ * queued dry-run shows up.
+ */
+export function useCreateSnapshot() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      apiFetch("/api/admin/snapshots", SnapshotJob, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: jobsKey });
+      queryClient.invalidateQueries({ queryKey: snapshotsKey });
+    },
   });
 }

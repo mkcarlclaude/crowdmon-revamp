@@ -63,7 +63,11 @@ export function recordReclaims({ requeued, retired }: ReapResult): void {
         attributes: {
           "crowdmon.job.id": job.id,
           "crowdmon.job.kind": job.kind,
-          "crowdmon.video.id": job.video_id,
+          // Omitted, not sent as `null`, for a stale `snapshot` job (M15.1) —
+          // it names no video, and OTel attribute values have no null form
+          // (jobs.ts's `recordJobFailed` makes the same omission for the
+          // same reason).
+          ...(job.video_id ? { "crowdmon.video.id": job.video_id } : {}),
           // How many claims the job had spent when it was taken back. A
           // reclaim at attempt 1 is a crash; a run of them climbing toward the
           // ceiling is a poison job on its way to being retired.
