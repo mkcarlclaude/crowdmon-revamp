@@ -129,6 +129,20 @@ describe("GET /api/admin/jobs", () => {
     expect(res.status).toBe(400);
   });
 
+  it("includes a snapshot job with null video_id and video_url rather than dropping it (M15.1)", async () => {
+    // The regression a JOIN (rather than a LEFT JOIN) against `videos` would
+    // reproduce: `videos.id = jobs.video_id` is never true for a row whose
+    // `video_id` is NULL (migration 0008), so an inner join would silently
+    // exclude every snapshot job from this list.
+    await env.DB.prepare("INSERT INTO jobs (kind, video_id) VALUES ('snapshot', NULL)").run();
+
+    const res = await app.request("/api/admin/jobs", { headers: await adminHeaders() }, env);
+    const body = (await res.json()) as { jobs: Array<Record<string, unknown>> };
+
+    expect(body.jobs).toHaveLength(1);
+    expect(body.jobs[0]).toMatchObject({ kind: "snapshot", video_id: null, video_url: null });
+  });
+
   it("filters by status", async () => {
     // The one branch that rewrites the SQL string rather than just its
     // bindings (the `WHERE j.status = ?` clause). Seeded directly with an

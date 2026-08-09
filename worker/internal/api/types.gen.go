@@ -66,22 +66,25 @@ func (e HealthResponseStatus) Valid() bool {
 
 // Defines values for JobKind.
 const (
-	Chunk    JobKind = "chunk"
-	Download JobKind = "download"
-	Dryrun   JobKind = "dryrun"
-	Prelabel JobKind = "prelabel"
+	JobKindChunk    JobKind = "chunk"
+	JobKindDownload JobKind = "download"
+	JobKindDryrun   JobKind = "dryrun"
+	JobKindPrelabel JobKind = "prelabel"
+	JobKindSnapshot JobKind = "snapshot"
 )
 
 // Valid indicates whether the value is a known member of the JobKind enum.
 func (e JobKind) Valid() bool {
 	switch e {
-	case Chunk:
+	case JobKindChunk:
 		return true
-	case Download:
+	case JobKindDownload:
 		return true
-	case Dryrun:
+	case JobKindDryrun:
 		return true
-	case Prelabel:
+	case JobKindPrelabel:
+		return true
+	case JobKindSnapshot:
 		return true
 	default:
 		return false
@@ -254,10 +257,10 @@ type AdminJob struct {
 	UpdatedAt int `json:"updated_at"`
 
 	// VideoId Example: dQw4w9WgXcQ
-	VideoId string `json:"video_id"`
+	VideoId *string `json:"video_id"`
 
 	// VideoUrl Example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
-	VideoUrl string `json:"video_url"`
+	VideoUrl *string `json:"video_url"`
 }
 
 // AdminVideo defines model for AdminVideo.
@@ -568,10 +571,10 @@ type Job struct {
 	Traceparent *string `json:"traceparent"`
 
 	// VideoId Example: dQw4w9WgXcQ
-	VideoId string `json:"video_id"`
+	VideoId *string `json:"video_id"`
 
 	// VideoUrl Example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
-	VideoUrl string `json:"video_url"`
+	VideoUrl *string `json:"video_url"`
 }
 
 // JobKind defines model for JobKind.
@@ -609,6 +612,9 @@ type JobStatusCounts struct {
 
 	// Prelabel Example: 1
 	Prelabel int `json:"prelabel"`
+
+	// Snapshot Example: 0
+	Snapshot int `json:"snapshot"`
 }
 
 // LabellingBatch defines model for LabellingBatch.
@@ -864,6 +870,100 @@ type ReportPredictionsRequest struct {
 	WorkerId string `json:"worker_id"`
 }
 
+// ReportSnapshotRequest defines model for ReportSnapshotRequest.
+type ReportSnapshotRequest struct {
+	// ImageCount Example: 254
+	ImageCount int `json:"image_count"`
+
+	// LabelCount Example: 401
+	LabelCount int `json:"label_count"`
+
+	// R2Key Example: snapshots/job-142
+	R2Key string `json:"r2_key"`
+
+	// WorkerId Example: carls-ubuntu-1
+	WorkerId string `json:"worker_id"`
+}
+
+// Snapshot defines model for Snapshot.
+type Snapshot struct {
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// Id Example: 1
+	Id int `json:"id"`
+
+	// ImageCount Example: 254
+	ImageCount int `json:"image_count"`
+
+	// InclusionPolicy Example: source=admin; verdict=latest per prediction, accept or adjust; split: selection_reason='random' -> eval, else train
+	InclusionPolicy string `json:"inclusion_policy"`
+
+	// LabelCount Example: 401
+	LabelCount int `json:"label_count"`
+
+	// R2Key Example: snapshots/job-142
+	R2Key string `json:"r2_key"`
+}
+
+// SnapshotJob defines model for SnapshotJob.
+type SnapshotJob struct {
+	// JobId Example: 142
+	JobId  int       `json:"job_id"`
+	Status JobStatus `json:"status"`
+}
+
+// SnapshotLabel defines model for SnapshotLabel.
+type SnapshotLabel struct {
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
+}
+
+// SnapshotList defines model for SnapshotList.
+type SnapshotList struct {
+	Snapshots []Snapshot `json:"snapshots"`
+}
+
+// SnapshotReport defines model for SnapshotReport.
+type SnapshotReport struct {
+	// SnapshotId Example: 1
+	SnapshotId int `json:"snapshot_id"`
+}
+
+// SnapshotSource defines model for SnapshotSource.
+type SnapshotSource struct {
+	Images []SnapshotSourceImage `json:"images"`
+}
+
+// SnapshotSourceImage defines model for SnapshotSourceImage.
+type SnapshotSourceImage struct {
+	Labels []SnapshotLabel `json:"labels"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// SelectionReason Example: random
+	SelectionReason *string `json:"selection_reason"`
+
+	// TimestampSeconds Example: 42
+	TimestampSeconds float32 `json:"timestamp_seconds"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
 // StagedVerdict defines model for StagedVerdict.
 type StagedVerdict struct {
 	// AdjustedXMax Example: 0.48
@@ -967,6 +1067,11 @@ type LabellingBatchParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// SnapshotSourceParams defines parameters for SnapshotSource.
+type SnapshotSourceParams struct {
+	WorkerId string `form:"worker_id" json:"worker_id"`
+}
+
 // ListVideoImagesParams defines parameters for ListVideoImages.
 type ListVideoImagesParams struct {
 	WorkerId string `form:"worker_id" json:"worker_id"`
@@ -1013,6 +1118,9 @@ type ReportImagesJSONRequestBody = ReportImagesRequest
 
 // ReportPredictionsJSONRequestBody defines body for ReportPredictions for application/json ContentType.
 type ReportPredictionsJSONRequestBody = ReportPredictionsRequest
+
+// ReportSnapshotJSONRequestBody defines body for ReportSnapshot for application/json ContentType.
+type ReportSnapshotJSONRequestBody = ReportSnapshotRequest
 
 // SubmitPublicVerdictsJSONRequestBody defines body for SubmitPublicVerdicts for application/json ContentType.
 type SubmitPublicVerdictsJSONRequestBody = CreatePublicVerdictsRequest
@@ -1248,6 +1356,20 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListSnapshots Every dataset snapshot built so far, newest first
+	//
+	// M15.1's 'listable with counts and dates' — the whole `snapshots` table (migration 0003), which needs no join: unlike a job, a finished snapshot carries no lease to trim off. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/snapshots (the `ListSnapshots` operationId).
+	ListSnapshots(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSnapshot Build a dataset snapshot from everything the inclusion policy currently admits
+	//
+	// Enqueues a `snapshot` job (migration 0008). No body: v2 has exactly one inclusion policy (M15.3), so there is nothing for a caller to choose. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with POST /api/admin/snapshots (the `CreateSnapshot` operationId).
+	CreateSnapshot(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListVideos Submitted videos and how many frames each has
 	//
 	// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
@@ -1408,6 +1530,31 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
 	ReportPredictions(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportSnapshotWithBody Record a finished snapshot build (M15.1)
+	//
+	// Writes the `snapshots` row once the worker has confirmed the artifact is in R2. The one call this job kind ever makes to this route — there is no dry-run-style overwrite semantics here, because a snapshot job runs once and its row is written once, the same insert-once posture `reportPredictions` gives `predictions`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
+	ReportSnapshotWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportSnapshot Record a finished snapshot build (M15.1)
+	//
+	// Writes the `snapshots` row once the worker has confirmed the artifact is in R2. The one call this job kind ever makes to this route — there is no dry-run-style overwrite semantics here, because a snapshot job runs once and its row is written once, the same insert-once posture `reportPredictions` gives `predictions`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
+	ReportSnapshot(ctx context.Context, id int, body ReportSnapshotJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SnapshotSource Every image and label the current inclusion policy admits (M15.1)
+	//
+	// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict per prediction, `accept` or `adjust`), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+	//
+	// Corresponds with GET /api/jobs/{id}/snapshot-source (the `SnapshotSource` operationId).
+	SnapshotSource(ctx context.Context, id int, params *SnapshotSourceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PublicFrame One frame from the hand-curated public sample, for a visitor with no account
 	//
@@ -1794,6 +1941,40 @@ func (c *Client) AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) 
 	return c.Client.Do(req)
 }
 
+// ListSnapshots Every dataset snapshot built so far, newest first
+//
+// M15.1's 'listable with counts and dates' — the whole `snapshots` table (migration 0003), which needs no join: unlike a job, a finished snapshot carries no lease to trim off. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/snapshots (the `ListSnapshots` operationId).
+func (c *Client) ListSnapshots(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSnapshotsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSnapshot Build a dataset snapshot from everything the inclusion policy currently admits
+//
+// Enqueues a `snapshot` job (migration 0008). No body: v2 has exactly one inclusion policy (M15.3), so there is nothing for a caller to choose. Requires a Cloudflare Access assertion.
+//
+// Corresponds with POST /api/admin/snapshots (the `CreateSnapshot` operationId).
+func (c *Client) CreateSnapshot(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSnapshotRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListVideos Submitted videos and how many frames each has
 //
 // What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
@@ -2135,6 +2316,61 @@ func (c *Client) ReportPredictionsWithBody(ctx context.Context, id int, contentT
 // Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
 func (c *Client) ReportPredictions(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportPredictionsRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportSnapshotWithBody Record a finished snapshot build (M15.1)
+//
+// Writes the `snapshots` row once the worker has confirmed the artifact is in R2. The one call this job kind ever makes to this route — there is no dry-run-style overwrite semantics here, because a snapshot job runs once and its row is written once, the same insert-once posture `reportPredictions` gives `predictions`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
+func (c *Client) ReportSnapshotWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportSnapshotRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportSnapshot Record a finished snapshot build (M15.1)
+//
+// Writes the `snapshots` row once the worker has confirmed the artifact is in R2. The one call this job kind ever makes to this route — there is no dry-run-style overwrite semantics here, because a snapshot job runs once and its row is written once, the same insert-once posture `reportPredictions` gives `predictions`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
+func (c *Client) ReportSnapshot(ctx context.Context, id int, body ReportSnapshotJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportSnapshotRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SnapshotSource Every image and label the current inclusion policy admits (M15.1)
+//
+// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict per prediction, `accept` or `adjust`), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+//
+// Corresponds with GET /api/jobs/{id}/snapshot-source (the `SnapshotSource` operationId).
+func (c *Client) SnapshotSource(ctx context.Context, id int, params *SnapshotSourceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSnapshotSourceRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2792,6 +3028,60 @@ func NewAdminLoginRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListSnapshotsRequest constructs an http.Request for the ListSnapshots method
+func NewListSnapshotsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/snapshots")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateSnapshotRequest constructs an http.Request for the CreateSnapshot method
+func NewCreateSnapshotRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/snapshots")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListVideosRequest constructs an http.Request for the ListVideos method
 func NewListVideosRequest(server string) (*http.Request, error) {
 	var err error
@@ -3235,6 +3525,110 @@ func NewReportPredictionsRequestWithBody(server string, id int, contentType stri
 	return req, nil
 }
 
+// NewReportSnapshotRequest calls the generic ReportSnapshot builder with application/json body
+func NewReportSnapshotRequest(server string, id int, body ReportSnapshotJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReportSnapshotRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewReportSnapshotRequestWithBody constructs an http.Request for the ReportSnapshot method, with any body, and a specified content type
+func NewReportSnapshotRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/jobs/%s/snapshot", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSnapshotSourceRequest constructs an http.Request for the SnapshotSource method
+func NewSnapshotSourceRequest(server string, id int, params *SnapshotSourceParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/jobs/%s/snapshot-source", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "worker_id", params.WorkerId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPublicFrameRequest constructs an http.Request for the PublicFrame method
 func NewPublicFrameRequest(server string) (*http.Request, error) {
 	var err error
@@ -3608,6 +4002,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminLoginResponse, error)
 
+	// ListSnapshotsWithResponse Every dataset snapshot built so far, newest first
+	//
+	// M15.1's 'listable with counts and dates' — the whole `snapshots` table (migration 0003), which needs no join: unlike a job, a finished snapshot carries no lease to trim off. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/snapshots (the `ListSnapshots` operationId).
+	ListSnapshotsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSnapshotsResponse, error)
+
+	// CreateSnapshotWithResponse Build a dataset snapshot from everything the inclusion policy currently admits
+	//
+	// Enqueues a `snapshot` job (migration 0008). No body: v2 has exactly one inclusion policy (M15.3), so there is nothing for a caller to choose. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/snapshots (the `CreateSnapshot` operationId).
+	CreateSnapshotWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateSnapshotResponse, error)
+
 	// ListVideosWithResponse Submitted videos and how many frames each has
 	//
 	// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
@@ -3774,6 +4186,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/jobs/{id}/predictions (the `ReportPredictions` operationId).
 	ReportPredictionsWithResponse(ctx context.Context, id int, body ReportPredictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportPredictionsResponse, error)
+
+	// ReportSnapshotWithBodyWithResponse Record a finished snapshot build (M15.1)
+	//
+	// Writes the `snapshots` row once the worker has confirmed the artifact is in R2. The one call this job kind ever makes to this route — there is no dry-run-style overwrite semantics here, because a snapshot job runs once and its row is written once, the same insert-once posture `reportPredictions` gives `predictions`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
+	ReportSnapshotWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportSnapshotResponse, error)
+
+	// ReportSnapshotWithResponse Record a finished snapshot build (M15.1)
+	//
+	// Writes the `snapshots` row once the worker has confirmed the artifact is in R2. The one call this job kind ever makes to this route — there is no dry-run-style overwrite semantics here, because a snapshot job runs once and its row is written once, the same insert-once posture `reportPredictions` gives `predictions`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
+	ReportSnapshotWithResponse(ctx context.Context, id int, body ReportSnapshotJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportSnapshotResponse, error)
+
+	// SnapshotSourceWithResponse Every image and label the current inclusion policy admits (M15.1)
+	//
+	// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict per prediction, `accept` or `adjust`), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/jobs/{id}/snapshot-source (the `SnapshotSource` operationId).
+	SnapshotSourceWithResponse(ctx context.Context, id int, params *SnapshotSourceParams, reqEditors ...RequestEditorFn) (*SnapshotSourceResponse, error)
 
 	// PublicFrameWithResponse One frame from the hand-curated public sample, for a visitor with no account
 	//
@@ -4737,6 +5176,137 @@ func (r AdminLoginResponse) ContentType() string {
 	return ""
 }
 
+type ListSnapshotsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SnapshotList
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSnapshotsResponse) GetJSON200() *SnapshotList {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListSnapshotsResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListSnapshotsResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListSnapshotsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSnapshotsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSnapshotsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSnapshotsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSnapshotsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateSnapshotResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *SnapshotJob
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateSnapshotResponse) GetJSON201() *SnapshotJob {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateSnapshotResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateSnapshotResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateSnapshotResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateSnapshotResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateSnapshotResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateSnapshotResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateSnapshotResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateSnapshotResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListVideosResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5321,6 +5891,116 @@ func (r ReportPredictionsResponse) ContentType() string {
 	return ""
 }
 
+type ReportSnapshotResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SnapshotReport
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReportSnapshotResponse) GetJSON200() *SnapshotReport {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReportSnapshotResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReportSnapshotResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ReportSnapshotResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportSnapshotResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportSnapshotResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReportSnapshotResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SnapshotSourceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SnapshotSource
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SnapshotSourceResponse) GetJSON200() *SnapshotSource {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SnapshotSourceResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SnapshotSourceResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r SnapshotSourceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SnapshotSourceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SnapshotSourceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SnapshotSourceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PublicFrameResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5826,6 +6506,36 @@ func (c *ClientWithResponses) AdminLoginWithResponse(ctx context.Context, reqEdi
 	return ParseAdminLoginResponse(rsp)
 }
 
+// ListSnapshotsWithResponse Every dataset snapshot built so far, newest first
+//
+// M15.1's 'listable with counts and dates' — the whole `snapshots` table (migration 0003), which needs no join: unlike a job, a finished snapshot carries no lease to trim off. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/snapshots (the `ListSnapshots` operationId).
+func (c *ClientWithResponses) ListSnapshotsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSnapshotsResponse, error) {
+	rsp, err := c.ListSnapshots(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSnapshotsResponse(rsp)
+}
+
+// CreateSnapshotWithResponse Build a dataset snapshot from everything the inclusion policy currently admits
+//
+// Enqueues a `snapshot` job (migration 0008). No body: v2 has exactly one inclusion policy (M15.3), so there is nothing for a caller to choose. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/snapshots (the `CreateSnapshot` operationId).
+func (c *ClientWithResponses) CreateSnapshotWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateSnapshotResponse, error) {
+	rsp, err := c.CreateSnapshot(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSnapshotResponse(rsp)
+}
+
 // ListVideosWithResponse Submitted videos and how many frames each has
 //
 // What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
@@ -6105,6 +6815,51 @@ func (c *ClientWithResponses) ReportPredictionsWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseReportPredictionsResponse(rsp)
+}
+
+// ReportSnapshotWithBodyWithResponse Record a finished snapshot build (M15.1)
+//
+// Writes the `snapshots` row once the worker has confirmed the artifact is in R2. The one call this job kind ever makes to this route — there is no dry-run-style overwrite semantics here, because a snapshot job runs once and its row is written once, the same insert-once posture `reportPredictions` gives `predictions`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
+func (c *ClientWithResponses) ReportSnapshotWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportSnapshotResponse, error) {
+	rsp, err := c.ReportSnapshotWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportSnapshotResponse(rsp)
+}
+
+// ReportSnapshotWithResponse Record a finished snapshot build (M15.1)
+//
+// Writes the `snapshots` row once the worker has confirmed the artifact is in R2. The one call this job kind ever makes to this route — there is no dry-run-style overwrite semantics here, because a snapshot job runs once and its row is written once, the same insert-once posture `reportPredictions` gives `predictions`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
+func (c *ClientWithResponses) ReportSnapshotWithResponse(ctx context.Context, id int, body ReportSnapshotJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportSnapshotResponse, error) {
+	rsp, err := c.ReportSnapshot(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportSnapshotResponse(rsp)
+}
+
+// SnapshotSourceWithResponse Every image and label the current inclusion policy admits (M15.1)
+//
+// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict per prediction, `accept` or `adjust`), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/jobs/{id}/snapshot-source (the `SnapshotSource` operationId).
+func (c *ClientWithResponses) SnapshotSourceWithResponse(ctx context.Context, id int, params *SnapshotSourceParams, reqEditors ...RequestEditorFn) (*SnapshotSourceResponse, error) {
+	rsp, err := c.SnapshotSource(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSnapshotSourceResponse(rsp)
 }
 
 // PublicFrameWithResponse One frame from the hand-curated public sample, for a visitor with no account
@@ -6912,6 +7667,107 @@ func ParseAdminLoginResponse(rsp *http.Response) (*AdminLoginResponse, error) {
 	return response, nil
 }
 
+// ParseListSnapshotsResponse parses an HTTP response from a ListSnapshotsWithResponse call
+func ParseListSnapshotsResponse(rsp *http.Response) (*ListSnapshotsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSnapshotsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SnapshotList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateSnapshotResponse parses an HTTP response from a CreateSnapshotWithResponse call
+func ParseCreateSnapshotResponse(rsp *http.Response) (*CreateSnapshotResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateSnapshotResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SnapshotJob
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListVideosResponse parses an HTTP response from a ListVideosWithResponse call
 func ParseListVideosResponse(rsp *http.Response) (*ListVideosResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -7316,6 +8172,86 @@ func ParseReportPredictionsResponse(rsp *http.Response) (*ReportPredictionsRespo
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PredictionReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportSnapshotResponse parses an HTTP response from a ReportSnapshotWithResponse call
+func ParseReportSnapshotResponse(rsp *http.Response) (*ReportSnapshotResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportSnapshotResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SnapshotReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSnapshotSourceResponse parses an HTTP response from a SnapshotSourceWithResponse call
+func ParseSnapshotSourceResponse(rsp *http.Response) (*SnapshotSourceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SnapshotSourceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SnapshotSource
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

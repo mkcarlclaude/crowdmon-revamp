@@ -7,6 +7,7 @@ import {
   ChunkFanOut,
   ClaimRequest,
   CompleteRequest,
+  DEFAULT_INCLUSION_POLICY,
   DryRunReport,
   errorResponse,
   FanOutRequest,
@@ -20,10 +21,16 @@ import {
   ReportDryRunRequest,
   ReportImagesRequest,
   ReportPredictionsRequest,
+  ReportSnapshotRequest,
   SEGMENT_SECONDS,
+  SnapshotReport,
+  SnapshotSource,
   VideoIdParam,
   VideoImages,
 } from "../schemas";
+
+/** Every value `jobs.kind` may hold, in one place so a fifth kind is one edit. */
+type JobKindValue = "download" | "chunk" | "prelabel" | "dryrun" | "snapshot";
 
 /**
  * The queue endpoints the Go worker drives (CONTEXT.md §Q14).
@@ -278,7 +285,7 @@ export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, AppEnv> = async
     "SELECT status, kind, COUNT(*) AS count FROM jobs GROUP BY status, kind",
   ).all<{
     status: "pending" | "claimed" | "done" | "failed";
-    kind: "download" | "chunk" | "prelabel" | "dryrun";
+    kind: JobKindValue;
     count: number;
   }>();
 
@@ -286,15 +293,16 @@ export const jobStatsHandler: RouteHandler<typeof jobStatsRoute, AppEnv> = async
   // overwrite it. This is the zero-fill `JobStats`' own comment (schemas.ts)
   // promises the Go worker's gauge callback it will never have to do itself —
   // seeing this shape is what lets that callback report a drained queue as
-  // sixteen zeros instead of sixteen absences. `GROUP BY status, kind` itself
+  // twenty zeros instead of twenty absences. `GROUP BY status, kind` itself
   // needed no change for `prelabel` to show up in `results` — only this
   // literal, naming every combination up front, has to grow with the kind —
-  // which it did again for `dryrun` (M12.2), making it sixteen combinations.
+  // which it did again for `dryrun` (M12.2) and `snapshot` (M15.1), making it
+  // twenty combinations.
   const counts = {
-    pending: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
-    claimed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
-    done: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
-    failed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
+    pending: { download: 0, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
+    claimed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
+    done: { download: 0, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
+    failed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
   };
 
   for (const row of results) {
@@ -330,8 +338,10 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async
     .bind(worker_id, claimedAt, claimedAt, claimedAt)
     .first<{
       id: number;
-      kind: "download" | "chunk" | "prelabel" | "dryrun";
-      video_id: string;
+      kind: JobKindValue;
+      // Null exactly for `kind === "snapshot"` (migration 0008's CHECK) — the
+      // one kind this handler does not look a video up for, below.
+      video_id: string | null;
       attempts: number;
       // Whatever the row that created this job stamped onto it (M9.2) — the
       // submit request for a download, the fan-out request for a chunk.
@@ -348,9 +358,17 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async
   // The work definition lives across two other tables, and `RETURNING` cannot
   // join. Read after the claim rather than before: the job is already this
   // worker's by the time these run, so nothing can change underneath them.
-  const video = await c.env.DB.prepare("SELECT url FROM videos WHERE id = ?")
-    .bind(job.video_id)
-    .first<{ url: string }>();
+  //
+  // Skipped for a `snapshot` job: it names no video (migration 0008), so
+  // there is nothing here to look up — `video` stays `null`, which the check
+  // below must not read as "video row missing" the way it does for every
+  // other kind.
+  const video =
+    job.video_id === null
+      ? null
+      : await c.env.DB.prepare("SELECT url FROM videos WHERE id = ?")
+          .bind(job.video_id)
+          .first<{ url: string }>();
 
   const chunk =
     job.kind === "chunk"
@@ -386,7 +404,9 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async
   // stays because it is the check that lets that guarantee be a guarantee — if
   // it ever fires, something outside the fan-out wrote a job row, and retiring
   // it is better than handing it out on every poll forever.
-  if (!video) return failUnrunnable(c, job.id, "video row missing");
+  if (job.kind !== "snapshot" && !video) {
+    return failUnrunnable(c, job.id, "video row missing");
+  }
   if (job.kind === "chunk" && !chunk) {
     return failUnrunnable(c, job.id, "chunk row missing");
   }
@@ -404,7 +424,7 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async
       id: job.id,
       kind: job.kind,
       video_id: job.video_id,
-      video_url: video.url,
+      video_url: video?.url ?? null,
       attempts: job.attempts,
       // Handed back as stored, not re-derived: the worker extracts it with
       // `propagation.TraceContext` into the context its job spans start from,
@@ -477,7 +497,7 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, AppEnv> = asy
   // done — the same outcome M7.3 exists to make safe.
   const job = await c.env.DB.prepare(`SELECT kind, video_id FROM jobs WHERE ${HELD_BY}`)
     .bind(id, worker_id)
-    .first<{ kind: "download" | "chunk" | "prelabel" | "dryrun"; video_id: string }>();
+    .first<{ kind: JobKindValue; video_id: string | null }>();
 
   if (!job) return notHeldByCaller(c);
 
@@ -487,6 +507,11 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, AppEnv> = asy
   if (job.kind !== "download") {
     return c.json({ error: "only a download job can be fanned out" }, 400);
   }
+
+  // Non-null past this point: `snapshot` (migration 0008's CHECK) is the
+  // only kind whose `video_id` may be null, and the check above already
+  // excluded every kind but `download`.
+  const videoId = job.video_id as string;
 
   const segments = segmentsFor(duration_seconds);
   const at = now();
@@ -521,7 +546,7 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, AppEnv> = asy
               title            = COALESCE(?, title),
               updated_at       = ?
         WHERE id = ?`,
-    ).bind(duration_seconds, width, height, title ?? null, at, job.video_id),
+    ).bind(duration_seconds, width, height, title ?? null, at, videoId),
   ];
 
   for (const segment of segments) {
@@ -530,12 +555,12 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, AppEnv> = asy
         `INSERT INTO jobs (kind, video_id, traceparent)
               SELECT 'chunk', ?, ?
                WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE video_id = ? AND segment_index = ?)`,
-      ).bind(job.video_id, traceparent, job.video_id, segment.index),
+      ).bind(videoId, traceparent, videoId, segment.index),
       c.env.DB.prepare(
         `INSERT INTO chunks (job_id, video_id, segment_index, start_seconds, end_seconds)
               SELECT last_insert_rowid(), ?, ?, ?, ?
                WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE video_id = ? AND segment_index = ?)`,
-      ).bind(job.video_id, segment.index, segment.start, segment.end, job.video_id, segment.index),
+      ).bind(videoId, segment.index, segment.start, segment.end, videoId, segment.index),
     );
   }
 
@@ -550,7 +575,7 @@ export const fanOutJobHandler: RouteHandler<typeof fanOutJobRoute, AppEnv> = asy
     created += results[i]?.meta.changes ?? 0;
   }
 
-  return c.json({ video_id: job.video_id, segments: segments.length, created }, 200);
+  return c.json({ video_id: videoId, segments: segments.length, created }, 200);
 };
 
 export const reportImagesHandler: RouteHandler<typeof reportImagesRoute, AppEnv> = async (c) => {
@@ -586,8 +611,8 @@ export const reportImagesHandler: RouteHandler<typeof reportImagesRoute, AppEnv>
   )
     .bind(id, worker_id)
     .first<{
-      kind: "download" | "chunk" | "prelabel" | "dryrun";
-      video_id: string;
+      kind: JobKindValue;
+      video_id: string | null;
       start_seconds: number | null;
       end_seconds: number | null;
     }>();
@@ -601,6 +626,10 @@ export const reportImagesHandler: RouteHandler<typeof reportImagesRoute, AppEnv>
   if (job.kind !== "chunk") {
     return c.json({ error: "only a chunk job can report images" }, 400);
   }
+
+  // Non-null past this point: `snapshot` is the only kind whose `video_id`
+  // may be null, and the check above already excluded every kind but `chunk`.
+  const videoId = job.video_id as string;
 
   // `start_seconds`/`end_seconds` are only null if this chunk job's `chunks`
   // row is missing — the corruption case M3.4's claim handler already retires
@@ -654,7 +683,7 @@ export const reportImagesHandler: RouteHandler<typeof reportImagesRoute, AppEnv>
               r2_key          = excluded.r2_key,
               phash           = excluded.phash,
               dedup_threshold = excluded.dedup_threshold`,
-      ).bind(image.r2_key, job.video_id, image.timestamp_seconds, image.phash, dedup_threshold),
+      ).bind(image.r2_key, videoId, image.timestamp_seconds, image.phash, dedup_threshold),
     ),
     // Both updates carry the lease in their `WHERE`, for the reason heartbeat
     // and complete do: the `SELECT` above proved the lease at one instant, and
@@ -682,7 +711,7 @@ export const reportImagesHandler: RouteHandler<typeof reportImagesRoute, AppEnv>
   // `created`, there is no "this already existed" outcome worth surfacing
   // here, because an update still means this run's provenance is now correct
   // on that row.
-  return c.json({ video_id: job.video_id, images: images.length }, 200);
+  return c.json({ video_id: videoId, images: images.length }, 200);
 };
 
 export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRoute, AppEnv> = async (
@@ -696,7 +725,7 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
   // prediction rows against somebody else's job.
   const job = await c.env.DB.prepare(`SELECT kind, video_id FROM jobs WHERE ${HELD_BY}`)
     .bind(id, worker_id)
-    .first<{ kind: "download" | "chunk" | "prelabel" | "dryrun"; video_id: string }>();
+    .first<{ kind: JobKindValue; video_id: string | null }>();
 
   if (!job) return notHeldByCaller(c);
 
@@ -711,6 +740,11 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
     return c.json({ error: "only a prelabel job can report predictions" }, 400);
   }
 
+  // Non-null past this point: `snapshot` is the only kind whose `video_id`
+  // may be null, and the check above already excluded every kind but
+  // `prelabel`.
+  const videoId = job.video_id as string;
+
   // A genuinely empty report is well-formed (a detector finding nothing is a
   // real outcome, not an error) and skipping straight to the answer avoids an
   // `IN ()` with no placeholders below, which is invalid SQL. Both arrays have
@@ -719,7 +753,7 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
   // but `sampled_images` still needs its stamp written in that case, so only
   // "nothing was sampled and nothing was found" short-circuits here.
   if (predictions.length === 0 && sampled_images.length === 0) {
-    return c.json({ video_id: job.video_id, predictions: 0 }, 200);
+    return c.json({ video_id: videoId, predictions: 0 }, 200);
   }
 
   // Resolves the worker's natural handles — `r2_key` and `classes.name`
@@ -753,7 +787,7 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
       c.env.DB.prepare(
         `SELECT id, r2_key AS handle FROM images
           WHERE video_id = ? AND r2_key IN (${placeholders(keys)})`,
-      ).bind(job.video_id, ...keys),
+      ).bind(videoId, ...keys),
     ),
     ...chunkForBinding(classNames).map((names) =>
       c.env.DB.prepare(
@@ -847,13 +881,13 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
       c.env.DB.prepare(
         `UPDATE images SET selection_reason = 'random'
           WHERE video_id = ? AND r2_key IN (${placeholders(keys)})`,
-      ).bind(job.video_id, ...keys),
+      ).bind(videoId, ...keys),
     ),
   ];
 
   await c.env.DB.batch(statements);
 
-  return c.json({ video_id: job.video_id, predictions: predictions.length }, 200);
+  return c.json({ video_id: videoId, predictions: predictions.length }, 200);
 };
 
 export const listVideoImagesHandler: RouteHandler<typeof listVideoImagesRoute, AppEnv> = async (
@@ -937,8 +971,10 @@ const TRACER = "crowdmon.jobs";
  */
 function recordJobFailed(job: {
   id: number;
-  kind: "download" | "chunk" | "prelabel" | "dryrun";
-  video_id: string;
+  kind: JobKindValue;
+  // Null for a failed `snapshot` job (migration 0008) — the one kind this
+  // span has no video to name, see the attribute spread below.
+  video_id: string | null;
   attempts: number;
   failure_reason: string | null;
 }): void {
@@ -948,7 +984,11 @@ function recordJobFailed(job: {
       attributes: {
         "crowdmon.job.id": job.id,
         "crowdmon.job.kind": job.kind,
-        "crowdmon.video.id": job.video_id,
+        // Omitted entirely rather than sent as `null`: OTel attribute values
+        // are typed as string | number | boolean (plus array forms), and a
+        // key present with no value would be a span attribute this codebase
+        // has never had to represent before `snapshot` existed.
+        ...(job.video_id ? { "crowdmon.video.id": job.video_id } : {}),
         "crowdmon.job.attempts": job.attempts,
         // Recorded verbatim, same as the column it mirrors (CompleteRequest's
         // own comment): the difference between "a video permanently lost"
@@ -993,8 +1033,11 @@ export const completeJobHandler: RouteHandler<typeof completeJobRoute, AppEnv> =
   // nothing about how a worker that does not hold the lease is told apart
   // from one that does — both remain "no row came back."
   const results = await c.env.DB.batch<{
-    kind: "download" | "chunk" | "prelabel" | "dryrun";
-    video_id: string;
+    kind: JobKindValue;
+    // Null for a `snapshot` job (migration 0008) — see recordJobFailed's own
+    // comment on why the failure span handles that rather than assuming it
+    // away.
+    video_id: string | null;
     attempts: number;
   }>([
     c.env.DB.prepare(
@@ -1141,7 +1184,7 @@ export const reportDryRunHandler: RouteHandler<typeof reportDryRunRoute, AppEnv>
   // The same lease check every other write on a held job makes.
   const job = await c.env.DB.prepare(`SELECT kind FROM jobs WHERE ${HELD_BY}`)
     .bind(id, worker_id)
-    .first<{ kind: "download" | "chunk" | "prelabel" | "dryrun" }>();
+    .first<{ kind: JobKindValue }>();
 
   if (!job) return notHeldByCaller(c);
 
@@ -1175,4 +1218,194 @@ export const reportDryRunHandler: RouteHandler<typeof reportDryRunRoute, AppEnv>
   if (!updated) return c.json({ error: "this job has no dry-run to report against" }, 400);
 
   return c.json({ dryrun_id: updated.id, boxes: boxes.length }, 200);
+};
+
+/**
+ * The latest `source = 'admin'` verdict on one prediction, if it is an
+ * `accept` or `adjust` — the default inclusion policy's whole rule (M15.3:
+ * "default policy excludes anonymous verdicts"). Shared between
+ * `snapshotSourceHandler`'s two queries below so the definition of "this
+ * prediction is in" cannot drift between "which images qualify" and "which
+ * labels do".
+ *
+ * Latest, not "any admin accept" — several verdicts on one prediction are a
+ * legal state (migration 0003), and a box an admin accepted and later
+ * rejected on reflection must not still count as accepted just because an
+ * older row says so. `p.id` is the correlation: this is a scalar subquery,
+ * one row per prediction, ordered newest first and cut to one.
+ */
+const LATEST_ADMIN_VERDICT = `(
+  SELECT v2.id FROM verdicts v2
+   WHERE v2.prediction_id = p.id AND v2.source = 'admin'
+   ORDER BY v2.id DESC LIMIT 1
+)`;
+
+interface SnapshotImageRow {
+  id: number;
+  r2_key: string;
+  video_id: string;
+  timestamp_seconds: number;
+  selection_reason: string | null;
+}
+
+interface SnapshotLabelRow {
+  image_id: number;
+  class_name: string;
+  x_min: number;
+  y_min: number;
+  x_max: number;
+  y_max: number;
+}
+
+export const snapshotSourceRoute = createRoute({
+  method: "get",
+  path: "/api/jobs/{id}/snapshot-source",
+  operationId: "snapshotSource",
+  tags: ["jobs"],
+  summary: "Every image and label the current inclusion policy admits (M15.1)",
+  description:
+    "The whole input to one snapshot build: every image carrying at least one label " +
+    "under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict " +
+    "per prediction, `accept` or `adjust`), with `selection_reason` alongside so the " +
+    "worker can compute M15.2's split. No Access assertion and no credential beyond " +
+    "`worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller " +
+    "learns nothing here it could not already infer by polling claim.",
+  request: { params: JobIdParam, query: ListVideoImagesQuery },
+  responses: {
+    200: {
+      description: "Every admitted image and its labels",
+      content: { "application/json": { schema: SnapshotSource } },
+    },
+    400: errorResponse("Malformed job id or worker id"),
+    404: errorResponse("No snapshot job with this id is held by this worker"),
+  },
+});
+
+export const snapshotSourceHandler: RouteHandler<typeof snapshotSourceRoute, AppEnv> = async (
+  c,
+) => {
+  const { id } = c.req.valid("param");
+  const { worker_id } = c.req.valid("query");
+
+  // Scoped by job id and kind, unlike `listVideoImagesHandler`'s scope-by-
+  // video: a snapshot job names no video to scope by (migration 0008), so
+  // its own primary key is the only handle this lease check has.
+  const held = await c.env.DB.prepare(
+    `SELECT 1 FROM jobs WHERE id = ? AND kind = 'snapshot' AND status = 'claimed' AND claimed_by = ?`,
+  )
+    .bind(id, worker_id)
+    .first();
+
+  if (!held) {
+    return c.json({ error: "no snapshot job with this id is held by this worker" }, 404);
+  }
+
+  // Two queries merged in JS, `labellingBatchHandler`'s own idiom: SQLite has
+  // no nested-row projection, and building the label arrays here rather than
+  // with `json_group_array` keeps every label shape declared once, in the
+  // contract, rather than duplicated into a SQL string this file would have
+  // to keep in sync with `SnapshotLabel` by hand.
+  const [images, labels] = await c.env.DB.batch<SnapshotImageRow | SnapshotLabelRow>([
+    c.env.DB.prepare(
+      `SELECT i.id, i.r2_key, i.video_id, i.timestamp_seconds, i.selection_reason
+         FROM images i
+        WHERE EXISTS (
+              SELECT 1 FROM predictions p
+                JOIN verdicts v ON v.id = ${LATEST_ADMIN_VERDICT}
+               WHERE p.image_id = i.id AND v.verdict IN ('accept', 'adjust'))
+        ORDER BY i.id`,
+    ),
+    c.env.DB.prepare(
+      `SELECT p.image_id,
+              c.name AS class_name,
+              CASE WHEN v.verdict = 'adjust' THEN v.adjusted_x_min ELSE p.x_min END AS x_min,
+              CASE WHEN v.verdict = 'adjust' THEN v.adjusted_y_min ELSE p.y_min END AS y_min,
+              CASE WHEN v.verdict = 'adjust' THEN v.adjusted_x_max ELSE p.x_max END AS x_max,
+              CASE WHEN v.verdict = 'adjust' THEN v.adjusted_y_max ELSE p.y_max END AS y_max
+         FROM predictions p
+         JOIN classes c  ON c.id = p.class_id
+         JOIN verdicts v ON v.id = ${LATEST_ADMIN_VERDICT}
+        WHERE v.verdict IN ('accept', 'adjust')`,
+    ),
+  ]);
+
+  const labelsByImage = new Map<number, SnapshotLabelRow[]>();
+  for (const label of (labels?.results ?? []) as SnapshotLabelRow[]) {
+    labelsByImage.set(label.image_id, [...(labelsByImage.get(label.image_id) ?? []), label]);
+  }
+
+  return c.json(
+    {
+      images: ((images?.results ?? []) as SnapshotImageRow[]).map((image) => ({
+        r2_key: image.r2_key,
+        video_id: image.video_id,
+        timestamp_seconds: image.timestamp_seconds,
+        selection_reason: image.selection_reason,
+        labels: (labelsByImage.get(image.id) ?? []).map(({ image_id: _, ...label }) => label),
+      })),
+    },
+    200,
+  );
+};
+
+export const reportSnapshotRoute = createRoute({
+  method: "post",
+  path: "/api/jobs/{id}/snapshot",
+  operationId: "reportSnapshot",
+  tags: ["jobs"],
+  summary: "Record a finished snapshot build (M15.1)",
+  description:
+    "Writes the `snapshots` row once the worker has confirmed the artifact is in R2. " +
+    "The one call this job kind ever makes to this route — there is no dry-run-style " +
+    "overwrite semantics here, because a snapshot job runs once and its row is written " +
+    "once, the same insert-once posture `reportPredictions` gives `predictions`.",
+  request: {
+    params: JobIdParam,
+    body: { content: { "application/json": { schema: ReportSnapshotRequest } }, required: true },
+  },
+  responses: {
+    200: {
+      description: "The snapshot row exists",
+      content: { "application/json": { schema: SnapshotReport } },
+    },
+    400: errorResponse("Malformed job id or body, or a job that is not a snapshot job"),
+    404: errorResponse("No job with this id is held by this worker"),
+  },
+});
+
+export const reportSnapshotHandler: RouteHandler<typeof reportSnapshotRoute, AppEnv> = async (
+  c,
+) => {
+  const { id } = c.req.valid("param");
+  const { worker_id, r2_key, image_count, label_count } = c.req.valid("json");
+
+  // The same lease check every other write on a held job makes.
+  const job = await c.env.DB.prepare(`SELECT kind FROM jobs WHERE ${HELD_BY}`)
+    .bind(id, worker_id)
+    .first<{ kind: JobKindValue }>();
+
+  if (!job) return notHeldByCaller(c);
+
+  // 400, not 404, matching every other wrong-kind report in this file: the
+  // lease is genuine and the worker is who it says it is; what is wrong is
+  // the request.
+  if (job.kind !== "snapshot") {
+    return c.json({ error: "only a snapshot job can report a snapshot" }, 400);
+  }
+
+  // `DEFAULT_INCLUSION_POLICY` rather than a value the request carries: v2
+  // has exactly one inclusion policy (M15.3), and stamping it here, from the
+  // one constant `snapshotSourceHandler`'s query also embodies, is what keeps
+  // the two from ever describing two different policies by accident — see
+  // that constant's own comment.
+  const created = await c.env.DB.prepare(
+    `INSERT INTO snapshots (r2_key, image_count, label_count, inclusion_policy)
+          VALUES (?, ?, ?, ?) RETURNING id`,
+  )
+    .bind(r2_key, image_count, label_count, DEFAULT_INCLUSION_POLICY)
+    .first<{ id: number }>();
+
+  if (!created) return c.json({ error: "could not record the snapshot" }, 400);
+
+  return c.json({ snapshot_id: created.id }, 200);
 };

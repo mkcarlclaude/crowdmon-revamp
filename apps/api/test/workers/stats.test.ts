@@ -12,15 +12,15 @@ describe("GET /api/jobs/stats", () => {
     const res = await stats();
 
     expect(res.status).toBe(200);
-    // Every one of the sixteen combinations is present at zero rather than
+    // Every one of the twenty combinations is present at zero rather than
     // missing — this is the shape the Go worker's queue.depth gauge callback
     // depends on to tell a drained queue apart from a worker that stopped
     // reporting (schemas.ts's JobStats comment).
     expect(await res.json()).toEqual({
-      pending: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
-      claimed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
-      done: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
-      failed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0 },
+      pending: { download: 0, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
+      claimed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
+      done: { download: 0, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
+      failed: { download: 0, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
     });
   });
 
@@ -46,10 +46,10 @@ describe("GET /api/jobs/stats", () => {
     const res = await stats();
 
     expect(await res.json()).toEqual({
-      pending: { download: 1, chunk: 2, prelabel: 1, dryrun: 0 },
-      claimed: { download: 1, chunk: 0, prelabel: 0, dryrun: 0 },
-      done: { download: 0, chunk: 1, prelabel: 0, dryrun: 0 },
-      failed: { download: 1, chunk: 0, prelabel: 0, dryrun: 0 },
+      pending: { download: 1, chunk: 2, prelabel: 1, dryrun: 0, snapshot: 0 },
+      claimed: { download: 1, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
+      done: { download: 0, chunk: 1, prelabel: 0, dryrun: 0, snapshot: 0 },
+      failed: { download: 1, chunk: 0, prelabel: 0, dryrun: 0, snapshot: 0 },
     });
   });
 

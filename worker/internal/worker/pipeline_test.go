@@ -22,6 +22,13 @@ import (
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/worker"
 )
 
+// strPtr builds a *string for api.Job.VideoId and VideoUrl, both nullable
+// since M15.1 (a snapshot job carries neither — see snapshot_test.go). Every
+// fixture in this package that is not testing that case still needs one, so
+// this is shared across the package's test files rather than repeated in
+// each.
+func strPtr(s string) *string { return &s }
+
 // The download path's collaborators, at the seam the pipeline depends on.
 // yt-dlp, ffprobe and the API each have their own tests against the real
 // thing; what is under test here is the order, the classification, and what
@@ -163,9 +170,9 @@ func (m *fakeMetrics) RecordChunkDuration(_ context.Context, d time.Duration) {
 func aChunkJob() *api.Job {
 	return &api.Job{
 		Id:       9,
-		Kind:     api.Chunk,
-		VideoId:  "dQw4w9WgXcQ",
-		VideoUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		Kind:     api.JobKindChunk,
+		VideoId:  strPtr("dQw4w9WgXcQ"),
+		VideoUrl: strPtr("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
 		Attempts: 1,
 		Chunk:    &api.ChunkWork{SegmentIndex: 2, StartSeconds: 120, EndSeconds: 180},
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/frames"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/queue"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/sample"
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/snapshot"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/telemetry"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/video"
 	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/worker"
@@ -206,10 +207,19 @@ func run(ctx context.Context) error {
 		// which is exactly what makes running a candidate one free.
 		DryRunSampler: sample.Sampler{Images: jobs, Budget: cfg.PrelabelSampleSize},
 		DryRuns:       jobs,
-		Extraction:    frames.Config{DedupThreshold: cfg.DedupThreshold},
-		Metrics:       metrics,
-		Logger:        logger,
-		WorkerID:      cfg.WorkerID,
+		// M15.1's snapshot branch. `jobs` (the same *queue.Client as Queue,
+		// Images, Predictions, Prompts and DryRuns) satisfies both
+		// SnapshotFetcher and SnapshotReporter; the R2 side reuses s3Client,
+		// the same client frames.Uploader already writes through — a
+		// snapshot's CopyObject calls need the identical bucket-scoped
+		// credential a chunk job's PutObject calls already have.
+		SnapshotSource:   jobs,
+		SnapshotBuilder:  snapshot.Builder{Client: s3Client, Bucket: cfg.R2Bucket},
+		SnapshotReporter: jobs,
+		Extraction:       frames.Config{DedupThreshold: cfg.DedupThreshold},
+		Metrics:          metrics,
+		Logger:           logger,
+		WorkerID:         cfg.WorkerID,
 	}
 
 	runner := worker.Runner{
@@ -241,17 +251,17 @@ func run(ctx context.Context) error {
 // function's only job is renaming that fixed struct into the flat slice
 // telemetry stays decoupled from queue's types by asking for.
 //
-// Sixteen, not the eight this comment used to say: `prelabel` is a third kind
-// as of M11.1 and `dryrun` a fourth as of M12.2, and queue.StatusCounts grew a
-// field for each — but the Prelabel one sat unread here until M11.4, decoded
-// off the wire and then silently dropped on the way into this slice. The
-// dryrun rows below landed with the kind rather than a milestone after it,
-// which is the whole lesson of that gap. The zero-fill
-// promise apps/api/src/schemas.ts and jobs.Stats both make ends exactly at
-// this function's door if the door does not open for the third kind too: a
-// drained prelabel queue and a worker that has never reported it look
-// identical in Prometheus, which is the one failure NewQueueDepthGauge's own
-// doc comment says this metric exists to rule out.
+// Twenty, not the sixteen this comment used to say: `prelabel` is a third
+// kind as of M11.1, `dryrun` a fourth as of M12.2 and `snapshot` a fifth as of
+// M15.1, and queue.StatusCounts grew a field for each — but the Prelabel one
+// sat unread here until M11.4, decoded off the wire and then silently dropped
+// on the way into this slice. The dryrun and snapshot rows below landed with
+// their kind rather than a milestone after it, which is the whole lesson of
+// that gap. The zero-fill promise apps/api/src/schemas.ts and jobs.Stats both
+// make ends exactly at this function's door if the door does not open for a
+// new kind too: a drained queue for one kind and a worker that has never
+// reported it look identical in Prometheus, which is the one failure
+// NewQueueDepthGauge's own doc comment says this metric exists to rule out.
 func queueDepthCounts(jobs *queue.Client) telemetry.QueueDepthFetcher {
 	return func(ctx context.Context) ([]telemetry.QueueCount, error) {
 		stats, err := jobs.Stats(ctx)
@@ -264,18 +274,22 @@ func queueDepthCounts(jobs *queue.Client) telemetry.QueueDepthFetcher {
 			{Status: "pending", Kind: "chunk", Count: int64(stats.Pending.Chunk)},
 			{Status: "pending", Kind: "prelabel", Count: int64(stats.Pending.Prelabel)},
 			{Status: "pending", Kind: "dryrun", Count: int64(stats.Pending.Dryrun)},
+			{Status: "pending", Kind: "snapshot", Count: int64(stats.Pending.Snapshot)},
 			{Status: "claimed", Kind: "download", Count: int64(stats.Claimed.Download)},
 			{Status: "claimed", Kind: "chunk", Count: int64(stats.Claimed.Chunk)},
 			{Status: "claimed", Kind: "prelabel", Count: int64(stats.Claimed.Prelabel)},
 			{Status: "claimed", Kind: "dryrun", Count: int64(stats.Claimed.Dryrun)},
+			{Status: "claimed", Kind: "snapshot", Count: int64(stats.Claimed.Snapshot)},
 			{Status: "done", Kind: "download", Count: int64(stats.Done.Download)},
 			{Status: "done", Kind: "chunk", Count: int64(stats.Done.Chunk)},
 			{Status: "done", Kind: "prelabel", Count: int64(stats.Done.Prelabel)},
 			{Status: "done", Kind: "dryrun", Count: int64(stats.Done.Dryrun)},
+			{Status: "done", Kind: "snapshot", Count: int64(stats.Done.Snapshot)},
 			{Status: "failed", Kind: "download", Count: int64(stats.Failed.Download)},
 			{Status: "failed", Kind: "chunk", Count: int64(stats.Failed.Chunk)},
 			{Status: "failed", Kind: "prelabel", Count: int64(stats.Failed.Prelabel)},
 			{Status: "failed", Kind: "dryrun", Count: int64(stats.Failed.Dryrun)},
+			{Status: "failed", Kind: "snapshot", Count: int64(stats.Failed.Snapshot)},
 		}, nil
 	}
 }

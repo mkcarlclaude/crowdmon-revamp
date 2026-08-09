@@ -139,10 +139,12 @@
           },
           "video_id": {
             "type": "string",
+            "nullable": true,
             "example": "dQw4w9WgXcQ"
           },
           "video_url": {
             "type": "string",
+            "nullable": true,
             "format": "uri",
             "example": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
           },
@@ -207,7 +209,8 @@
           "download",
           "chunk",
           "prelabel",
-          "dryrun"
+          "dryrun",
+          "snapshot"
         ]
       },
       "JobStatus": {
@@ -259,10 +262,12 @@
           },
           "video_id": {
             "type": "string",
+            "nullable": true,
             "example": "dQw4w9WgXcQ"
           },
           "video_url": {
             "type": "string",
+            "nullable": true,
             "format": "uri",
             "example": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
           },
@@ -753,13 +758,19 @@
             "type": "integer",
             "minimum": 0,
             "example": 0
+          },
+          "snapshot": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
           }
         },
         "required": [
           "download",
           "chunk",
           "prelabel",
-          "dryrun"
+          "dryrun",
+          "snapshot"
         ]
       },
       "ActiveClasses": {
@@ -1740,6 +1751,217 @@
           "anon_adjusted",
           "anon_rejected",
           "missing_reports"
+        ]
+      },
+      "SnapshotJob": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 142
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ]
+      },
+      "SnapshotList": {
+        "type": "object",
+        "properties": {
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Snapshot"
+            }
+          }
+        },
+        "required": [
+          "snapshots"
+        ]
+      },
+      "Snapshot": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "r2_key": {
+            "type": "string",
+            "example": "snapshots/job-142"
+          },
+          "image_count": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 254
+          },
+          "label_count": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 401
+          },
+          "inclusion_policy": {
+            "type": "string",
+            "example": "source=admin; verdict=latest per prediction, accept or adjust; split: selection_reason='random' -> eval, else train"
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          }
+        },
+        "required": [
+          "id",
+          "r2_key",
+          "image_count",
+          "label_count",
+          "inclusion_policy",
+          "created_at"
+        ]
+      },
+      "SnapshotSource": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotSourceImage"
+            },
+            "maxItems": 1080000
+          }
+        },
+        "required": [
+          "images"
+        ]
+      },
+      "SnapshotSourceImage": {
+        "type": "object",
+        "properties": {
+          "r2_key": {
+            "type": "string",
+            "minLength": 1,
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "example": 42
+          },
+          "selection_reason": {
+            "type": "string",
+            "nullable": true,
+            "example": "random"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotLabel"
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "r2_key",
+          "video_id",
+          "timestamp_seconds",
+          "selection_reason",
+          "labels"
+        ]
+      },
+      "SnapshotLabel": {
+        "type": "object",
+        "properties": {
+          "class_name": {
+            "type": "string",
+            "example": "Paimon"
+          },
+          "x_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.12
+          },
+          "y_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.2
+          },
+          "x_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.5
+          },
+          "y_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.6
+          }
+        },
+        "required": [
+          "class_name",
+          "x_min",
+          "y_min",
+          "x_max",
+          "y_max"
+        ]
+      },
+      "SnapshotReport": {
+        "type": "object",
+        "properties": {
+          "snapshot_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          }
+        },
+        "required": [
+          "snapshot_id"
+        ]
+      },
+      "ReportSnapshotRequest": {
+        "type": "object",
+        "properties": {
+          "worker_id": {
+            "type": "string",
+            "minLength": 1,
+            "example": "carls-ubuntu-1"
+          },
+          "r2_key": {
+            "type": "string",
+            "minLength": 1,
+            "example": "snapshots/job-142"
+          },
+          "image_count": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 254
+          },
+          "label_count": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 401
+          }
+        },
+        "required": [
+          "worker_id",
+          "r2_key",
+          "image_count",
+          "label_count"
         ]
       }
     },
@@ -3543,6 +3765,244 @@
           },
           "503": {
             "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/snapshots": {
+      "post": {
+        "operationId": "createSnapshot",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Build a dataset snapshot from everything the inclusion policy currently admits",
+        "description": "Enqueues a `snapshot` job (migration 0008). No body: v2 has exactly one inclusion policy (M15.3), so there is nothing for a caller to choose. Requires a Cloudflare Access assertion.",
+        "responses": {
+          "201": {
+            "description": "The job, queued and not yet run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The insert did not return a row",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listSnapshots",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Every dataset snapshot built so far, newest first",
+        "description": "M15.1's 'listable with counts and dates' — the whole `snapshots` table (migration 0003), which needs no join: unlike a job, a finished snapshot carries no lease to trim off. Requires a Cloudflare Access assertion.",
+        "responses": {
+          "200": {
+            "description": "Snapshots, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/snapshot-source": {
+      "get": {
+        "operationId": "snapshotSource",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Every image and label the current inclusion policy admits (M15.1)",
+        "description": "The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict per prediction, `accept` or `adjust`), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "carls-ubuntu-1"
+            },
+            "required": true,
+            "name": "worker_id",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every admitted image and its labels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotSource"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed job id or worker id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No snapshot job with this id is held by this worker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}/snapshot": {
+      "post": {
+        "operationId": "reportSnapshot",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Record a finished snapshot build (M15.1)",
+        "description": "Writes the `snapshots` row once the worker has confirmed the artifact is in R2. The one call this job kind ever makes to this route — there is no dry-run-style overwrite semantics here, because a snapshot job runs once and its row is written once, the same insert-once posture `reportPredictions` gives `predictions`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportSnapshotRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The snapshot row exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed job id or body, or a job that is not a snapshot job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No job with this id is held by this worker",
             "content": {
               "application/json": {
                 "schema": {

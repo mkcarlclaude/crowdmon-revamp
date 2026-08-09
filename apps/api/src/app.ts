@@ -34,6 +34,12 @@ import {
 } from "./routes/admin-labelling";
 import { adminLoginHandler, adminLoginRoute } from "./routes/admin-login";
 import {
+  createSnapshotHandler,
+  createSnapshotRoute,
+  listSnapshotsHandler,
+  listSnapshotsRoute,
+} from "./routes/admin-snapshots";
+import {
   createMissingReportHandler,
   createMissingReportRoute,
   submitVerdictsHandler,
@@ -60,6 +66,10 @@ import {
   reportImagesRoute,
   reportPredictionsHandler,
   reportPredictionsRoute,
+  reportSnapshotHandler,
+  reportSnapshotRoute,
+  snapshotSourceHandler,
+  snapshotSourceRoute,
 } from "./routes/jobs";
 import {
   publicFrameHandler,
@@ -169,6 +179,10 @@ app.openapi(publicFrameRoute, publicFrameHandler);
 app.openapi(submitPublicVerdictsRoute, submitPublicVerdictsHandler);
 app.openapi(labellingBatchRoute, labellingBatchHandler);
 app.openapi(labellingStatsRoute, labellingStatsHandler);
+app.openapi(createSnapshotRoute, createSnapshotHandler);
+app.openapi(listSnapshotsRoute, listSnapshotsHandler);
+app.openapi(snapshotSourceRoute, snapshotSourceHandler);
+app.openapi(reportSnapshotRoute, reportSnapshotHandler);
 
 // Serves the same document the build artifact contains, from the same config.
 // A deployed Worker that describes itself is worth one route: it answers "what

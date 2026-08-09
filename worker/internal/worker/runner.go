@@ -60,7 +60,17 @@ func (r Runner) PollOnce(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
-	logger := r.Logger.With("job_id", job.Id, "job_kind", string(job.Kind), "video_id", job.VideoId)
+	// job.VideoId is nil for a `snapshot` job (migration 0008, M15.1) — it
+	// names no video — so this cannot dereference it the way every kind
+	// before `snapshot` could assume. "-" reads honestly in a log line where
+	// every other job kind shows a real id, rather than an empty string that
+	// looks like a fetch that came back blank.
+	videoID := "-"
+	if job.VideoId != nil {
+		videoID = *job.VideoId
+	}
+
+	logger := r.Logger.With("job_id", job.Id, "job_kind", string(job.Kind), "video_id", videoID)
 	logger.InfoContext(ctx, "claimed a job", "attempts", job.Attempts)
 
 	// The lease context is cancelled by a lost lease as well as by shutdown,

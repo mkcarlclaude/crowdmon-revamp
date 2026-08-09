@@ -81,10 +81,12 @@ export const VideoSubmission = z
   .openapi("VideoSubmission");
 
 /**
- * Mirrors the `kind` CHECK constraint, widened by migration 0005 (M11.1) and
- * again by 0007 (M12.2's `dryrun`).
+ * Mirrors the `kind` CHECK constraint, widened by migration 0005 (M11.1),
+ * 0007 (M12.2's `dryrun`) and 0008 (M15.1's `snapshot`).
  */
-export const JobKind = z.enum(["download", "chunk", "prelabel", "dryrun"]).openapi("JobKind");
+export const JobKind = z
+  .enum(["download", "chunk", "prelabel", "dryrun", "snapshot"])
+  .openapi("JobKind");
 
 /**
  * Identifies the caller holding a lease.
@@ -114,8 +116,17 @@ export const Job = z
   .object({
     id: z.int().positive().openapi({ example: 1 }),
     kind: JobKind,
-    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
-    video_url: z.url().openapi({ example: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }),
+    // `.nullable()`, not `.string()`: every kind before `snapshot` (M15.1) is
+    // about exactly one video and this was never null in practice, but a
+    // `snapshot` job packages the whole dataset's current qualifying rows
+    // across every video at once, and there is no single `videos.id` for it
+    // to truthfully name (migration 0008's own comment). `video_url` follows
+    // it for the same reason — there is no video to look one up for.
+    video_id: z.string().nullable().openapi({ example: "dQw4w9WgXcQ" }),
+    video_url: z
+      .url()
+      .nullable()
+      .openapi({ example: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }),
     // Incremented on claim, so the worker can see how close this job is to the
     // ceiling that will retire it as failed.
     attempts: z.int().nonnegative().openapi({ example: 1 }),
@@ -283,8 +294,14 @@ export const AdminJob = z
   .object({
     id: z.int().positive().openapi({ example: 1 }),
     kind: JobKind,
-    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
-    video_url: z.url().openapi({ example: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }),
+    // `.nullable()` for `Job.video_id`'s own reason (M15.1): a `snapshot` job
+    // is not about any one video, so this and `video_url` are the one place
+    // in this row an admin sees "no video" rather than a real one.
+    video_id: z.string().nullable().openapi({ example: "dQw4w9WgXcQ" }),
+    video_url: z
+      .url()
+      .nullable()
+      .openapi({ example: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }),
     status: JobStatus,
     attempts: z.int().nonnegative().openapi({ example: 1 }),
     claimed_by: z.string().nullable().openapi({ example: "carls-ubuntu-1" }),
@@ -423,6 +440,11 @@ const JobStatusCounts = z
     // prelabel job — so a backlog of them is exactly the thing `queue_depth`
     // exists to make visible.
     dryrun: z.int().nonnegative().openapi({ example: 0 }),
+    // M15.1's fifth kind, added here for `dryrun`'s reason: a kind with no
+    // field here is a kind Prometheus never hears about. A snapshot build
+    // competes for the same single worker as everything else, so a backlog
+    // of them belongs in `queue_depth` too.
+    snapshot: z.int().nonnegative().openapi({ example: 0 }),
   })
   .openapi("JobStatusCounts");
 
@@ -435,8 +457,9 @@ const JobStatusCounts = z
  * (worker/internal/telemetry/metrics.go) — this endpoint exists for that
  * poll and has no other caller.
  *
- * Fixed shape — sixteen named fields, four statuses times four kinds (M11.1
- * added `prelabel`, M12.2 `dryrun`, alongside `download` and `chunk`) — rather than the array
+ * Fixed shape — twenty named fields, four statuses times five kinds (M11.1
+ * added `prelabel`, M12.2 `dryrun`, M15.1 `snapshot`, alongside `download`
+ * and `chunk`) — rather than the array
  * of rows `SELECT status, kind, COUNT(*) ... GROUP BY status, kind` naturally
  * produces. That query returns only combinations with at least one row, so a
  * drained `pending` bucket is *absent* from the result set, not present at
@@ -996,6 +1019,161 @@ export const DryRunReport = z
     boxes: z.int().nonnegative().openapi({ example: 7 }),
   })
   .openapi("DryRunReport");
+
+/**
+ * One label a snapshot admits for one image (M15.1, M15.3).
+ *
+ * No `id`, no `prompt_version`, no `model_id`: unlike `ProposedBox`, this is
+ * not a proposal a screen renders and lets an operator rule on — it is the
+ * resolved outcome of a ruling that already happened, exactly the shape a
+ * training script needs and nothing about how the box was arrived at. There
+ * is also no verdict kind on it. `snapshotSourceHandler` (M15.3's default
+ * inclusion policy) only ever emits one label per prediction, resolved to
+ * whichever coordinates that prediction's latest admin verdict settled on —
+ * the prediction's own box for `accept`, the verdict's adjusted box for
+ * `adjust` — so there is nothing left for a reader of this shape to resolve.
+ */
+const SnapshotLabel = z
+  .object({
+    class_name: z.string().openapi({ example: "Paimon" }),
+    x_min: z.number().min(0).max(1).openapi({ example: 0.12 }),
+    y_min: z.number().min(0).max(1).openapi({ example: 0.2 }),
+    x_max: z.number().min(0).max(1).openapi({ example: 0.5 }),
+    y_max: z.number().min(0).max(1).openapi({ example: 0.6 }),
+  })
+  .openapi("SnapshotLabel");
+
+/**
+ * One image the current inclusion policy admits, and the labels it carries
+ * (M15.1).
+ *
+ * `selection_reason` travels here rather than being resolved into `split` by
+ * this response: the worker is what decides how a reason maps onto a split
+ * (M15.2's own rule — "holds `selection_reason = 'random'` images out of
+ * train" — is a property of the *builder*, not of the contract), and handing
+ * back the raw column keeps that decision in one place instead of splitting
+ * it across the API and the worker that reads it. `labels` is never empty:
+ * `snapshotSourceHandler` only emits an image once it carries at least one
+ * (see that handler's own comment).
+ */
+const SnapshotSourceImage = z
+  .object({
+    r2_key: z.string().min(1).openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    timestamp_seconds: z.number().nonnegative().openapi({ example: 42 }),
+    selection_reason: z.string().nullable().openapi({ example: "random" }),
+    labels: z.array(SnapshotLabel).min(1),
+  })
+  .openapi("SnapshotSourceImage");
+
+/**
+ * The bound on `SnapshotSource.images`.
+ *
+ * A snapshot is the whole dataset's admitted rows, not a page of it — unlike
+ * `AdminVideoList`'s picker or `LabellingBatch`'s session, there is no
+ * correct answer smaller than "everything the policy currently admits", so
+ * this is not sized against a UI session the way those are. `MAX_VIDEO_
+ * SECONDS` is v1's own hard ceiling on how many `images` rows any single
+ * video can ever have produced (extraction runs at 1fps); multiplied by a
+ * generous headroom for how many videos this deployment can plausibly hold
+ * before a bound like this is the least of its problems, it exists only to
+ * turn a runaway query into a 200 with a body too large to be useful rather
+ * than an unbounded one with no ceiling stated anywhere in the contract.
+ */
+export const MAX_SNAPSHOT_IMAGES = MAX_VIDEO_SECONDS * 50;
+
+/**
+ * Named `SnapshotSource`, not after the `snapshotSource` operation.
+ *
+ * The whole answer to "what goes in this snapshot" for the current inclusion
+ * policy (M15.3's default: `source = 'admin'` verdicts only, latest one per
+ * prediction, `accept` or `adjust`). One call rather than a page per video —
+ * the same argument `ReportPredictionsRequest` makes for a whole job's boxes
+ * in one report — because the worker has to see the entire admitted set
+ * before it can compute counts and write one manifest describing all of it.
+ */
+export const SnapshotSource = z
+  .object({
+    images: z.array(SnapshotSourceImage).max(MAX_SNAPSHOT_IMAGES),
+  })
+  .openapi("SnapshotSource");
+
+/**
+ * The inclusion policy every snapshot built by this deployment currently
+ * uses (M15.3). Free text on the `snapshots` row rather than a versioned
+ * policy table (migration 0003's own comment on `snapshots.inclusion_policy`
+ * explains why: a snapshot's dataset must be reconstructible from its own
+ * row, not from a foreign key into a table that might later change meaning
+ * underneath it) — this constant is simply today's one policy, stated once
+ * so `snapshotSourceHandler` and `createSnapshotHandler` cannot describe two
+ * different policies by accident.
+ */
+export const DEFAULT_INCLUSION_POLICY =
+  "source=admin; verdict=latest per prediction, accept or adjust; " +
+  "split: selection_reason='random' -> eval, else train";
+
+/**
+ * What a snapshot worker reports after writing the artifact to R2 (M15.1).
+ *
+ * `worker_id` is here for the reason it is on every other write on a held
+ * job: this is a write on a lease, and a request that only knew a job id
+ * could write a `snapshots` row against somebody else's job. `r2_key` is the
+ * prefix the worker actually wrote under — stamped by the worker, not
+ * derived by the API, because the worker is what knows whether the upload
+ * genuinely finished (migration 0003's `snapshots.r2_key` comment: not
+ * `UNIQUE`, expected to embed an identifier the worker already has, here the
+ * job id rather than the eventual `snapshots.id` this insert has not
+ * produced yet).
+ */
+export const ReportSnapshotRequest = z
+  .object({
+    worker_id: workerId,
+    r2_key: z.string().min(1).openapi({ example: "snapshots/job-142" }),
+    image_count: z.int().nonnegative().openapi({ example: 254 }),
+    label_count: z.int().nonnegative().openapi({ example: 401 }),
+  })
+  .openapi("ReportSnapshotRequest");
+
+/** Named `SnapshotReport`, not after the `reportSnapshot` operation. */
+export const SnapshotReport = z
+  .object({
+    snapshot_id: z.int().positive().openapi({ example: 1 }),
+  })
+  .openapi("SnapshotReport");
+
+/**
+ * A dataset snapshot as the operator sees it (M15.1's "listable with counts
+ * and dates"): the whole `snapshots` row (migration 0003), unmodified — there
+ * is nothing this row needs trimmed the way `Job` trims `AdminJob`'s lease
+ * columns, because a snapshot has no lease of its own once it exists.
+ */
+export const Snapshot = z
+  .object({
+    id: z.int().positive().openapi({ example: 1 }),
+    r2_key: z.string().openapi({ example: "snapshots/job-142" }),
+    image_count: z.int().nonnegative().openapi({ example: 254 }),
+    label_count: z.int().nonnegative().openapi({ example: 401 }),
+    inclusion_policy: z.string().openapi({ example: DEFAULT_INCLUSION_POLICY }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+  })
+  .openapi("Snapshot");
+
+/** Named `SnapshotList`, not after the `listSnapshots` operation. */
+export const SnapshotList = z.object({ snapshots: z.array(Snapshot) }).openapi("SnapshotList");
+
+/**
+ * What triggering a snapshot build returns (M15.1): the job, queued and not
+ * yet run. Not `Snapshot` — there is no `snapshots` row yet, precisely
+ * because building one is a job rather than something this request does
+ * inline (ROADMAP.md M15.1: "building one must not depend on a browser tab
+ * staying open").
+ */
+export const SnapshotJob = z
+  .object({
+    job_id: z.int().positive().openapi({ example: 142 }),
+    status: JobStatus,
+  })
+  .openapi("SnapshotJob");
 
 /**
  * One video as the dry-run form needs to see it: what to call it, and whether

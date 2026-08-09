@@ -107,7 +107,7 @@ func promptSource(prompts ...worker.ClassPrompt) *fakePromptSource {
 }
 
 func prelabelJob() *api.Job {
-	return &api.Job{Id: 7, Kind: api.Prelabel, VideoId: "dQw4w9WgXcQ"}
+	return &api.Job{Id: 7, Kind: api.JobKindPrelabel, VideoId: strPtr("dQw4w9WgXcQ")}
 }
 
 var testPrompts = []worker.ClassPrompt{
@@ -553,7 +553,7 @@ func TestUnknownJobKindIsStillTerminal(t *testing.T) {
 	// case is exactly when it could have been broken.
 	p := worker.Pipeline{}
 
-	err := p.Work(context.Background(), &api.Job{Id: 1, Kind: "something-else", VideoId: "v"})
+	err := p.Work(context.Background(), &api.Job{Id: 1, Kind: "something-else", VideoId: strPtr("v")})
 	if err == nil {
 		t.Fatal("Work succeeded, want a failure")
 	}

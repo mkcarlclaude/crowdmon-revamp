@@ -9,17 +9,25 @@ const STATUS_COLOR: Record<AdminJobRow["status"], string> = {
   failed: "var(--color-failed)",
 };
 
+/** A job with a real video, as every kind but `snapshot` (M15.1) carries. */
+type VideoJobRow = AdminJobRow & { video_id: string };
+
 /**
  * Grouped by video, not by arrival order.
  *
  * A chunk job can carry a lower id than the download job it belongs to once a
  * reap has re-run fan-out (M7.3), so ordering is not a grouping key. Videos are
  * ordered by their newest job so a fresh submission appears at the top.
+ *
+ * `jobs` is pre-filtered to rows that carry one: a `snapshot` job's own
+ * `video_id` is null (it packages the whole dataset, not one video), and has
+ * nowhere in this per-video view to be grouped under — `SnapshotPanel` is
+ * where that kind's status renders instead.
  */
-function groupByVideo(jobs: AdminJobRow[]) {
+function groupByVideo(jobs: VideoJobRow[]) {
   const groups = new Map<
     string,
-    { download?: AdminJobRow; chunks: AdminJobRow[]; newest: number }
+    { download?: VideoJobRow; chunks: VideoJobRow[]; newest: number }
   >();
 
   for (const job of jobs) {
@@ -43,11 +51,18 @@ export function JobList() {
         {error.message}
       </p>
     );
-  if (data.jobs.length === 0) return <p className="text-[var(--color-text-muted)]">No jobs yet.</p>;
+  // Excludes `snapshot` jobs (M15.1): they carry no video to group under,
+  // and `SnapshotPanel` renders their status instead — see groupByVideo's
+  // own comment.
+  const videoJobs = data.jobs.filter((job): job is VideoJobRow => job.video_id !== null);
+
+  if (videoJobs.length === 0) {
+    return <p className="text-[var(--color-text-muted)]">No jobs yet.</p>;
+  }
 
   return (
     <div className="flex flex-col gap-4">
-      {groupByVideo(data.jobs).map(([videoId, group]) => (
+      {groupByVideo(videoJobs).map(([videoId, group]) => (
         <section
           key={videoId}
           aria-label={videoId}

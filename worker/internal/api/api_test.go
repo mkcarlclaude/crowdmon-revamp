@@ -29,14 +29,14 @@ func TestJobDecodesADownloadClaim(t *testing.T) {
 	if job.Id != 7 {
 		t.Errorf("Id = %d, want 7", job.Id)
 	}
-	if job.Kind != api.Download {
-		t.Errorf("Kind = %q, want %q", job.Kind, api.Download)
+	if job.Kind != api.JobKindDownload {
+		t.Errorf("Kind = %q, want %q", job.Kind, api.JobKindDownload)
 	}
-	if job.VideoId != "dQw4w9WgXcQ" {
-		t.Errorf("VideoId = %q, want dQw4w9WgXcQ", job.VideoId)
+	if job.VideoId == nil || *job.VideoId != "dQw4w9WgXcQ" {
+		t.Errorf("VideoId = %v, want dQw4w9WgXcQ", job.VideoId)
 	}
-	if job.VideoUrl != "https://www.youtube.com/watch?v=dQw4w9WgXcQ" {
-		t.Errorf("VideoUrl = %q", job.VideoUrl)
+	if job.VideoUrl == nil || *job.VideoUrl != "https://www.youtube.com/watch?v=dQw4w9WgXcQ" {
+		t.Errorf("VideoUrl = %v", job.VideoUrl)
 	}
 	if job.Attempts != 1 {
 		t.Errorf("Attempts = %d, want 1", job.Attempts)
@@ -63,8 +63,8 @@ func TestJobDecodesAChunkClaim(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if job.Kind != api.Chunk {
-		t.Errorf("Kind = %q, want %q", job.Kind, api.Chunk)
+	if job.Kind != api.JobKindChunk {
+		t.Errorf("Kind = %q, want %q", job.Kind, api.JobKindChunk)
 	}
 	if job.Chunk == nil {
 		t.Fatal("Chunk is nil on a chunk job")
@@ -74,6 +74,35 @@ func TestJobDecodesAChunkClaim(t *testing.T) {
 	}
 	if job.Chunk.StartSeconds != 120 || job.Chunk.EndSeconds != 180 {
 		t.Errorf("segment = [%d,%d), want [120,180)", job.Chunk.StartSeconds, job.Chunk.EndSeconds)
+	}
+}
+
+func TestJobDecodesASnapshotClaimWithNoVideo(t *testing.T) {
+	// M15.1: a snapshot job is not about any one video (migration 0008), so
+	// its claim carries `video_id: null` and `video_url: null` rather than
+	// the strings every other kind sends — the one case this package's
+	// generated `*string` fields exist to represent honestly.
+	const payload = `{
+		"id": 142,
+		"kind": "snapshot",
+		"video_id": null,
+		"video_url": null,
+		"attempts": 1
+	}`
+
+	var job api.Job
+	if err := json.Unmarshal([]byte(payload), &job); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if job.Kind != api.JobKindSnapshot {
+		t.Errorf("Kind = %q, want %q", job.Kind, api.JobKindSnapshot)
+	}
+	if job.VideoId != nil {
+		t.Errorf("VideoId = %v, want nil", job.VideoId)
+	}
+	if job.VideoUrl != nil {
+		t.Errorf("VideoUrl = %v, want nil", job.VideoUrl)
 	}
 }
 
