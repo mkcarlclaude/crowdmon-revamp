@@ -7,12 +7,13 @@ healthy, observable infrastructure.
 zero-shot model, have humans verify the long tail, distil a real-time detector that runs
 in the browser — is the workload that generates signal worth observing.
 
-> **Status: v1 is closed.** All nine milestones are complete, and all eight success
-> criteria in [`PRD.md`](PRD.md) §5 were verified on 2026-08-08 against one real run —
-> the table is [below](#acceptance-run-2026-08-08). A YouTube URL submitted from the
-> dashboard is claimed by the Go worker on the home box, downloaded, fanned out into
-> 97 chunk jobs, extracted at 1fps, deduplicated by perceptual hash and uploaded to R2,
-> with one Tempo trace spanning the whole thing and Grafana showing the queue drain.
+> **Status: v1 and v2 are closed.** v1's eight success criteria were verified on
+> 2026-08-08 — the table is [below](#acceptance-run-2026-08-08). v2's one-sentence
+> done-claim (`PRD.md` §9) was verified on 2026-08-10 against one real video, end to
+> end: a submitted video is pre-labelled with no human trigger, a stranger can verify a
+> frame with no account, an admin's verdicts alone decide what a dataset snapshot
+> admits, and the snapshot ships with a split manifest — the table is
+> [below](#v2-acceptance-run-2026-08-10).
 >
 > Two things are deliberately left open rather than glossed over. The deadman check
 > (M9.3) was **cancelled, not deferred** — a dead collector costs visibility, not data,
@@ -124,6 +125,30 @@ Two numbers worth reading together. 98 `job.chunk` spans against 97 segments is 
 reaped job running twice, which is what a correct retry looks like from the outside. And
 the failure-rate panel is empty rather than zero-valued, because nothing failed and
 nothing was retired — the one panel whose emptiness is the good outcome.
+
+### v2 acceptance run, 2026-08-10
+
+v2 has no separate criteria list — `PRD.md` §9's one sentence is the whole completion
+test, and its own falsification table names the observation that kills each clause. All
+six checked against one real video already in the system (`F1snt1pXqQc`) and one fresh
+dataset snapshot built after M15 deployed.
+
+| Clause | Falsified by | What was observed instead |
+|---|---|---|
+| *with no human trigger* | A video whose frames are extracted but not pre-labelled until something is run by hand | Job 146 (`kind=prelabel`) was enqueued by `completeJobHandler`'s own last-chunk check, timestamped seconds after the video's last `chunk` job finished — no admin action between them |
+| *pre-labelled frames* | A sample producing no predictions, or predictions from an unrecorded prompt | `predictions` rows for the video carry `prompt_version=2026-08-08-a` and `model_id=owlvit-base-patch32@cbc355f`, stamped by job 146's own report |
+| *public to anyone* | The public page loading with no image, no verify action, or demanding a login | `curl https://crowdmon.mkcarl.com/api/public/frame` with no credential returns a real frame, a signed R2 URL and its proposed boxes |
+| *authoritative for an admin* | An anonymous verdict appearing inside a snapshot | The video carries 12 `anon`/`reject` verdicts and 64 `admin`/`reject` verdicts alongside 19 `admin`/`accept` and 2 `admin`/`adjust` — the built snapshot's `label_count` is exactly 21 (19 + 2), so neither the anon verdicts nor a single admin reject leaked in |
+| *dataset snapshot* | A snapshot that cannot be listed, or one whose inclusion policy is not recorded | `snapshots` row `id=1`: `r2_key=snapshots/job-329`, `image_count=17`, `label_count=21`, `inclusion_policy` stating the admin-only, latest-verdict, accept-or-adjust rule verbatim |
+| *with a split manifest* | A manifest missing, or a frozen-evaluation-pool image in the train split | `snapshots/job-329/manifest.json` in R2, 17 images each carrying their labels and a `split`; every entry reads `eval`, because every image an admin has verified so far was drawn by the sampler with `selection_reason=random` — v2 has no other selector yet, so there is nothing to mistake for a train set |
+
+One rollout wrinkle worth recording rather than hiding: the first attempt at this run
+(job 328) was queued through the admin UI before the box had pulled the image M15
+shipped, and the worker still running the previous binary retired it immediately with
+`"this worker does not know how to run a \"snapshot\" job"` — a new job kind is only
+safe to queue once every worker polling the queue understands it, and a job queued too
+early fails loud and terminal rather than waiting. Once `crowdmon-update.service` pulled
+the new image, the retry (job 329) ran clean.
 
 ## Observability
 
