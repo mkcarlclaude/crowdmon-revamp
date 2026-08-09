@@ -49,6 +49,12 @@ export function LabellingStats() {
               <th className="py-1">Accepted</th>
               <th className="py-1">Adjusted</th>
               <th className="py-1">Rejected</th>
+              {/* Admin and anon rulings never pool into one number (CONTEXT.md
+                  §Q10) — an anonymous troll rejecting everything would
+                  otherwise read as a model that got worse. */}
+              <th className="py-1">Anon accepted</th>
+              <th className="py-1">Anon adjusted</th>
+              <th className="py-1">Anon rejected</th>
               <th className="py-1">Missed</th>
             </tr>
           </thead>
@@ -65,6 +71,9 @@ export function LabellingStats() {
                 <td className="py-1 font-mono">{klass.accepted}</td>
                 <td className="py-1 font-mono">{klass.adjusted}</td>
                 <td className="py-1 font-mono">{klass.rejected}</td>
+                <td className="py-1 font-mono">{klass.anon_accepted}</td>
+                <td className="py-1 font-mono">{klass.anon_adjusted}</td>
+                <td className="py-1 font-mono">{klass.anon_rejected}</td>
                 {/* Over verified frames, not over this class's own boxes: a
                     prompt that proposes nothing has no boxes to divide by, and
                     that is precisely the prompt whose miss rate matters most. */}

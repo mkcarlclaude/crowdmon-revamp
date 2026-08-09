@@ -357,6 +357,19 @@ describe("the two mounts", () => {
     expect(screen.queryByRole("button", { name: /report missing/i })).not.toBeInTheDocument();
   });
 
+  it("hides Adjust when the mount refuses it, leaving Accept and Reject", () => {
+    // M14's public verdict endpoint refuses an `adjust` verdict at the schema
+    // layer — there is no coordinate field for one to carry. The button comes
+    // off screen for the same reason `onReportMissing`'s absence removes that
+    // control: offering an action the server will 400 is a worse UI than not
+    // offering it.
+    render(<VerificationCard frame={frame()} onSubmit={vi.fn()} allowAdjust={false} />);
+
+    expect(screen.getByRole("button", { name: "Accept Paimon 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject Paimon 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adjust Paimon 1" })).not.toBeInTheDocument();
+  });
+
   it("reports a missing object with no class named", async () => {
     const onReportMissing = vi.fn();
     render(

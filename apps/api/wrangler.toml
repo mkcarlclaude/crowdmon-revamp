@@ -137,6 +137,19 @@ migrations_dir = "migrations"
 binding = "FRAMES"
 bucket_name = "crowdmon-frames"
 
+# M14.3: bounds the public verification surface — "not at scale" enforced by a
+# mechanism rather than asserted in CONTEXT.md §Q11. `namespace_id` is a
+# developer-chosen identifier scoping this binding's counters; it is not
+# provisioned anywhere and mints nothing, unlike every other credential this
+# file documents. 20 requests per 60 seconds per (ip, route): generous enough
+# that one visitor working through the interface never notices it, tight
+# enough that a script issuing signed URLs or writing verdicts in a loop hits
+# it quickly. `period` is Cloudflare's own binding and only ever 10 or 60.
+[[ratelimits]]
+name = "PUBLIC_RATE_LIMITER"
+namespace_id = "1"
+simple = { limit = 20, period = 60 }
+
 # The SPA (M5.1). Served by this Worker rather than by Pages: one origin means
 # the Access cookie, the Access application and the API cannot disagree, and it
 # keeps M5.4's documented expiry symptom (a 302 followed to an HTML 200) intact

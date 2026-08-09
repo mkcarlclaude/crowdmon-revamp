@@ -89,6 +89,16 @@ export interface VerificationCardProps {
   onImageError?: () => void;
   /** Set while a ruling is in flight, so a double click cannot write two verdicts. */
   busy?: boolean;
+  /**
+   * Whether the Adjust action — and the drag-to-draw surface behind it — is
+   * offered at all. Defaults to `true` for the admin mount; M14's public
+   * mount passes `false`, because a stranger correcting box coordinates is
+   * the one action the public verdict endpoint refuses at the schema layer
+   * (`PublicStagedVerdict` carries no adjusted-coordinate fields). Hiding the
+   * button here keeps the screen honest about what a click will do rather
+   * than offering a control that would come back as a 400.
+   */
+  allowAdjust?: boolean;
 }
 
 /** Where a drag started and where it is now, in normalized [0, 1] coordinates. */
@@ -124,6 +134,7 @@ export function VerificationCard({
   classes,
   onImageError,
   busy = false,
+  allowAdjust = true,
 }: VerificationCardProps) {
   const missingId = useId();
   const surface = useRef<HTMLDivElement>(null);
@@ -392,37 +403,39 @@ export function VerificationCard({
                   actions: clicking one replaces whatever was staged for this
                   box, and `aria-pressed` is what says so to anybody who cannot
                   see the highlight. */}
-              {(["accept", "adjust", "reject"] as const).map((kind) => (
-                <button
-                  key={kind}
-                  type="button"
-                  disabled={busy}
-                  aria-pressed={staged.get(box.id)?.verdict === kind}
-                  onClick={() => {
-                    if (kind === "adjust") {
-                      setDrag(null);
-                      setAdjusting(box.id);
-                      return;
-                    }
-                    // Clicking the staged ruling again takes it back. Nothing
-                    // has been written yet, so undo costs a click rather than
-                    // a second contradictory row.
-                    if (staged.get(box.id)?.verdict === kind) {
-                      unstage(box.id);
-                      return;
-                    }
-                    stage({ prediction_id: box.id, verdict: kind });
-                  }}
-                  className={`rounded border px-3 py-1 disabled:opacity-50 ${
-                    staged.get(box.id)?.verdict === kind
-                      ? "border-[var(--color-done)] bg-[var(--color-surface)] font-medium"
-                      : "border-[var(--color-border)]"
-                  }`}
-                >
-                  {kind === "accept" ? "Accept" : kind === "adjust" ? "Adjust" : "Reject"}{" "}
-                  {box.class_name} {ordinal(index)}
-                </button>
-              ))}
+              {(["accept", "adjust", "reject"] as const)
+                .filter((kind) => kind !== "adjust" || allowAdjust)
+                .map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    disabled={busy}
+                    aria-pressed={staged.get(box.id)?.verdict === kind}
+                    onClick={() => {
+                      if (kind === "adjust") {
+                        setDrag(null);
+                        setAdjusting(box.id);
+                        return;
+                      }
+                      // Clicking the staged ruling again takes it back. Nothing
+                      // has been written yet, so undo costs a click rather than
+                      // a second contradictory row.
+                      if (staged.get(box.id)?.verdict === kind) {
+                        unstage(box.id);
+                        return;
+                      }
+                      stage({ prediction_id: box.id, verdict: kind });
+                    }}
+                    className={`rounded border px-3 py-1 disabled:opacity-50 ${
+                      staged.get(box.id)?.verdict === kind
+                        ? "border-[var(--color-done)] bg-[var(--color-surface)] font-medium"
+                        : "border-[var(--color-border)]"
+                    }`}
+                  >
+                    {kind === "accept" ? "Accept" : kind === "adjust" ? "Adjust" : "Reject"}{" "}
+                    {box.class_name} {ordinal(index)}
+                  </button>
+                ))}
             </span>
           </li>
         ))}

@@ -2,6 +2,7 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "./bindings";
 import { requireAccess } from "./middleware/access";
+import { publicRateLimit } from "./middleware/rate-limit";
 import { nameSpanAfterRoute } from "./middleware/trace-route";
 import { openApiConfig } from "./openapi";
 import {
@@ -18,7 +19,12 @@ import {
   listDryRunsHandler,
   listDryRunsRoute,
 } from "./routes/admin-dryruns";
-import { getImageHandler, getImageRoute } from "./routes/admin-images";
+import {
+  getImageHandler,
+  getImageRoute,
+  updatePublicSampleHandler,
+  updatePublicSampleRoute,
+} from "./routes/admin-images";
 import { listJobsHandler, listJobsRoute } from "./routes/admin-jobs";
 import {
   labellingBatchHandler,
@@ -55,6 +61,12 @@ import {
   reportPredictionsHandler,
   reportPredictionsRoute,
 } from "./routes/jobs";
+import {
+  publicFrameHandler,
+  publicFrameRoute,
+  submitPublicVerdictsHandler,
+  submitPublicVerdictsRoute,
+} from "./routes/public";
 import {
   listVideosHandler,
   listVideosRoute,
@@ -117,6 +129,13 @@ app.use("*", nameSpanAfterRoute);
 // middleware to it.
 app.use("/api/admin/*", requireAccess);
 
+// M14.3: the public verification surface's rate limit. One mount per route
+// rather than a prefix, and each with its own literal bucket — see
+// `publicRateLimit`'s own comment for why a shared `/api/public/*` mount
+// would collapse both routes onto one counter.
+app.use("/api/public/frame", publicRateLimit("frame"));
+app.use("/api/public/images/:id/verdicts", publicRateLimit("verdict"));
+
 // /health goes through the OpenAPI router like everything else. A spec that
 // omits the one endpoint external checks actually call would describe less
 // than the whole surface, and the deploy workflow would be curling an
@@ -145,6 +164,9 @@ app.openapi(getImageRoute, getImageHandler);
 app.openapi(reportDryRunRoute, reportDryRunHandler);
 app.openapi(submitVerdictsRoute, submitVerdictsHandler);
 app.openapi(createMissingReportRoute, createMissingReportHandler);
+app.openapi(updatePublicSampleRoute, updatePublicSampleHandler);
+app.openapi(publicFrameRoute, publicFrameHandler);
+app.openapi(submitPublicVerdictsRoute, submitPublicVerdictsHandler);
 app.openapi(labellingBatchRoute, labellingBatchHandler);
 app.openapi(labellingStatsRoute, labellingStatsHandler);
 

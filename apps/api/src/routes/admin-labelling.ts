@@ -188,7 +188,9 @@ interface ClassStatsRow {
   accepted: number;
   adjusted: number;
   rejected: number;
-  anon_verdicts: number;
+  anon_accepted: number;
+  anon_adjusted: number;
+  anon_rejected: number;
 }
 
 export const labellingStatsRoute = createRoute({
@@ -253,7 +255,12 @@ export const labellingStatsHandler: RouteHandler<typeof labellingStatsRoute, App
                                   THEN p.id END) AS adjusted,
               COUNT(DISTINCT CASE WHEN v.source = 'admin' AND v.verdict = 'reject'
                                   THEN p.id END) AS rejected,
-              COUNT(DISTINCT CASE WHEN v.source = 'anon' THEN p.id END) AS anon_verdicts
+              COUNT(DISTINCT CASE WHEN v.source = 'anon' AND v.verdict = 'accept'
+                                  THEN p.id END) AS anon_accepted,
+              COUNT(DISTINCT CASE WHEN v.source = 'anon' AND v.verdict = 'adjust'
+                                  THEN p.id END) AS anon_adjusted,
+              COUNT(DISTINCT CASE WHEN v.source = 'anon' AND v.verdict = 'reject'
+                                  THEN p.id END) AS anon_rejected
          FROM classes c
          LEFT JOIN predictions p ON p.class_id = c.id
          LEFT JOIN verdicts v    ON v.prediction_id = p.id
@@ -308,7 +315,9 @@ export const labellingStatsHandler: RouteHandler<typeof labellingStatsRoute, App
       accepted: row.accepted,
       adjusted: row.adjusted,
       rejected: row.rejected,
-      anon_verdicts: row.anon_verdicts,
+      anon_accepted: row.anon_accepted,
+      anon_adjusted: row.anon_adjusted,
+      anon_rejected: row.anon_rejected,
       missing_reports: missingByClass.get(row.class_id) ?? 0,
     })),
   };

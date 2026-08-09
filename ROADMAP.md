@@ -1011,34 +1011,72 @@ row in D1.
 `source = 'anon'`.
 
 ### M14.1 — Curating the public pool
-- [ ] Flag an image into `public_sample` from `/admin`
-- [ ] **Kept separate from the frozen evaluation pool.** The two have opposite selection
+- [x] Flag an image into `public_sample` from `/admin`
+
+      `PATCH /api/admin/images/{id}/public-sample` — the only writer of the column, never
+      touching `selection_reason`.
+- [x] **Kept separate from the frozen evaluation pool.** The two have opposite selection
       criteria: the eval pool must be *random*, so it is full of menus and black frames;
       the public pool must be *legible*, or a visitor's first impression is a black
       rectangle. An image qualifying for both is excluded from `public_sample`
 
+      No DB constraint ties the two flags — v2 writes `selection_reason = 'random'` on
+      every selected image (§Q16: the weighting lands in v4), so a hard exclusion would
+      make the feature unusable today. The separation is structural instead:
+      `public_sample` has exactly one writer, an admin's deliberate PATCH, and nothing
+      about extraction or pre-labelling ever sets it — so "which frames are legible
+      enough to show a stranger" stays a curatorial judgement an admin makes one image at
+      a time, not a query over the pool.
+
 ### M14.2 — The public route
-- [ ] Outside the `/api/admin` prefix, authenticating nobody
-- [ ] **One short-lived signed URL per request, no enumeration.** The batched form stays
+- [x] Outside the `/api/admin` prefix, authenticating nobody
+- [x] **One short-lived signed URL per request, no enumeration.** The batched form stays
       on the authenticated path where throughput matters
-- [ ] Adjust and missing-object reporting hidden on this mount
+
+      Signed only — never `frameUrls`' proxy fallback, which is the Access-gated
+      `/api/admin/image` route a visitor with no Access session cannot reach. A
+      deployment with no R2 credential configured answers `503` on `/api/public/frame`
+      rather than handing out a URL that would 401 in the browser.
+- [x] Adjust and missing-object reporting hidden on this mount
+
+      Enforced twice: `VerificationCard`'s `allowAdjust={false}` keeps the button off
+      screen, and `PublicStagedVerdict` has no adjusted-coordinate fields at all, so the
+      kind is refused at the schema layer even for a caller that bypasses the UI.
 
 ### M14.3 — Bounding it
-- [ ] Rate limiting on the public endpoints — "not at scale" enforced by a mechanism
+- [x] Rate limiting on the public endpoints — "not at scale" enforced by a mechanism
       rather than asserted in a document
-- [ ] `noindex` on the public pages
-- [ ] Copy that says the visitor is trying the interface, not labelling the live dataset.
+
+      A `[[ratelimits]]` binding (wrangler.toml), 20 requests per 60 seconds per
+      `(bucket, ip)` — one bucket per route rather than per prefix, so the frame read and
+      the verdict write each get their own budget.
+- [x] `noindex` on the public pages
+
+      One `<meta name="robots" content="noindex">` in `index.html`, which covers every
+      route the single-origin SPA serves.
+- [x] Copy that says the visitor is trying the interface, not labelling the live dataset.
       The page must not be lying to them about what their click did
 
 ### M14.4 — Anonymous verdicts recorded, never promoted
-- [ ] `source = 'anon'` plus an opaque session id, so excluding one bad actor does not
+- [x] `source = 'anon'` plus an opaque session id, so excluding one bad actor does not
       mean discarding every anonymous contribution
-- [ ] Shown back to the visitor immediately, so the page is not theatre
+
+      Client-generated (`crypto.randomUUID()`, persisted in `localStorage`) and written
+      verbatim as `annotator_id` — it carries no trust, only a way to tell one visitor's
+      contributions apart from another's later.
+- [x] Shown back to the visitor immediately, so the page is not theatre
 - [ ] Excluded at snapshot time by the recorded inclusion policy. **Admitting them as
       labels is the single decision that would force consensus resolution, agreement
       scoring and trust weighting** — the three subsystems §Q10 refuses
-- [ ] Accept/adjust/reject rates computed **per source**. Pooled, a troll rejecting
+
+      Nothing to exclude *from* yet — M15's snapshot does not exist. What M14 owes this
+      bullet is already true (`source = 'anon'` is unambiguous on every row it writes);
+      the exclusion itself is M15's to build and check off.
+- [x] Accept/adjust/reject rates computed **per source**. Pooled, a troll rejecting
       everything is indistinguishable from a model that got worse
+
+      `LabellingStats` now reports `anon_accepted` / `anon_adjusted` / `anon_rejected`
+      beside the admin triple, not a single lumped `anon_verdicts` count.
 
 ---
 

@@ -1,6 +1,12 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import type { AppEnv } from "../bindings";
-import { errorResponse, ImageQuery } from "../schemas";
+import {
+  AdminImage,
+  errorResponse,
+  ImageIdParam,
+  ImageQuery,
+  UpdatePublicSampleRequest,
+} from "../schemas";
 
 /**
  * Frame bytes for an admin screen (M12.2).
@@ -76,4 +82,68 @@ export const getImageHandler: RouteHandler<typeof getImageRoute, AppEnv> = async
     // second time for nothing.
     "cache-control": "private, max-age=3600",
   });
+};
+
+/**
+ * Curating the public pool (M14.1, migration 0004, CONTEXT.md §12).
+ *
+ * The only writer of `images.public_sample`. Never `selection_reason` —
+ * that column is written once, at selection time, by a different actor
+ * entirely (M11), and this route has no business touching it.
+ *
+ * No check that the image carries any predictions or has been verified.
+ * That invariant belongs to whoever *reads* the public pool
+ * (`publicFrameHandler` requires at least one prediction before a frame is
+ * eligible to be handed to a visitor), not to the flag itself — an admin
+ * flagging a frame before its predictions land is an ordinary sequencing
+ * choice, not a state this route needs to refuse.
+ */
+export const updatePublicSampleRoute = createRoute({
+  method: "patch",
+  path: "/api/admin/images/{id}/public-sample",
+  operationId: "updatePublicSample",
+  tags: ["admin"],
+  summary: "Flag or unflag an image for the public verification page",
+  description:
+    "Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the " +
+    "public page draw from instead of the bucket. Kept separate from the frozen " +
+    "evaluation pool by construction — this route only ever writes the flag an admin " +
+    "chose, never anything selection-time logic wrote. Requires a Cloudflare Access " +
+    "assertion.",
+  request: {
+    params: ImageIdParam,
+    body: {
+      content: { "application/json": { schema: UpdatePublicSampleRequest } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      description: "The image's id and its public_sample flag as it now stands",
+      content: { "application/json": { schema: AdminImage } },
+    },
+    400: errorResponse("A malformed body"),
+    401: errorResponse("Missing or invalid Access assertion"),
+    403: errorResponse("A verified identity that is not an administrator"),
+    404: errorResponse("No image with this id"),
+    503: errorResponse("Admin access is not configured on this deployment"),
+  },
+});
+
+export const updatePublicSampleHandler: RouteHandler<
+  typeof updatePublicSampleRoute,
+  AppEnv
+> = async (c) => {
+  const { id } = c.req.valid("param");
+  const { public_sample } = c.req.valid("json");
+
+  const updated = await c.env.DB.prepare(
+    "UPDATE images SET public_sample = ? WHERE id = ? RETURNING id, public_sample",
+  )
+    .bind(public_sample ? 1 : 0, id)
+    .first<{ id: number; public_sample: number }>();
+
+  if (!updated) return c.json({ error: `no image with id ${id}` }, 404);
+
+  return c.json({ id: updated.id, public_sample: updated.public_sample === 1 }, 200);
 };

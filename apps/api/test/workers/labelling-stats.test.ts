@@ -5,16 +5,16 @@ import { adminHeaders, configureAccess, installAdminIdentity } from "./admin-ide
 import { seedClass, seedImage, seedPool, seedPrediction, seedVerdict } from "./labelling-seed";
 
 /**
- * The business numbers behind /admin (M13.3, M13.4).
+ * The business numbers behind /admin (M13.3, M13.4, M14.4).
  *
- * Two claims are under test. **Verdict counts are per source**, because an
- * anonymous troll rejecting everything is otherwise indistinguishable from a
- * model that got worse (CONTEXT.md §Q10) — M13 writes no `anon` rows itself,
- * so the column is asserted here against a hand-seeded one rather than left
- * for M14 to discover unwired. And **the missing-report rate has an honest
- * denominator**: the numerator is per class, the denominator is
- * `pool.images_verified`, and a report with no class is counted in the pool
- * total and attributed to nobody.
+ * Two claims are under test. **Verdict counts are per source, and split by
+ * kind on both sides of that split** — `accepted`/`adjusted`/`rejected` for
+ * `admin`, `anon_accepted`/`anon_adjusted`/`anon_rejected` for `anon` —
+ * because an anonymous troll rejecting everything is otherwise
+ * indistinguishable from a model that got worse (CONTEXT.md §Q10). And
+ * **the missing-report rate has an honest denominator**: the numerator is
+ * per class, the denominator is `pool.images_verified`, and a report with no
+ * class is counted in the pool total and attributed to nobody.
  */
 
 beforeAll(installAdminIdentity);
@@ -35,7 +35,9 @@ interface Stats {
     accepted: number;
     adjusted: number;
     rejected: number;
-    anon_verdicts: number;
+    anon_accepted: number;
+    anon_adjusted: number;
+    anon_rejected: number;
     missing_reports: number;
   }>;
 }
@@ -100,7 +102,8 @@ describe("per-class counts", () => {
   it("splits verdicts by kind and by source", async () => {
     const { imageId, classId, predictionId } = await seedPool();
     const adjusted = await seedPrediction(imageId, classId);
-    const anon = await seedPrediction(imageId, classId);
+    const anonAccepted = await seedPrediction(imageId, classId);
+    const anonRejected = await seedPrediction(imageId, classId);
 
     await seedVerdict(predictionId, { verdict: "accept" });
     await env.DB.prepare(
@@ -111,7 +114,16 @@ describe("per-class counts", () => {
     )
       .bind(adjusted)
       .run();
-    await seedVerdict(anon, { verdict: "reject", source: "anon", annotatorId: "session-abc" });
+    await seedVerdict(anonAccepted, {
+      verdict: "accept",
+      source: "anon",
+      annotatorId: "session-abc",
+    });
+    await seedVerdict(anonRejected, {
+      verdict: "reject",
+      source: "anon",
+      annotatorId: "session-abc",
+    });
 
     const stats = (await (await getStats()).json()) as Stats;
 
@@ -120,13 +132,15 @@ describe("per-class counts", () => {
       class_id: classId,
       name: "Paimon",
       active: true,
-      predictions: 3,
+      predictions: 4,
       accepted: 1,
       adjusted: 1,
-      // The anonymous reject is *not* in `rejected`: pooling the tiers is what
-      // makes a troll look like a worse model.
+      // Neither anonymous verdict is in `accepted`/`rejected`: pooling the
+      // tiers is what makes a troll look like a worse model.
       rejected: 0,
-      anon_verdicts: 1,
+      anon_accepted: 1,
+      anon_adjusted: 0,
+      anon_rejected: 1,
     });
   });
 
