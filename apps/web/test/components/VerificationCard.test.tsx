@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -67,6 +67,50 @@ describe("VerificationCard", () => {
       width: "40%",
       height: "40%",
     });
+  });
+
+  it("numbers every box and every row the same way", async () => {
+    // The frame that made this necessary: five boxes, all Paimon, confidences
+    // within 0.05 of each other. Without a number on the rectangle the rows
+    // are five identical lines and choosing between them is a guess.
+    const boxes = [box({ id: 1 }), box({ id: 2 }), box({ id: 3 })];
+    render(<VerificationCard frame={frame({ predictions: boxes })} onVerdict={vi.fn()} />);
+
+    for (const [index, drawn] of boxes.entries()) {
+      const label = String(index + 1);
+      expect(within(screen.getByTestId(`box-${drawn.id}`)).getByText(label)).toBeInTheDocument();
+      expect(within(screen.getByTestId(`row-${drawn.id}`)).getByText(label)).toBeInTheDocument();
+      // In the accessible name too: "Accept Paimon" three times over is three
+      // identical names for three different rectangles.
+      expect(screen.getByRole("button", { name: `Accept Paimon ${label}` })).toBeInTheDocument();
+    }
+  });
+
+  it("lights up the box belonging to the row being pointed at", async () => {
+    const boxes = [box({ id: 1 }), box({ id: 2 })];
+    render(<VerificationCard frame={frame({ predictions: boxes })} onVerdict={vi.fn()} />);
+
+    await userEvent.pointer({ target: screen.getByTestId("row-2") });
+
+    expect(screen.getByTestId("box-2")).toHaveAttribute("data-highlighted", "true");
+    expect(screen.getByTestId("box-1")).toHaveAttribute("data-highlighted", "false");
+  });
+
+  it("lights up the same box when the row is reached by keyboard", async () => {
+    // The buttons are the keyboard path through the list and their focus
+    // bubbles to the row, so tabbing highlights what hovering highlights.
+    const boxes = [box({ id: 1 }), box({ id: 2 })];
+    render(<VerificationCard frame={frame({ predictions: boxes })} onVerdict={vi.fn()} />);
+
+    // Four tabs: three buttons on the first row, then the second row's first.
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.tab();
+
+    expect(screen.getByRole("button", { name: "Accept Paimon 2" })).toHaveFocus();
+    expect(screen.getByTestId("box-2")).toHaveAttribute("data-highlighted", "true");
+    expect(screen.getByTestId("box-1")).toHaveAttribute("data-highlighted", "false");
   });
 
   it("accepts and rejects a box by id, carrying no coordinates", async () => {
