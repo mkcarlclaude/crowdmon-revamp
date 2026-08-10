@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crowdmon — turn gameplay video into labelled training data</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0b0d;
+  --s1:#101116;
+  --s2:#15171d;
+  --s3:#1b1e25;
+  --bd:rgba(255,255,255,.075);
+  --bd2:rgba(255,255,255,.14);
+  --tx:#f2f3f5;
+  --tx2:#9aa0ad;
+  --tx3:#697080;
+  --mk:#e5326f;
+  --mk-dim:rgba(229,50,111,.14);
+  --ok:#4ec98b;
+  --wr:#e0a33c;
+  --sans:"Instrument Sans",system-ui,-apple-system,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --r:12px;
+  --max:1200px;
+  --gut:clamp(18px,4vw,40px);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);
+  font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+img{max-width:100%;display:block}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 var(--gut)}
+
+h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.028em;line-height:1.08}
+h1{font-size:clamp(34px,5.4vw,60px)}
+h2{font-size:clamp(27px,3.6vw,40px);letter-spacing:-.026em}
+h3{font-size:17px;letter-spacing:-.012em;line-height:1.3}
+p{margin:0}
+
+.mono{font-family:var(--mono)}
+.muted{color:var(--tx2)}
+
+/* ---------------- nav ---------------- */
+.nav{position:sticky;top:0;z-index:50;background:rgba(10,11,13,.78);backdrop-filter:blur(14px);border-bottom:1px solid var(--bd)}
+.nav-in{max-width:var(--max);margin:0 auto;padding:0 var(--gut);height:62px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:16px;letter-spacing:-.02em}
+.brand .glyph{width:22px;height:22px;border:2px solid var(--mk);border-radius:4px;position:relative;flex:none}
+.brand .glyph::after{content:"";position:absolute;right:-3px;bottom:-3px;width:7px;height:7px;background:var(--mk);border-radius:1px}
+.nav-links{display:flex;gap:26px;font-size:14.5px}
+.nav-links a{color:var(--tx2);transition:color .15s}
+.nav-links a:hover{color:var(--tx)}
+.nav-right{display:flex;align-items:center;gap:12px}
+@media(max-width:820px){.nav-links{display:none}}
+
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  font-size:14.5px;font-weight:500;padding:9px 16px;border-radius:8px;
+  border:1px solid transparent;transition:background .15s,border-color .15s,transform .1s;white-space:nowrap;
+}
+.btn:active{transform:translateY(1px)}
+.btn-p{background:var(--mk);color:#fff}
+.btn-p:hover{background:#f04b81}
+.btn-s{border-color:var(--bd2);color:var(--tx)}
+.btn-s:hover{background:var(--s2);border-color:rgba(255,255,255,.24)}
+.btn-lg{padding:13px 24px;font-size:15.5px;border-radius:9px}
+.btn .ar{transition:transform .16s}
+.btn:hover .ar{transform:translateX(3px)}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--mk);outline-offset:3px}
+
+/* ---------------- hero ---------------- */
+.hero{position:relative;padding:clamp(56px,8vw,104px) 0 0;text-align:center;overflow:hidden}
+.hero::before{
+  content:"";position:absolute;top:-320px;left:50%;transform:translateX(-50%);
+  width:1100px;height:700px;pointer-events:none;
+  background:radial-gradient(50% 50% at 50% 50%,rgba(229,50,111,.20),transparent 70%);
+}
+.hero>*{position:relative}
+.pill{
+  display:inline-flex;align-items:center;gap:9px;padding:5px 13px 5px 6px;border-radius:999px;
+  border:1px solid var(--bd2);background:var(--s2);font-size:13px;color:var(--tx2);margin-bottom:26px;
+}
+.pill b{background:var(--mk-dim);color:#ff7ba8;font-family:var(--mono);font-size:11px;font-weight:500;padding:2px 8px;border-radius:999px}
+.hero h1{max-width:15ch;margin:0 auto 22px;background:linear-gradient(180deg,#fff,#b9bec9);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero-sub{font-size:clamp(16.5px,1.7vw,19px);color:var(--tx2);max-width:58ch;margin:0 auto 34px}
+.hero-sub b{color:var(--tx);font-weight:500}
+.hero-cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.hero-note{margin-top:18px;font-family:var(--mono);font-size:12px;color:var(--tx3)}
+
+/* ---------------- product shot ---------------- */
+.shot-wrap{position:relative;margin-top:clamp(44px,6vw,72px);padding-bottom:clamp(40px,6vw,72px)}
+.shot-wrap::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:180px;
+  background:linear-gradient(180deg,transparent,var(--bg));pointer-events:none;
+}
+.win{
+  max-width:1020px;margin:0 auto;border:1px solid var(--bd2);border-radius:14px;overflow:hidden;
+  background:var(--s1);box-shadow:0 30px 80px -20px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.03);
+}
+.win-bar{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--bd);background:var(--s2)}
+.dots{display:flex;gap:6px}
+.dots i{width:10px;height:10px;border-radius:50%;background:#2f333c;display:block}
+.url{
+  flex:1;max-width:340px;margin:0 auto;background:var(--bg);border:1px solid var(--bd);border-radius:6px;
+  font-family:var(--mono);font-size:11.5px;color:var(--tx3);padding:4px 12px;text-align:center;
+}
+.url b{color:var(--tx2);font-weight:400}
+.app{display:grid;grid-template-columns:minmax(0,1fr) 236px}
+.app-main{padding:16px;min-width:0}
+.app-side{border-left:1px solid var(--bd);padding:16px;display:flex;flex-direction:column;gap:16px}
+.side-h{font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--tx3);margin-bottom:9px}
+.cls{display:flex;align-items:center;justify-content:space-between;font-size:13px;padding:5px 0;color:var(--tx2)}
+.cls b{font-family:var(--mono);font-size:11px;font-weight:400;color:var(--tx3)}
+.cls.act{color:var(--tx)}
+.cls .sw{width:8px;height:8px;border-radius:2px;background:var(--mk);display:inline-block;margin-right:8px}
+.cls.off .sw{background:#343842}
+
+.stage{position:relative;line-height:0;border-radius:8px;overflow:hidden;background:#000}
+.stage img{width:100%}
+.stage svg{position:absolute;inset:0;width:100%;height:100%}
+.stage rect{fill:none;stroke:var(--mk);stroke-width:2;vector-effect:non-scaling-stroke}
+.chip{
+  position:absolute;font-family:var(--mono);font-size:10.5px;font-weight:500;background:var(--mk);color:#fff;
+  padding:1px 6px;border-radius:3px;white-space:nowrap;line-height:1.6;
+}
+.chip .c{opacity:.72;margin-left:5px;font-weight:400}
+.app-acts{display:flex;gap:7px;margin-top:13px;flex-wrap:wrap}
+.act{
+  display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11.5px;font-weight:500;
+  padding:7px 12px;border-radius:7px;border:1px solid var(--bd2);color:var(--tx);
+}
+.act .d{width:7px;height:7px;border-radius:2px}
+.act-y .d{background:var(--ok)} .act-a .d{background:var(--wr)} .act-n .d{background:var(--mk)}
+.act kbd{font-family:var(--mono);font-size:9.5px;background:rgba(255,255,255,.09);padding:1px 5px;border-radius:3px;color:var(--tx3)}
+@media(max-width:760px){.app{grid-template-columns:1fr}.app-side{display:none}}
+
+/* ---------------- strip ---------------- */
+.strip{border-top:1px solid var(--bd);border-bottom:1px solid var(--bd);padding:22px 0}
+.strip-in{display:flex;align-items:center;gap:14px 34px;flex-wrap:wrap;justify-content:center}
+.strip-l{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--tx3)}
+.strip-i{font-size:14.5px;color:var(--tx2);font-weight:500}
+
+/* ---------------- sections ---------------- */
+.sec{padding:clamp(64px,8vw,110px) 0}
+.sec-head{max-width:640px;margin-bottom:44px}
+.sec-head.ctr{margin-left:auto;margin-right:auto;text-align:center}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--mk);margin-bottom:15px}
+.sec-head p{color:var(--tx2);font-size:17px;margin-top:16px}
+
+/* bento */
+.bento{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+.card{
+  background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:22px;
+  transition:border-color .18s,background .18s;min-width:0;
+}
+.card:hover{border-color:var(--bd2);background:var(--s2)}
+.card h3{margin-bottom:9px}
+.card p{color:var(--tx2);font-size:14.5px;line-height:1.55}
+.c-6{grid-column:span 6}.c-4{grid-column:span 4}.c-3{grid-column:span 3}.c-2{grid-column:span 2}
+.card-vis{margin-top:18px;border:1px solid var(--bd);border-radius:9px;overflow:hidden;background:var(--bg)}
+.card-wide{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:26px;align-items:center}
+@media(max-width:900px){
+  .bento{grid-template-columns:repeat(2,1fr)}
+  .c-6,.c-4,.c-3,.c-2{grid-column:span 2}
+  .card-wide{grid-template-columns:1fr;gap:20px}
+}
+
+/* code-ish visual */
+.codeblock{font-family:var(--mono);font-size:11.5px;line-height:1.85;padding:14px;color:var(--tx2);overflow-x:auto}
+.codeblock .k{color:#ff7ba8}.codeblock .n{color:var(--ok)}.codeblock .c{color:var(--tx3)}
+
+/* steps */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.step{background:var(--s1);border:1px solid var(--bd);border-radius:var(--r);padding:22px}
+.step .num{
+  width:28px;height:28px;border-radius:7px;background:var(--mk-dim);color:#ff7ba8;
+  font-family:var(--mono);font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:center;margin-bottom:15px;
+}
+.step p{color:var(--tx2);font-size:14.5px;margin-top:8px;line-height:1.55}
+@media(max-width:820px){.steps{grid-template-columns:1fr}}
+
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--bd);border-radius:var(--r);overflow:hidden;background:var(--s1)}
+.stat{padding:26px 22px;border-right:1px solid var(--bd)}
+.stat:last-child{border-right:0}
+.stat .v{font-size:34px;font-weight:600;letter-spacing:-.03em;line-height:1;margin-bottom:9px}
+.stat .l{font-size:13.5px;color:var(--tx2);line-height:1.5}
+@media(max-width:820px){
+  .stats{grid-template-columns:1fr 1fr}
+  .stat:nth-child(2){border-right:0}
+  .stat:nth-child(1),.stat:nth-child(2){border-bottom:1px solid var(--bd)}
+}
+
+/* faq */
+.faq{max-width:780px;margin:0 auto;border-top:1px solid var(--bd)}
+.faq details{border-bottom:1px solid var(--bd)}
+.faq summary{
+  list-style:none;cursor:pointer;padding:19px 0;display:flex;align-items:center;justify-content:space-between;gap:20px;
+  font-size:16.5px;font-weight:500;letter-spacing:-.012em;
+}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";font-family:var(--mono);font-size:19px;color:var(--tx3);flex:none;transition:transform .2s}
+.faq details[open] summary::after{transform:rotate(45deg);color:var(--mk)}
+.faq .a{padding:0 0 20px;color:var(--tx2);font-size:15.5px;line-height:1.65;max-width:64ch}
+
+/* final cta */
+.cta{
+  position:relative;overflow:hidden;border:1px solid var(--bd2);border-radius:16px;
+  background:var(--s1);padding:clamp(38px,6vw,64px) var(--gut);text-align:center;
+}
+.cta::before{
+  content:"";position:absolute;top:-180px;left:50%;transform:translateX(-50%);
+  width:760px;height:420px;background:radial-gradient(50% 50% at 50% 50%,rgba(229,50,111,.22),transparent 70%);
+}
+.cta>*{position:relative}
+.cta p{color:var(--tx2);font-size:17px;max-width:52ch;margin:16px auto 30px}
+
+/* footer */
+.foot{border-top:1px solid var(--bd);margin-top:clamp(64px,8vw,104px);padding:52px 0 40px}
+.foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:34px}
+.foot-brand p{color:var(--tx3);font-size:14px;margin-top:14px;max-width:34ch}
+.foot h4{font-size:12.5px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--tx3);margin:0 0 14px;font-weight:400}
+.foot ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.foot ul a{color:var(--tx2);font-size:14.5px}
+.foot ul a:hover{color:var(--tx)}
+.foot-btm{margin-top:44px;padding-top:22px;border-top:1px solid var(--bd);display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;color:var(--tx3)}
+@media(max-width:820px){.foot-grid{grid-template-columns:1fr 1fr;gap:28px}.foot-brand{grid-column:span 2}}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="brand" href="/"><span class="glyph"></span>crowdmon</a>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/mkcarlclaude/crowdmon-revamp">Source</a>
+    </div>
+    <div class="nav-right">
+      <a class="btn btn-s" href="https://github.com/mkcarlclaude/crowdmon-revamp">GitHub</a>
+      <a class="btn btn-p" href="/demo">Try the demo</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="pill"><b>v2</b> Dataset snapshots with split manifests are live</span>
+    <h1>Turn gameplay video into labelled training data</h1>
+    <p class="hero-sub">
+      crowdmon cuts a video into frames, pre-labels every one with an open-vocabulary
+      detector, and reduces your job to <b>yes, no, or nudge</b>. No boxes drawn from scratch,
+      no GPU, no manual trigger.
+    </p>
+    <div class="hero-cta">
+      <a class="btn btn-p btn-lg" href="/demo">Try the demo <span class="ar">→</span></a>
+      <a class="btn btn-s btn-lg" href="#how">See how it works</a>
+    </div>
+    <p class="hero-note">No sign-up · one real frame · your verdict never enters the dataset</p>
+  </div>
+
+  <div class="shot-wrap">
+    <div class="win">
+      <div class="win-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="url">crowdmon.mkcarl.com<b>/verify</b></span>
+      </div>
+      <div class="app">
+        <div class="app-main">
+          <div class="stage" id="shot"></div>
+          <div class="app-acts">
+            <span class="act act-y"><span class="d"></span>Accept <kbd>Y</kbd></span>
+            <span class="act act-a"><span class="d"></span>Adjust <kbd>A</kbd></span>
+            <span class="act act-n"><span class="d"></span>Reject <kbd>N</kbd></span>
+            <span class="act" style="color:var(--tx3)">Skip <kbd>S</kbd></span>
+          </div>
+        </div>
+        <aside class="app-side">
+          <div>
+            <div class="side-h">Active classes</div>
+            <div class="cls act"><span><span class="sw"></span>Paimon</span><b>412</b></div>
+            <div class="cls act"><span><span class="sw"></span>Raiden Shogun</span><b>287</b></div>
+            <div class="cls off"><span><span class="sw"></span>Nahida</span><b>0</b></div>
+            <div class="cls off"><span><span class="sw"></span>Ganyu</span><b>0</b></div>
+            <div class="cls off"><span><span class="sw"></span>Zhongli</span><b>0</b></div>
+          </div>
+          <div>
+            <div class="side-h">This frame</div>
+            <div class="cls"><span>Boxes</span><b>3</b></div>
+            <div class="cls"><span>Best conf.</span><b>0.20</b></div>
+            <div class="cls"><span>Prompt</span><b>v3</b></div>
+          </div>
+          <div>
+            <div class="side-h">Queue</div>
+            <div class="cls"><span>Remaining</span><b>168</b></div>
+            <div class="cls"><span>Done today</span><b>32</b></div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="strip">
+  <div class="wrap strip-in">
+    <span class="strip-l">Runs on</span>
+    <span class="strip-i">Cloudflare Workers</span>
+    <span class="strip-i">D1</span>
+    <span class="strip-i">R2</span>
+    <span class="strip-i">Go</span>
+    <span class="strip-i">ONNX</span>
+    <span class="strip-i">Prometheus</span>
+  </div>
+</div>
+
+<section class="sec" id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Features</p>
+      <h2>Everything between a raw video and a dataset</h2>
+      <p>The detector is the least interesting part, and deliberately swappable. The pipeline around it is the product.</p>
+    </div>
+
+    <div class="bento">
+      <div class="card c-4">
+        <div class="card-wide">
+          <div>
+            <h3>Pre-labelled the moment you submit</h3>
+            <p>Paste a link and walk away. Extraction, de-duplication and detection run unattended on a queue — there is no button anybody has to remember to press.</p>
+          </div>
+          <div class="card-vis"><div class="stage" id="cv1"></div></div>
+        </div>
+      </div>
+
+      <div class="card c-2">
+        <h3>Verify, never draw</h3>
+        <p>Accept, adjust or reject. Three keys, seconds per frame — the interaction that made hour ten cost less than hour one.</p>
+        <div class="card-vis" style="padding:14px;display:flex;gap:7px;flex-wrap:wrap">
+          <span class="act act-y"><span class="d"></span>Accept</span>
+          <span class="act act-a"><span class="d"></span>Adjust</span>
+          <span class="act act-n"><span class="d"></span>Reject</span>
+        </div>
+      </div>
+
+      <div class="card c-3">
+        <h3>Snapshots with a split manifest</h3>
+        <p>Export to R2 with train/validation/test recorded, plus the inclusion policy that produced it. A frozen evaluation pool never leaks into training.</p>
+        <div class="card-vis">
+          <div class="codeblock">
+<span class="c">// manifest.json</span><br>
+{ <span class="k">"train"</span>: <span class="n">1482</span>,<br>
+&nbsp;&nbsp;<span class="k">"val"</span>: <span class="n">318</span>, <span class="k">"test"</span>: <span class="n">318</span>,<br>
+&nbsp;&nbsp;<span class="k">"policy"</span>: <span class="n">"admin_verdicts_only"</span>,<br>
+&nbsp;&nbsp;<span class="k">"eval_pool"</span>: <span class="n">"frozen"</span> }
+          </div>
+        </div>
+      </div>
+
+      <div class="card c-3">
+        <h3>Open vocabulary, no retraining</h3>
+        <p>Classes are rows in a table carrying an appearance prompt. Adding a character is an edit, not a deploy — and every box is stamped with the prompt version that produced it.</p>
+        <div class="card-vis">
+          <div class="codeblock">
+<span class="c">class_id  prompt                    ver</span><br>
+<span class="n">1</span>         <span class="k">"a photo of paimon"</span>        v3<br>
+<span class="n">2</span>         <span class="k">"a photo of raiden shogun"</span> v3<br>
+<span class="n">3</span>         <span class="k">"a photo of nahida"</span>        <span class="c">draft</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card c-2">
+        <h3>Runs on one desktop</h3>
+        <p>CPU-only inference on a machine under a desk. Bounded sampling keeps it inside a nightly window.</p>
+      </div>
+
+      <div class="card c-2">
+        <h3>Safe to show strangers</h3>
+        <p>Anonymous verdicts are recorded and never promoted. Frames are served by short-lived signed URLs from a curated pool.</p>
+      </div>
+
+      <div class="card c-2">
+        <h3>Observable by default</h3>
+        <p>Traces, metrics and logs from the worker to the edge, because nobody is watching it run.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="how" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head ctr">
+      <p class="eyebrow">How it works</p>
+      <h2>Three steps, one of which is you</h2>
+      <p>From a link to a dataset, with a human in exactly one place.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <span class="num">1</span>
+        <h3>Submit a video</h3>
+        <p>A worker pulls it, cuts ~2,700 frames, drops the near-duplicates and keeps a random 200 across the timeline.</p>
+      </div>
+      <div class="step">
+        <span class="num">2</span>
+        <h3>The model guesses</h3>
+        <p>An open-vocabulary detector proposes boxes from class prompts alone — it has never been shown these characters.</p>
+      </div>
+      <div class="step">
+        <span class="num">3</span>
+        <h3>You rule on it</h3>
+        <p>Accept, adjust or reject. Verdicts are append-only and tagged by source, then packaged into a snapshot.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" style="padding-top:0">
+  <div class="wrap">
+    <div class="stats">
+      <div class="stat"><div class="v">200</div><div class="l">frames kept per video, bounded by human throughput</div></div>
+      <div class="stat"><div class="v">~2,700</div><div class="l">frames available per video — the rest wait</div></div>
+      <div class="stat"><div class="v">5</div><div class="l">classes active at a time, each a row in a table</div></div>
+      <div class="stat"><div class="v">0</div><div class="l">GPUs. CPU-only inference, one desktop</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="faq" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head ctr">
+      <p class="eyebrow">FAQ</p>
+      <h2>Questions worth asking</h2>
+    </div>
+    <div class="faq">
+      <details open>
+        <summary>Is the detector any good?</summary>
+        <p class="a">No, and that is on purpose. It is a zero-shot bootstrap that has never seen these characters — confidences sit around 0.10–0.20 and plenty of its boxes are wrong. A model that guesses badly is still worth having, because rejecting a bad guess takes under a second and a rejection is a label too. Accuracy is not the deliverable; throughput per human minute is.</p>
+      </details>
+      <details>
+        <summary>Do my verdicts on the demo change the dataset?</summary>
+        <p class="a">No. Anonymous verdicts are recorded and tagged, then excluded at snapshot time by design. Admitting untrusted labels would force consensus resolution, agreement scoring and trust weighting — all deliberately out of scope.</p>
+      </details>
+      <details>
+        <summary>Can it find something the model missed entirely?</summary>
+        <p class="a">Not on its own — that is a structural limit of a verify-only interface. A frame with no prediction never enters the queue, so false negatives look identical to absence. Admins can file missing-object reports, and the report rate per class is the number that says whether a prompt is working.</p>
+      </details>
+      <details>
+        <summary>Does it train anything?</summary>
+        <p class="a">Not yet. Training, a model registry and a distilled detector are all out of scope for v2. What exists today is the part that produces the data those would need — which is the part that was actually hard.</p>
+      </details>
+      <details>
+        <summary>Why Genshin Impact?</summary>
+        <p class="a">It is a domain with recognisable, consistently-rendered subjects and an endless supply of source video, which makes it a good harness for the pipeline. The frames are game screenshots and the dataset is not distributed as a product.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="sec" style="padding-top:0">
+  <div class="wrap">
+    <div class="cta">
+      <h2>See it get one wrong</h2>
+      <p>One real frame, the detector's real output, and three buttons. It takes about ten seconds and no account.</p>
+      <div class="hero-cta">
+        <a class="btn btn-p btn-lg" href="/demo">Try the demo <span class="ar">→</span></a>
+        <a class="btn btn-s btn-lg" href="https://github.com/mkcarlclaude/crowdmon-revamp">Read the source</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <a class="brand" href="/"><span class="glyph"></span>crowdmon</a>
+        <p>A data flywheel for object detection, built and run by one person on a home server.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="/demo">Demo</a></li>
+          <li><a href="#how">How it works</a></li>
+          <li><a href="#features">Features</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/mkcarlclaude/crowdmon-revamp">Source</a></li>
+          <li><a href="https://github.com/mkcarlclaude/crowdmon-revamp/blob/main/PRD.md">Scope</a></li>
+          <li><a href="https://github.com/mkcarlclaude/crowdmon-revamp/blob/main/ROADMAP.md">Roadmap</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Built with</h4>
+        <ul>
+          <li><a href="https://developers.cloudflare.com/workers/">Workers</a></li>
+          <li><a href="https://developers.cloudflare.com/d1/">D1 &amp; R2</a></li>
+          <li><a href="https://onnx.ai/">ONNX</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot-btm">
+      <span>© 2026 crowdmon · a side project by carl</span>
+      <span>Frames are game screenshots. Not affiliated with HoYoverse.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+const F = {frame:"00250", src:"f-3693.jpg", preds:[
+  {c:"Paimon",        p:0.20, b:[0.0009,0.0024,0.4278,0.9976]},
+  {c:"Paimon",        p:0.11, b:[0.5337,0.0604,0.8461,0.9951]},
+  {c:"Raiden Shogun", p:0.17, b:[0.0009,0.0024,0.4278,0.9976]}
+]};
+function render(el, opts){
+  opts=opts||{};
+  const W=1000,H=562,groups=[];
+  F.preds.forEach(pr=>{
+    const k=pr.b.join(",");let g=groups.find(x=>x.k===k);
+    if(!g){g={k,b:pr.b,list:[]};groups.push(g);}
+    g.list.push(pr);
+  });
+  const rects=groups.map(g=>`<rect x="${g.b[0]*W}" y="${g.b[1]*H}" width="${(g.b[2]-g.b[0])*W}" height="${(g.b[3]-g.b[1])*H}"/>`).join("");
+  let chips="";
+  if(!opts.noChips){
+    groups.forEach(g=>g.list.forEach((pr,i)=>{
+      chips+=`<span class="chip" style="left:${(g.b[0]*100+1).toFixed(2)}%;top:${(g.b[1]*100+1.5+i*6.6).toFixed(2)}%">${pr.c}<span class="c">${pr.p.toFixed(2)}</span></span>`;
+    }));
+  }
+  el.innerHTML=`<img src="${F.src}" alt="Frame ${F.frame} with the detector's proposed boxes">`
+    +`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${rects}</svg>`+chips;
+}
+render(document.getElementById("shot"));
+render(document.getElementById("cv1"),{noChips:true});
+</script>
+</body>
+</html>

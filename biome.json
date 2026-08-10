@@ -11,7 +11,8 @@
       "!**/worker-configuration.d.ts",
       "!apps/api/openapi.json",
       "!infra/grafana/*.json",
-      "!.claude"
+      "!.claude",
+      "!prototypes"
     ]
   },
   "css": {

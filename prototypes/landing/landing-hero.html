@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crowdmon — teaching a computer to see a video game</title>
+<link rel="preconnect" href="https://api.fontshare.com" crossorigin>
+<link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@700,800&f[]=satoshi@400,500,700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f4f2ec;
+  --paper-2:#eae7de;
+  --card:#fbfaf7;
+  --ink:#1f1e1b;
+  --ink-2:#5c594f;
+  --ink-3:#8d897c;
+  --rule:rgba(31,30,27,.13);
+  --mk:#e5326f;
+  --scene:#141a22;
+
+  --disp:"Cabinet Grotesk","Satoshi",system-ui,sans-serif;
+  --sans:"Satoshi",system-ui,-apple-system,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --max:1180px;
+  --gut:clamp(20px,4vw,44px);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased}
+img{display:block;max-width:100%}
+a{color:inherit;text-decoration:none}
+h1,h2,h3{margin:0;font-family:var(--disp);font-weight:700;letter-spacing:-.025em;line-height:1.04}
+p{margin:0}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 var(--gut)}
+
+/* ======================= HERO — a world, not a page ======================= */
+.hero{position:relative;min-height:100svh;display:flex;flex-direction:column;overflow:hidden;background:var(--scene)}
+
+/* the frame lives in its own coordinate space so the real box coordinates
+   still land on the real character after the crop. width:max() reproduces
+   object-fit:cover for a 16:9 source without losing that mapping. */
+.scene{position:absolute;inset:0;overflow:hidden}
+/* framing is tuned, not automatic: scaled up and pulled up-left so Paimon's
+   full box clears the nav, and so the game's own subtitle bar crops away
+   below the fold instead of sitting in the middle of the composition. */
+/* Framing is computed, not eyeballed. At 1440x810 the frame renders 1555 wide,
+   so Paimon's real box (x .481–.943) lands at 662–1380px — clear of the copy
+   column on the left and inside the viewport on the right — while the Y offset
+   drops the box top below the 90px nav and pushes the game's own subtitle bar
+   under the bottom scrim. */
+.frame{
+  position:absolute;top:50%;left:47%;
+  transform:translate(-50%,-44%);
+  width:max(118%,calc(100svh * 16 / 9));aspect-ratio:16/9;
+}
+.frame img{width:100%;height:100%;object-fit:cover}
+.frame svg{position:absolute;inset:0;width:100%;height:100%}
+.frame rect{fill:none;stroke:var(--mk);stroke-width:3;vector-effect:non-scaling-stroke;
+  filter:drop-shadow(0 0 6px rgba(0,0,0,.55))}
+.tag{
+  position:absolute;font-family:var(--mono);font-size:clamp(10px,.85vw,13px);font-weight:500;
+  background:var(--mk);color:#fff;padding:2px 8px;white-space:nowrap;line-height:1.6;border-radius:3px;
+}
+.tag .c{opacity:.72;margin-left:7px;font-weight:400}
+
+/* legibility scrim — left-weighted so the right side of the scene stays clean */
+.scrim{position:absolute;inset:0;background:
+  linear-gradient(96deg,rgba(10,14,20,.9) 0%,rgba(10,14,20,.72) 30%,rgba(10,14,20,.18) 56%,transparent 72%);}
+.scrim-b{position:absolute;left:0;right:0;bottom:0;height:40%;
+  background:linear-gradient(180deg,transparent,rgba(10,14,20,.78) 55%,rgba(10,14,20,.97) 88%,#0a0e14)}
+
+/* floating chips — product state living inside the world */
+.float{
+  position:absolute;display:inline-flex;align-items:center;gap:9px;
+  background:rgba(16,20,26,.62);backdrop-filter:blur(9px);
+  border:1px solid rgba(255,255,255,.16);border-radius:9px;padding:8px 13px;
+  font-family:var(--mono);font-size:12px;color:#e8e9ec;white-space:nowrap;
+  box-shadow:0 8px 26px rgba(0,0,0,.3);
+}
+.float i{width:7px;height:7px;border-radius:50%;background:#4ec98b;flex:none;font-style:normal}
+.float.pend i{background:#e0a33c}
+.float b{color:#fff;font-weight:500}
+.f1{top:20%;right:6%}
+.f2{top:29.5%;right:11%}
+.f3{bottom:24%;right:8%}
+@media(max-width:1000px){.float{display:none}}
+
+/* nav — a floating pill, not a bar */
+.nav{position:relative;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:22px var(--gut);max-width:1340px;margin:0 auto;width:100%}
+.mark{display:flex;align-items:center;gap:9px;color:#fff;font-family:var(--disp);font-size:19px;font-weight:700;letter-spacing:-.02em}
+.mark .g{width:20px;height:20px;border:2px solid var(--mk);border-radius:4px;position:relative;flex:none}
+.mark .g::after{content:"";position:absolute;right:-3px;bottom:-3px;width:6px;height:6px;background:var(--mk);border-radius:1px}
+.navpill{display:flex;align-items:center;gap:2px;background:rgba(255,255,255,.11);backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:4px}
+.navpill a{color:rgba(255,255,255,.82);font-size:14.5px;padding:7px 15px;border-radius:999px;transition:background .15s,color .15s}
+.navpill a:hover{background:rgba(255,255,255,.14);color:#fff}
+.navact{display:flex;gap:9px}
+@media(max-width:900px){.navpill{display:none}}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-family:var(--sans);
+  font-size:15px;font-weight:500;padding:11px 19px;border-radius:999px;border:1px solid transparent;
+  transition:background .15s,border-color .15s,transform .1s;white-space:nowrap}
+.btn:active{transform:translateY(1px)}
+.btn .ar{transition:transform .16s}
+.btn:hover .ar{transform:translateX(3px)}
+.btn-w{background:#fff;color:#16181c}
+.btn-w:hover{background:#e9eaec}
+.btn-ghost{border-color:rgba(255,255,255,.3);color:#fff}
+.btn-ghost:hover{background:rgba(255,255,255,.12)}
+.btn-ink{background:var(--ink);color:var(--paper)}
+.btn-ink:hover{background:#35332d}
+.btn-line{border-color:var(--rule);color:var(--ink)}
+.btn-line:hover{background:var(--paper-2)}
+.btn-lg{padding:14px 26px;font-size:16px}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--mk);outline-offset:3px}
+
+.hero-body{position:relative;z-index:4;flex:1;display:flex;align-items:center;padding:0 0 6vh}
+.hero-in{max-width:1340px;margin:0 auto;padding:0 var(--gut);width:100%}
+.hero-copy{max-width:33ch}
+.kick{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:11.5px;letter-spacing:.13em;
+  text-transform:uppercase;color:rgba(255,255,255,.72);margin-bottom:22px}
+.kick s{width:22px;height:1px;background:var(--mk);display:block;text-decoration:none}
+.hero h1{color:#fff;font-size:clamp(34px,4.3vw,56px);font-weight:800;letter-spacing:-.032em;line-height:1;margin-bottom:22px}
+.hero h1 span{color:rgba(255,255,255,.55)}
+.hero-sub{color:rgba(255,255,255,.8);font-size:clamp(16px,1.35vw,19px);line-height:1.55;max-width:46ch;margin-bottom:32px}
+.hero-sub b{color:#fff;font-weight:500}
+.hero-cta{display:flex;gap:11px;flex-wrap:wrap}
+.hero-foot{position:relative;z-index:4;padding:0 var(--gut) 26px;max-width:1340px;margin:0 auto;width:100%;
+  font-family:var(--mono);font-size:11.5px;color:rgba(255,255,255,.55);display:flex;gap:8px 26px;flex-wrap:wrap}
+.hero-foot b{color:rgba(255,255,255,.82);font-weight:400}
+
+/* ======================= BODY — the quiet document ======================= */
+.sec{padding:clamp(64px,8vw,112px) 0}
+.sec-h{text-align:center;max-width:700px;margin:0 auto 52px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--ink-3);margin-bottom:16px}
+h2{font-size:clamp(28px,3.8vw,44px);font-weight:700}
+h2 span{color:var(--ink-3)}
+.sec-h p{color:var(--ink-2);margin-top:16px;font-size:17px}
+
+.strip{border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:20px 0;background:var(--paper-2)}
+.strip-in{display:flex;gap:12px 30px;flex-wrap:wrap;justify-content:center;align-items:center}
+.strip-l{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.strip-i{font-size:15px;color:var(--ink-2);font-weight:500}
+
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.step{background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:26px}
+.step .n{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--mk);margin-bottom:16px}
+.step h3{font-size:19px;margin-bottom:9px}
+.step p{color:var(--ink-2);font-size:15px;line-height:1.55}
+@media(max-width:860px){.steps{grid-template-columns:1fr}}
+
+.plate{margin:52px auto 0;max-width:900px;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:28px;align-items:center}
+.plate>div{border-radius:12px;overflow:hidden;border:1px solid var(--rule);background:#0d1117}
+.plate figcaption{font-size:14.5px;line-height:1.6;color:var(--ink-2)}
+.plate figcaption b{color:var(--ink);font-weight:700}
+.plate figcaption em{font-style:normal;font-family:var(--mono);font-size:13px;color:var(--mk)}
+@media(max-width:860px){.plate{grid-template-columns:1fr;gap:18px}}
+
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:34px;max-width:1000px;margin:0 auto}
+.three p{color:var(--ink-2);font-size:15.5px;line-height:1.6}
+.three b{color:var(--ink);font-weight:700}
+@media(max-width:860px){.three{grid-template-columns:1fr;gap:22px}}
+
+.stats{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat{padding:30px 24px 30px 0;border-right:1px solid var(--rule)}
+.stat:last-child{border-right:0}
+.stat .v{font-family:var(--disp);font-size:40px;font-weight:800;letter-spacing:-.035em;line-height:1;margin-bottom:10px}
+.stat .l{font-size:14px;color:var(--ink-2);line-height:1.5}
+@media(max-width:860px){.stats{grid-template-columns:1fr 1fr}.stat:nth-child(2n){border-right:0}.stat:nth-child(-n+2){border-bottom:1px solid var(--rule)}}
+
+.faq{max-width:760px;margin:0 auto;border-top:1px solid var(--rule)}
+.faq details{border-bottom:1px solid var(--rule)}
+.faq summary{list-style:none;cursor:pointer;padding:20px 0;display:flex;gap:20px;justify-content:space-between;align-items:center;font-size:17.5px;font-weight:500;font-family:var(--disp);letter-spacing:-.015em}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";font-family:var(--mono);font-size:20px;color:var(--ink-3);transition:transform .2s;flex:none}
+.faq details[open] summary::after{transform:rotate(45deg);color:var(--mk)}
+.faq .a{padding:0 0 22px;color:var(--ink-2);font-size:16px;line-height:1.65}
+
+.endcta{text-align:center;padding:clamp(56px,7vw,92px) var(--gut);border-top:1px solid var(--rule)}
+.endcta p{color:var(--ink-2);max-width:48ch;margin:16px auto 30px}
+.endcta .row{display:flex;gap:11px;justify-content:center;flex-wrap:wrap}
+
+.foot{background:var(--paper-2);border-top:1px solid var(--rule);padding:48px 0 34px}
+.foot-g{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:32px}
+.foot .mark{color:var(--ink)}
+.foot-g p{color:var(--ink-3);font-size:14px;margin-top:13px;max-width:32ch}
+.foot h4{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 13px;font-weight:400}
+.foot ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+.foot ul a{color:var(--ink-2);font-size:15px}
+.foot ul a:hover{color:var(--ink)}
+.foot-b{margin-top:42px;padding-top:20px;border-top:1px solid var(--rule);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+@media(max-width:860px){.foot-g{grid-template-columns:1fr 1fr}.foot-brand{grid-column:span 2}}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="scene">
+    <div class="frame">
+      <img src="f-3683.jpg" alt="Paimon from Genshin Impact, floating in front of a rocky Liyue landscape, with a magenta detection box drawn around her.">
+      <svg viewBox="0 0 1000 562" preserveAspectRatio="none" aria-hidden="true">
+        <rect x="481" y="6.7" width="462" height="555"/>
+      </svg>
+      <!-- Her box starts at 1.2% of the frame height, so its top edge is always
+           at the image edge. The label sits inside the box instead of on its
+           corner — otherwise the nav covers it at every scale. -->
+      <span class="tag" style="left:48.1%;top:13%">Paimon <span class="c">0.16</span></span>
+    </div>
+    <div class="scrim"></div>
+    <div class="scrim-b"></div>
+  </div>
+
+  <span class="float f1"><i></i>frame <b>00226</b> extracted</span>
+  <span class="float f2 pend"><i></i>awaiting a human verdict</span>
+  <span class="float f3"><i></i>sampled <b>1 of 200</b> from this video</span>
+
+  <nav class="nav">
+    <a class="mark" href="/"><span class="g"></span>crowdmon</a>
+    <div class="navpill">
+      <a href="#how">How it works</a>
+      <a href="#why">Why</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/mkcarlclaude/crowdmon-revamp">Source</a>
+    </div>
+    <div class="navact">
+      <a class="btn btn-ghost" href="https://github.com/mkcarlclaude/crowdmon-revamp">GitHub</a>
+      <a class="btn btn-w" href="/demo">Try the demo</a>
+    </div>
+  </nav>
+
+  <div class="hero-body">
+    <div class="hero-in">
+      <div class="hero-copy">
+        <p class="kick"><s></s>Real frame · real model output</p>
+        <h1>That's Paimon.<br><span>The model is 16% sure.</span></h1>
+        <p class="hero-sub">
+          You knew instantly. A computer does not — and teaching one costs thousands of
+          examples that a person has labelled by hand. <b>crowdmon makes those examples
+          cheap</b>: it turns recorded gameplay into frames, has a model guess at every one,
+          and cuts the human job down to yes, no, or nudge.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-w btn-lg" href="/demo">Try the demo <span class="ar">→</span></a>
+          <a class="btn btn-ghost btn-lg" href="#how">How it works</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hero-foot">
+    <span>no sign-up</span>
+    <span>·</span>
+    <span>runs on <b>one desktop, no GPU</b></span>
+    <span>·</span>
+    <span>your verdict never enters the dataset</span>
+  </div>
+</header>
+
+<div class="strip">
+  <div class="wrap strip-in">
+    <span class="strip-l">Built with</span>
+    <span class="strip-i">Cloudflare Workers</span>
+    <span class="strip-i">D1</span>
+    <span class="strip-i">R2</span>
+    <span class="strip-i">Go</span>
+    <span class="strip-i">ONNX</span>
+    <span class="strip-i">Prometheus</span>
+  </div>
+</div>
+
+<section class="sec" id="how">
+  <div class="wrap">
+    <div class="sec-h">
+      <p class="eyebrow">How it works</p>
+      <h2>Three steps, <span>and only one needs a person</span></h2>
+      <p>From a link you paste to a dataset somebody could train on.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <span class="n">01 — MACHINE</span>
+        <h3>Cut the video up</h3>
+        <p>A worker pulls the video, slices ~2,700 stills, throws away the near-duplicates and keeps a random 200 spread across the timeline.</p>
+      </div>
+      <div class="step">
+        <span class="n">02 — MACHINE</span>
+        <h3>Take a rough guess</h3>
+        <p>An open-vocabulary detector proposes a box for anything it takes for a character. It has never been shown these characters — it works from their names.</p>
+      </div>
+      <div class="step">
+        <span class="n">03 — YOU</span>
+        <h3>Rule on it</h3>
+        <p>Accept, adjust, or reject. Seconds per frame instead of minutes. Verdicts are append-only and packaged into a snapshot with a train/test split.</p>
+      </div>
+    </div>
+
+    <figure class="plate">
+      <div id="mini"></div>
+      <figcaption>
+        <b>Unedited output from step 02.</b> Three boxes on one frame. The left region is
+        claimed by both <em>Paimon (0.20)</em> and <em>Raiden Shogun (0.17)</em>; the right
+        box, <em>Paimon (0.11)</em>, is the Traveler. Two of the three labels are wrong and
+        nothing is above 20% confident — which is the normal case, and the reason a person
+        is still in the loop.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="sec" id="why" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-h">
+      <p class="eyebrow">Why it works</p>
+      <h2>Checking is cheap. <span>Drawing is not.</span></h2>
+    </div>
+    <div class="three">
+      <p><b>The 2023 version failed here.</b> It had a perfectly good annotation tool where every box was drawn from scratch, so hour ten cost exactly what hour one cost. There is no finish line in a job shaped like that.</p>
+      <p><b>A bad guess is still useful.</b> Rejecting one takes under a second, and a rejection is a label too. That is why the detector being weak is not a problem to be fixed before the rest can work.</p>
+      <p><b>So the model is the swappable part.</b> It sits behind a one-method interface and can be replaced in a single file. The pipeline, the queue and the export around it are the thing that was built.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" style="padding-top:0">
+  <div class="wrap">
+    <!-- Design facts, not live counts. A `/api/public/stats` endpoint was built
+         and reverted: `PRD.md` §9 and `CONTEXT.md` §12 exclude a public
+         statistics surface, and the §"checks are internal" argument reasons
+         from its absence. These four are properties of the design, true
+         whether the corpus holds ten frames or ten thousand. -->
+    <div class="stats">
+      <div class="stat"><div class="v">200</div><div class="l">frames kept per video — throughput is bounded by the human, so the queue is too</div></div>
+      <div class="stat"><div class="v">~2,700</div><div class="l">frames a full video yields. The rest keep their rows and wait</div></div>
+      <div class="stat"><div class="v">5</div><div class="l">characters recognised at a time, each one a row in a table</div></div>
+      <div class="stat"><div class="v">0</div><div class="l">GPUs. Detection runs on an old desktop, on its CPU, overnight</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="faq" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-h"><p class="eyebrow">FAQ</p><h2>Questions worth asking</h2></div>
+    <div class="faq">
+      <details open>
+        <summary>Is the detector any good?</summary>
+        <p class="a">No, and that is deliberate. It is a zero-shot bootstrap that has never seen these characters — confidences sit around 0.10–0.20 and plenty of its boxes are wrong, including one on this page. Accuracy is not the deliverable; throughput per human minute is.</p>
+      </details>
+      <details>
+        <summary>Do verdicts on the demo change the dataset?</summary>
+        <p class="a">No. Anonymous verdicts are recorded and tagged, then excluded when a snapshot is built. Admitting untrusted labels would force consensus resolution, agreement scoring and trust weighting — all deliberately out of scope.</p>
+      </details>
+      <details>
+        <summary>Can it find something the model missed entirely?</summary>
+        <p class="a">Not by itself. A frame with no prediction never enters the queue, so a miss looks identical to an absence. Admins can file missing-object reports, and the report rate per class is the number that says whether a prompt is working.</p>
+      </details>
+      <details>
+        <summary>Does it train anything?</summary>
+        <p class="a">Not yet. Training, a model registry and a distilled detector are all out of scope for now. What exists is the part that produces the data those would need.</p>
+      </details>
+      <details>
+        <summary>Why Genshin Impact?</summary>
+        <p class="a">Recognisable, consistently-rendered subjects and an endless supply of source video, which makes it a good harness for the pipeline. The frames are game screenshots and the dataset is not distributed as a product.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="endcta">
+  <h2>See it get one wrong</h2>
+  <p>One real frame, the detector's real output, three buttons. About ten seconds, no account.</p>
+  <div class="row">
+    <a class="btn btn-ink btn-lg" href="/demo">Try the demo <span class="ar">→</span></a>
+    <a class="btn btn-line btn-lg" href="https://github.com/mkcarlclaude/crowdmon-revamp">Read the source</a>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-g">
+      <div class="foot-brand">
+        <a class="mark" href="/"><span class="g"></span>crowdmon</a>
+        <p>A data flywheel for object detection, built and run by one person on a home server.</p>
+      </div>
+      <div><h4>Product</h4><ul>
+        <li><a href="/demo">Demo</a></li><li><a href="#how">How it works</a></li><li><a href="#faq">FAQ</a></li>
+      </ul></div>
+      <div><h4>Project</h4><ul>
+        <li><a href="https://github.com/mkcarlclaude/crowdmon-revamp">Source</a></li>
+        <li><a href="https://github.com/mkcarlclaude/crowdmon-revamp/blob/main/PRD.md">Scope</a></li>
+        <li><a href="https://github.com/mkcarlclaude/crowdmon-revamp/blob/main/ROADMAP.md">Roadmap</a></li>
+      </ul></div>
+      <div><h4>Built with</h4><ul>
+        <li><a href="https://developers.cloudflare.com/workers/">Workers</a></li>
+        <li><a href="https://developers.cloudflare.com/d1/">D1 &amp; R2</a></li>
+        <li><a href="https://onnx.ai/">ONNX</a></li>
+      </ul></div>
+    </div>
+    <div class="foot-b">
+      <span>© 2026 crowdmon · a side project by carl</span>
+      <span>Frames are game screenshots. Not affiliated with HoYoverse.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* the step-02 thumbnail: the same real frame the hero uses, boxed */
+document.getElementById("mini").innerHTML =
+  '<div style="position:relative;line-height:0">'
++ '<img src="f-3693.jpg" alt="A frame with three proposed boxes, two of them wrong" style="width:100%">'
++ '<svg viewBox="0 0 1000 562" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">'
++ '<rect x="1" y="1" width="427" height="560" fill="none" stroke="#e5326f" stroke-width="2" vector-effect="non-scaling-stroke"/>'
++ '<rect x="534" y="34" width="312" height="524" fill="none" stroke="#e5326f" stroke-width="2" vector-effect="non-scaling-stroke"/>'
++ '</svg></div>';
+</script>
+</body>
+</html>
