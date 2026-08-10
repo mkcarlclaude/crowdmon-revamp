@@ -130,6 +130,17 @@ private admin plane, not a data path.
   are v2. If the public surface ever grows into real content, the answer is a
   second app in the monorepo sharing components with the admin panel, not a
   framework migration of the admin panel itself.
+  **Amended 2026-08-10: the landing page is a third branch — neither.** A
+  link-preview scraper (Slack, Discord, LinkedIn, iMessage) executes no
+  JavaScript, so a client-rendered `/` is a blank document to exactly the
+  channel §Q11 names as the real distribution path. The landing page is
+  therefore a hand-written static HTML document served by the Worker at `/`,
+  outside the SPA bundle — no build step, no shared components, effectively no
+  JS. That is cheaper than a second app and leaves this fork intact for the
+  case it was written about, which was the *admin* surface growing. The cost,
+  and the reason it is not free: one shell can no longer carry the indexing
+  policy for every route, so `apps/web/index.html`'s blanket `noindex` has to
+  become a per-path `X-Robots-Tag`. Decided, not yet built.
 - **Auth:** Google OAuth implemented on Workers (`arctic` + `oslo/jose`), HttpOnly
   session cookie, sessions in D1. **Amended in v2 (§12): not built.** v2 has two tiers —
   admin behind the Cloudflare Access gate that already exists, and anonymous. There is no
@@ -750,6 +761,15 @@ demo**. Everything else behind login.
 SEO reduces to a prerendered landing page plus Open Graph tags. This keeps Q6's SPA
 choice intact — its original justification ("SEO irrelevant, behind login") was
 retired when SEO came up, but a thin public surface restores it.
+
+**Amended 2026-08-10:** "prerendered" is settled as a hand-written static HTML document
+served at `/`, not a build-time render of the React app — see §Q6. Recorded here because
+the code presently contradicts this paragraph rather than merely lagging it:
+`apps/web/index.html` carries a blanket `noindex` over every route, added in M14.3 so one
+tag could cover `/verify` and `/admin`, which also makes unindexable the landing page this
+paragraph exists to describe. The static page and the per-path `X-Robots-Tag` that
+replaces the blanket tag are both decided and unbuilt; until they land, this project has
+no indexable surface at all.
 
 **Honest read on SEO:** a niche fan project will get roughly zero organic search
 traffic regardless of optimization. The real distribution channel is pasting a link
