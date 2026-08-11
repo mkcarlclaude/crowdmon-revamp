@@ -23,16 +23,31 @@ import {
  * substantially the same thing without an index page" — and an Access-gated
  * proxy is exactly as private as a signed URL: the bucket stays private, there
  * is no enumeration, and the gate is the same allowlist every other admin
- * route sits behind. §Q25 itself computes the request budget and calls it
- * "noise against 100,000/day"; fifty frames per dry-run is well inside that
- * noise.
+ * route sits behind.
  *
- * What it does avoid is minting an R2 S3 credential and hand-rolling SigV4 in
- * a Worker to serve fifty images to one operator. The `FRAMES` binding is
- * already bound here (M1.3's Terraform) and needs no new secret; presigning
- * would need one that only a human can create. Deferring that until M13.4 is
- * the milestone where it earns its keep is the same reasoning that keeps
- * everything else in this project cheap.
+ * **What keeps a caller here is how long its URLs have to stay good, not how
+ * many of them there are.** The original version of this comment argued from
+ * volume — §Q25 computes the request budget, calls it "noise against
+ * 100,000/day", and fifty frames per dry-run is well inside that noise — and
+ * that argument was wrong in the way size arguments usually are: it silently
+ * extends to any number that still feels small. M16's per-video grid
+ * (`admin-video-images.ts`) inherited it at twenty-four full-resolution frames
+ * a page against videos with hundreds, and nothing objected, because nothing
+ * had written down where the line was. That grid now uses `frameUrls` and
+ * fetches from R2 directly.
+ *
+ * The line is `PRESIGN_TTL_SECONDS`: fifteen minutes. `DryRunPanel` is the one
+ * admin surface built to be left open — run a candidate wording, read the
+ * boxes, edit the wording, run again — so the frames from one run are still on
+ * screen well past that, and a signed URL would have to come with the
+ * refetch-on-expiry handling M13.4 built for the labelling session to buy
+ * nothing but consistency. A proxy URL is good for as long as the Access
+ * session is. Any *new* caller that renders a page-sized batch and refetches
+ * when it changes belongs on `frameUrls` instead.
+ *
+ * The other thing this avoids is hand-rolling SigV4 in a Worker to serve
+ * twenty images to one operator. The `FRAMES` binding is already bound here
+ * (M1.3's Terraform) and needs no new secret.
  */
 export const getImageRoute = createRoute({
   method: "get",

@@ -55,6 +55,24 @@ func (e AdminVideoImageVerdictState) Valid() bool {
 	}
 }
 
+// Defines values for AdminVideoImagesUrlMode.
+const (
+	AdminVideoImagesUrlModeProxy  AdminVideoImagesUrlMode = "proxy"
+	AdminVideoImagesUrlModeSigned AdminVideoImagesUrlMode = "signed"
+)
+
+// Valid indicates whether the value is a known member of the AdminVideoImagesUrlMode enum.
+func (e AdminVideoImagesUrlMode) Valid() bool {
+	switch e {
+	case AdminVideoImagesUrlModeProxy:
+		return true
+	case AdminVideoImagesUrlModeSigned:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CompleteRequestStatus.
 const (
 	CompleteRequestStatusDone   CompleteRequestStatus = "done"
@@ -156,16 +174,16 @@ func (e JobStatus) Valid() bool {
 
 // Defines values for LabellingBatchUrlMode.
 const (
-	Proxy  LabellingBatchUrlMode = "proxy"
-	Signed LabellingBatchUrlMode = "signed"
+	LabellingBatchUrlModeProxy  LabellingBatchUrlMode = "proxy"
+	LabellingBatchUrlModeSigned LabellingBatchUrlMode = "signed"
 )
 
 // Valid indicates whether the value is a known member of the LabellingBatchUrlMode enum.
 func (e LabellingBatchUrlMode) Valid() bool {
 	switch e {
-	case Proxy:
+	case LabellingBatchUrlModeProxy:
 		return true
-	case Signed:
+	case LabellingBatchUrlModeSigned:
 		return true
 	default:
 		return false
@@ -424,6 +442,9 @@ type AdminVideoImage struct {
 	// TimestampSeconds Example: 42
 	TimestampSeconds float32 `json:"timestamp_seconds"`
 
+	// Url Example: https://…r2.cloudflarestorage.com/…?X-Amz-Signature=…
+	Url string `json:"url"`
+
 	// VerdictState Example: unverified
 	VerdictState AdminVideoImageVerdictState `json:"verdict_state"`
 }
@@ -433,14 +454,22 @@ type AdminVideoImageVerdictState string
 
 // AdminVideoImages defines model for AdminVideoImages.
 type AdminVideoImages struct {
-	Images []AdminVideoImage `json:"images"`
+	// ExpiresAt Example: 1754099900
+	ExpiresAt int               `json:"expires_at"`
+	Images    []AdminVideoImage `json:"images"`
 
 	// Total Example: 2685
 	Total int `json:"total"`
 
+	// UrlMode Example: signed
+	UrlMode AdminVideoImagesUrlMode `json:"url_mode"`
+
 	// VideoId Example: dQw4w9WgXcQ
 	VideoId string `json:"video_id"`
 }
+
+// AdminVideoImagesUrlMode Example: signed
+type AdminVideoImagesUrlMode string
 
 // AdminVideoList defines model for AdminVideoList.
 type AdminVideoList struct {

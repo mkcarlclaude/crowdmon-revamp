@@ -32,11 +32,39 @@ describe("GET /api/admin/videos/{id}/images", () => {
     const res = await listImages("no-such-video");
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({
+    // `url_mode` and `expires_at` are asserted here rather than only where a
+    // frame exists: a page with nothing on it still has to carry them, or a
+    // client would need one code path for an empty response and another for
+    // every other one. The test env sets no S3 credential, so `proxy` is the
+    // honest mode for it to report.
+    await expect(res.json()).resolves.toMatchObject({
       video_id: "no-such-video",
       total: 0,
       images: [],
+      url_mode: "proxy",
     });
+  });
+
+  it("gives every frame a URL the client does not have to construct", async () => {
+    const { videoId } = await seedPool();
+
+    const res = await listImages(videoId);
+    const body = (await res.json()) as {
+      images: Array<{ r2_key: string; url: string }>;
+      url_mode: string;
+    };
+
+    // Proxy mode in tests, because signing needs a credential no test
+    // environment holds — so what this pins is that the URL is *minted by the
+    // API*, whichever mode it is in. M16 shipped the grid building
+    // `/api/admin/image?key=…` in the client, which meant §Q25's presigned
+    // path could never apply to it no matter how the deployment was
+    // configured, and no test could see that because no test asked the API
+    // for a URL at all.
+    expect(body.url_mode).toBe("proxy");
+    for (const image of body.images) {
+      expect(image.url).toBe(`/api/admin/image?key=${encodeURIComponent(image.r2_key)}`);
+    }
   });
 
   it("needs no worker lease, unlike /api/videos/{video_id}/images", async () => {

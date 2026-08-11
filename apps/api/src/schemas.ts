@@ -1870,6 +1870,14 @@ const AdminVideoImage = z
   .object({
     id: z.int().positive().openapi({ example: 7 }),
     r2_key: z.string().openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    // Presigned where the deployment has an S3 credential, the Access-gated
+    // proxy where it does not — `frameUrls`' two modes, exactly as
+    // `LabellingBatch` carries them. M16 shipped this grid rendering a proxy
+    // path built in the client instead, which meant one Worker invocation and
+    // one Worker-egress copy of a full-resolution frame per tile, twenty-four
+    // tiles to a page. §Q25 settled that question in the other direction for
+    // any batch this size; the grid just never asked it.
+    url: z.string().openapi({ example: "https://…r2.cloudflarestorage.com/…?X-Amz-Signature=…" }),
     timestamp_seconds: z.number().openapi({ example: 42 }),
     public_sample: z.boolean().openapi({ example: false }),
     predictions: z.int().nonnegative().openapi({ example: 3 }),
@@ -1890,5 +1898,12 @@ export const AdminVideoImages = z
     video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
     total: z.int().nonnegative().openapi({ example: 2685 }),
     images: z.array(AdminVideoImage),
+    // Both on the wire for `LabellingBatch`'s reasons, which apply here
+    // unchanged: the two modes fail differently, and a UI that cannot tell a
+    // 15-minute expiry from a lost Access session will offer the wrong
+    // recovery for one of them. `expires_at` is populated in both modes so
+    // there is one refresh rule rather than one per mode.
+    url_mode: z.enum(["signed", "proxy"]).openapi({ example: "signed" }),
+    expires_at: z.int().openapi({ example: 1_754_099_900 }),
   })
   .openapi("AdminVideoImages");
