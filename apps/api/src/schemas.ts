@@ -1176,13 +1176,28 @@ export const SnapshotJob = z
   .openapi("SnapshotJob");
 
 /**
- * One video as the dry-run form needs to see it: what to call it, and whether
- * it has any frames to sample.
+ * One video, for two screens that turned out to want almost the same row:
+ * the dry-run form's picker (M12.2) and `/admin/detection`'s coverage table
+ * (M16, ROADMAP M16 "scope line"). Extended rather than given `/admin/detection`
+ * a route of its own — `listVideosHandler` already computes one row per video
+ * on every call, and M16's own plan is explicit that this milestone adds
+ * exactly three *new* routes; three more fields on an existing one is not a
+ * fourth.
  *
  * `image_count` rather than a boolean: a video whose extraction is still
  * running has some frames and will have more, and an admin choosing between
  * "12 frames so far" and "2,685" is making a real choice about how meaningful
  * a 50-frame sample off it will be.
+ *
+ * `frames_sampled` is deliberately not derived from "how many frames carry a
+ * prediction." M11.4 runs a sampled image against every active class, and a
+ * menu, loading screen or black frame — VerificationCard's own comment calls
+ * these "the common case in a sampled timeline" — is exactly the frame a
+ * zero-shot detector is likeliest to propose nothing on, so counting
+ * predictions would undercount sampling specifically for the frames this
+ * system already expects to be empty. `images.selection_reason` (migration
+ * 0004) is stamped at selection time regardless of what the detector later
+ * finds, which is the fact this column exists to answer honestly.
  */
 const AdminVideo = z
   .object({
@@ -1190,6 +1205,13 @@ const AdminVideo = z
     title: z.string().nullable().openapi({ example: "Genshin Impact — Archon quest" }),
     image_count: z.int().nonnegative().openapi({ example: 2685 }),
     created_at: z.int().openapi({ example: 1_754_099_000 }),
+    frames_sampled: z.int().nonnegative().openapi({ example: 200 }),
+    // Null until at least one prediction exists for the video — no prelabel
+    // job has reported anything yet, which is a different fact from "reported
+    // and found zero classes," the same distinction `DryRun`'s own `boxes`
+    // field draws for the same reason.
+    model_id: z.string().nullable().openapi({ example: "owlvit-base-patch32.onnx" }),
+    prelabelled_at: z.int().nullable().openapi({ example: 1_754_099_500 }),
   })
   .openapi("AdminVideo");
 

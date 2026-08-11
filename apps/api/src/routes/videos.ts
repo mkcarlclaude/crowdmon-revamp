@@ -93,12 +93,14 @@ export const listVideosRoute = createRoute({
   path: "/api/admin/videos",
   operationId: "listVideos",
   tags: ["admin"],
-  summary: "Submitted videos and how many frames each has",
+  summary: "Submitted videos, their frame counts, and their prelabel coverage",
   description:
-    "What the dry-run form picks from (M12.2). `image_count` rather than a boolean, " +
-    "because a video still being extracted has some frames and will have more, and how " +
-    "many there are decides how meaningful a 50-frame sample off it is. Requires a " +
-    "Cloudflare Access assertion.",
+    "What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as " +
+    "coverage per video. `image_count` rather than a boolean, because a video still being " +
+    "extracted has some frames and will have more, and how many there are decides how " +
+    "meaningful a sample off it is — the same reasoning `frames_sampled` extends to " +
+    "M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access " +
+    "assertion.",
   responses: {
     200: {
       description: "Videos, newest first",
@@ -111,26 +113,47 @@ export const listVideosRoute = createRoute({
 });
 
 export const listVideosHandler: RouteHandler<typeof listVideosRoute, AppEnv> = async (c) => {
-  // A correlated subquery over the already-limited rows, not a `LEFT JOIN
-  // images ... GROUP BY`. The join form applies `LIMIT` after aggregating, so
-  // it scans every row in `images` — 2,685 for one v1 video, and growing per
-  // video — to produce fifty counts on a request the Admin page makes on every
-  // mount. This form counts within `idx_images_identity`'s leading column for
-  // fifty videos and touches nothing else.
+  // Four correlated subqueries over the already-limited rows, not a `LEFT
+  // JOIN ... GROUP BY` against `images` or `predictions`. The join form
+  // applies `LIMIT` after aggregating, so it scans every row in both tables —
+  // 2,685 images for one v1 video, and growing per video — to produce fifty
+  // videos' worth of counts on a request this page and the dry-run picker
+  // both make on every mount. This form touches only what `idx_images_identity`
+  // and `idx_predictions_class`-adjacent scans need for fifty videos.
   //
-  // A count rather than an existence check, and NULL never appears: a video
-  // whose extraction has not started reads zero rather than dropping out of
-  // the list, because the dry-run form has to be able to say why it cannot be
-  // run against that video.
+  // Counts rather than existence checks, and NULL never appears on
+  // `image_count` or `frames_sampled`: a video whose extraction has not
+  // started reads zero rather than dropping out of the list, because the
+  // dry-run form has to be able to say why it cannot be run against that
+  // video. `model_id` and `prelabelled_at` stay nullable — MIN/MAX over zero
+  // rows is SQL's own honest "nothing yet," not a sentinel this handler has
+  // to invent.
   const { results } = await c.env.DB.prepare(
     `SELECT v.id, v.title, v.created_at,
-            (SELECT COUNT(*) FROM images i WHERE i.video_id = v.id) AS image_count
+            (SELECT COUNT(*) FROM images i WHERE i.video_id = v.id) AS image_count,
+            (SELECT COUNT(*) FROM images i
+              WHERE i.video_id = v.id AND i.selection_reason IS NOT NULL) AS frames_sampled,
+            (SELECT p.model_id FROM predictions p
+               JOIN images i ON i.id = p.image_id
+              WHERE i.video_id = v.id
+              ORDER BY p.created_at DESC LIMIT 1) AS model_id,
+            (SELECT MAX(p.created_at) FROM predictions p
+               JOIN images i ON i.id = p.image_id
+              WHERE i.video_id = v.id) AS prelabelled_at
        FROM videos v
       ORDER BY v.created_at DESC, v.id DESC
       LIMIT ?`,
   )
     .bind(VIDEO_PICKER_LIMIT)
-    .all<{ id: string; title: string | null; created_at: number; image_count: number }>();
+    .all<{
+      id: string;
+      title: string | null;
+      created_at: number;
+      image_count: number;
+      frames_sampled: number;
+      model_id: string | null;
+      prelabelled_at: number | null;
+    }>();
 
   return c.json({ videos: results }, 200);
 };

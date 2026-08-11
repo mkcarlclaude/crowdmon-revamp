@@ -388,11 +388,20 @@ type AdminVideo struct {
 	// CreatedAt Example: 1754099000
 	CreatedAt int `json:"created_at"`
 
+	// FramesSampled Example: 200
+	FramesSampled int `json:"frames_sampled"`
+
 	// Id Example: dQw4w9WgXcQ
 	Id string `json:"id"`
 
 	// ImageCount Example: 2685
 	ImageCount int `json:"image_count"`
+
+	// ModelId Example: owlvit-base-patch32.onnx
+	ModelId *string `json:"model_id"`
+
+	// PrelabelledAt Example: 1754099500
+	PrelabelledAt *int `json:"prelabelled_at"`
 
 	// Title Example: Genshin Impact — Archon quest
 	Title *string `json:"title"`
@@ -1555,9 +1564,9 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/verdicts (the `ListVerdicts` operationId).
 	ListVerdicts(ctx context.Context, params *ListVerdictsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListVideos Submitted videos and how many frames each has
+	// ListVideos Submitted videos, their frame counts, and their prelabel coverage
 	//
-	// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+	// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
 	ListVideos(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2201,9 +2210,9 @@ func (c *Client) ListVerdicts(ctx context.Context, params *ListVerdictsParams, r
 	return c.Client.Do(req)
 }
 
-// ListVideos Submitted videos and how many frames each has
+// ListVideos Submitted videos, their frame counts, and their prelabel coverage
 //
-// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
 func (c *Client) ListVideos(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4459,9 +4468,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/verdicts (the `ListVerdicts` operationId).
 	ListVerdictsWithResponse(ctx context.Context, params *ListVerdictsParams, reqEditors ...RequestEditorFn) (*ListVerdictsResponse, error)
 
-	// ListVideosWithResponse Submitted videos and how many frames each has
+	// ListVideosWithResponse Submitted videos, their frame counts, and their prelabel coverage
 	//
-	// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+	// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7214,9 +7223,9 @@ func (c *ClientWithResponses) ListVerdictsWithResponse(ctx context.Context, para
 	return ParseListVerdictsResponse(rsp)
 }
 
-// ListVideosWithResponse Submitted videos and how many frames each has
+// ListVideosWithResponse Submitted videos, their frame counts, and their prelabel coverage
 //
-// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -941,13 +941,31 @@
           "created_at": {
             "type": "integer",
             "example": 1754099000
+          },
+          "frames_sampled": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 200
+          },
+          "model_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "owlvit-base-patch32.onnx"
+          },
+          "prelabelled_at": {
+            "type": "integer",
+            "nullable": true,
+            "example": 1754099500
           }
         },
         "required": [
           "id",
           "title",
           "image_count",
-          "created_at"
+          "created_at",
+          "frames_sampled",
+          "model_id",
+          "prelabelled_at"
         ]
       },
       "DryRun": {
@@ -2281,8 +2299,8 @@
         "tags": [
           "admin"
         ],
-        "summary": "Submitted videos and how many frames each has",
-        "description": "What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.",
+        "summary": "Submitted videos, their frame counts, and their prelabel coverage",
+        "description": "What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.",
         "responses": {
           "200": {
             "description": "Videos, newest first",

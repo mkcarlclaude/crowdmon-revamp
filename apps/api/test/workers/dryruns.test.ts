@@ -525,6 +525,73 @@ describe("GET /api/admin/videos", () => {
     const res = await app.request("/api/admin/videos", {}, env);
     expect(res.status).toBe(401);
   });
+
+  // M16: /admin/detection reads these three fields off the same row rather
+  // than a route of its own.
+  it("reports coverage: sampled frames, the model, and when it last ran", async () => {
+    await seedVideo(0);
+    const image = await env.DB.prepare(
+      `INSERT INTO images (r2_key, video_id, timestamp_seconds, phash, dedup_threshold, selection_reason)
+            VALUES (?, ?, 0, 'af3c9e1b2d4f7a80', 10, 'random')
+         RETURNING id`,
+    )
+      .bind(`frames/${VIDEO}/00000.000.jpg`, VIDEO)
+      .first<{ id: number }>();
+    const classId = await seedClass();
+    await env.DB.prepare(
+      `INSERT INTO predictions
+            (image_id, class_id, x_min, y_min, x_max, y_max, confidence, prompt_version, model_id, created_at)
+            VALUES (?, ?, 0.1, 0.2, 0.5, 0.6, 0.9, '2026-08-08-a', 'owlvit-base-patch32.onnx', 1_754_099_500)`,
+    )
+      .bind(image?.id, classId)
+      .run();
+
+    const res = await app.request("/api/admin/videos", { headers: await adminHeaders() }, env);
+    const body = (await res.json()) as {
+      videos: Array<{
+        id: string;
+        frames_sampled: number;
+        model_id: string | null;
+        prelabelled_at: number | null;
+      }>;
+    };
+
+    expect(body.videos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: VIDEO,
+          frames_sampled: 1,
+          model_id: "owlvit-base-patch32.onnx",
+          prelabelled_at: 1_754_099_500,
+        }),
+      ]),
+    );
+  });
+
+  it("reports zero coverage and null model/timestamp for a video no prelabel job has touched", async () => {
+    await seedVideo(3);
+
+    const res = await app.request("/api/admin/videos", { headers: await adminHeaders() }, env);
+    const body = (await res.json()) as {
+      videos: Array<{
+        id: string;
+        frames_sampled: number;
+        model_id: string | null;
+        prelabelled_at: number | null;
+      }>;
+    };
+
+    expect(body.videos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: VIDEO,
+          frames_sampled: 0,
+          model_id: null,
+          prelabelled_at: null,
+        }),
+      ]),
+    );
+  });
 });
 
 describe("GET /api/admin/image", () => {

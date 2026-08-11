@@ -17,10 +17,31 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// `frames_sampled`, `model_id` and `prelabelled_at` are M16 additions to
+// `AdminVideo` (`/admin/detection`'s coverage table) — required on the wire
+// because the real endpoint always computes them, so the fixture has to
+// carry them too or `AdminVideoList.parse` rejects the response before
+// `DryRunPanel` ever sees a video to pick.
 const VIDEOS = {
   videos: [
-    { id: "dQw4w9WgXcQ", title: "Archon quest", image_count: 2685, created_at: 1_754_099_000 },
-    { id: "empty000000", title: "Not extracted", image_count: 0, created_at: 1_754_099_000 },
+    {
+      id: "dQw4w9WgXcQ",
+      title: "Archon quest",
+      image_count: 2685,
+      created_at: 1_754_099_000,
+      frames_sampled: 200,
+      model_id: "owlvit-base-patch32.onnx",
+      prelabelled_at: 1_754_099_500,
+    },
+    {
+      id: "empty000000",
+      title: "Not extracted",
+      image_count: 0,
+      created_at: 1_754_099_000,
+      frames_sampled: 0,
+      model_id: null,
+      prelabelled_at: null,
+    },
   ],
 };
 
