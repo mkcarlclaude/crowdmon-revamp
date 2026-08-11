@@ -1,5 +1,6 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import type { AppEnv } from "../bindings";
+import { frameUrls } from "../frame-urls";
 import {
   ADMIN_PAGE_LIMIT_DEFAULT,
   AdminVideoIdParam,
@@ -28,6 +29,17 @@ import {
  * second is exactly what `LabellingSession` exists to work through, and a
  * grid that could not tell them apart would be a worse version of the pool
  * count `labellingStatsHandler` already reports in aggregate.
+ *
+ * **Frame URLs come from `frameUrls`, not from a path the client builds.**
+ * M16 shipped this grid pointing every `<img>` at `/api/admin/image`, which
+ * is one Worker invocation and one Worker-egress copy of a full-resolution
+ * frame per tile — twenty-four to a page, against a video with hundreds. That
+ * is the case CONTEXT.md §Q25 settled as presigned URLs fetched straight from
+ * R2, and the reason it got missed is worth more than the fix: the proxy's own
+ * justification in `admin-images.ts` was written as a *size* argument ("fifty
+ * frames per dry-run is well inside that noise"), and a size argument silently
+ * extends to any number that still feels small. It has been rewritten as a
+ * lifetime argument, which does not.
  */
 
 /**
@@ -117,6 +129,15 @@ export const listAdminVideoImagesHandler: RouteHandler<
   const total = (totalResult?.results[0] as { total: number } | undefined)?.total ?? 0;
   const page = (pageResult?.results ?? []) as AdminVideoImageRow[];
 
+  // Asked even for an empty page, exactly as `labellingBatchHandler` does:
+  // there is no URL to hold, but `url_mode` and `expires_at` are on the wire
+  // unconditionally and a client that had to special-case their absence would
+  // be a client with two code paths for one response shape.
+  const { mode, expiresAt, byKey } = await frameUrls(
+    c.env,
+    page.map((row) => row.r2_key),
+  );
+
   return c.json(
     {
       video_id: id,
@@ -124,11 +145,16 @@ export const listAdminVideoImagesHandler: RouteHandler<
       images: page.map((row) => ({
         id: row.id,
         r2_key: row.r2_key,
+        // `?? ""` is unreachable — every key on this page was just signed —
+        // and is here only because a Map lookup types as possibly absent.
+        url: byKey.get(row.r2_key) ?? "",
         timestamp_seconds: row.timestamp_seconds,
         public_sample: row.public_sample === 1,
         predictions: row.predictions,
         verdict_state: verdictState(row.predictions, row.unruled),
       })),
+      url_mode: mode,
+      expires_at: expiresAt,
     },
     200,
   );

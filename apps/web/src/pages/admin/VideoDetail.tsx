@@ -32,10 +32,20 @@ const STATE_LABEL: Record<string, string> = {
  * Reads `GET /api/admin/videos/{id}/images` — a route built for exactly this
  * screen, not a reuse of the worker-facing `/api/videos/{video_id}/images`
  * (see that route's own comment in `admin-video-images.ts` for why a held
- * lease makes that one unusable from a browser). Frame bytes still go
- * through `/api/admin/image`, the same Access-gated proxy `DryRunPanel`
- * already uses — a grid of frames per video is the same request shape as
- * the dry-run grid that route was built for.
+ * lease makes that one unusable from a browser).
+ *
+ * Frame bytes come from whatever `url` the API put on each row — presigned
+ * straight to R2 where the deployment has an S3 credential, the Access-gated
+ * proxy where it does not. M16 shipped this building `/api/admin/image?key=…`
+ * in the client instead, which routed every full-resolution frame through a
+ * Worker: twenty-four invocations and twenty-four Worker-egress copies per
+ * page. CONTEXT.md §Q25 settled batches this size as presigned URLs, and the
+ * client had no business deciding otherwise — which is the narrower lesson
+ * here. A URL to a private object is the API's to mint.
+ *
+ * `loading="lazy"` because a four-column grid is taller than the viewport and
+ * the tiles below the fold were competing with the ones above it for the same
+ * connections.
  */
 export function AdminVideoDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -82,8 +92,10 @@ export function AdminVideoDetailPage() {
               className="overflow-hidden rounded-lg border border-border bg-card"
             >
               <img
-                src={`/api/admin/image?key=${encodeURIComponent(image.r2_key)}`}
+                src={image.url}
                 alt={image.r2_key}
+                loading="lazy"
+                decoding="async"
                 className="block aspect-video w-full object-cover"
               />
               <figcaption className="flex flex-col gap-1.5 p-2 text-xs">

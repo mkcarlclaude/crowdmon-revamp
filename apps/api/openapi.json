@@ -1483,12 +1483,26 @@
             "items": {
               "$ref": "#/components/schemas/AdminVideoImage"
             }
+          },
+          "url_mode": {
+            "type": "string",
+            "enum": [
+              "signed",
+              "proxy"
+            ],
+            "example": "signed"
+          },
+          "expires_at": {
+            "type": "integer",
+            "example": 1754099900
           }
         },
         "required": [
           "video_id",
           "total",
-          "images"
+          "images",
+          "url_mode",
+          "expires_at"
         ]
       },
       "AdminVideoImage": {
@@ -1503,6 +1517,10 @@
           "r2_key": {
             "type": "string",
             "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "url": {
+            "type": "string",
+            "example": "https://…r2.cloudflarestorage.com/…?X-Amz-Signature=…"
           },
           "timestamp_seconds": {
             "type": "number",
@@ -1530,6 +1548,7 @@
         "required": [
           "id",
           "r2_key",
+          "url",
           "timestamp_seconds",
           "public_sample",
           "predictions",
