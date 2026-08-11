@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
@@ -11,6 +12,11 @@ import { defineConfig } from "vite";
  */
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    // The runtime half of the `@/*` alias declared in tsconfig.json. Kept in
+    // sync by hand: a mismatch typechecks and fails at build, or vice versa.
+    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+  },
   build: {
     outDir: "dist",
     // Lowers the threshold at which `vite build` prints its bundle-size
