@@ -8,6 +8,7 @@ import {
   useSetPublicSample,
   useSubmitVerdicts,
 } from "../api/queries";
+import { Button } from "./ui/button";
 import { VerificationCard } from "./VerificationCard";
 
 /**
@@ -93,7 +94,7 @@ export function LabellingSession() {
 
   if (batch.isError) {
     return (
-      <p role="alert" className="text-sm text-[var(--color-failed)]">
+      <p role="alert" className="text-sm text-destructive">
         {batch.error.message}
       </p>
     );
@@ -109,13 +110,15 @@ export function LabellingSession() {
             ? `Batch done. ${stillWaiting} frames still waiting.`
             : "Nothing left to verify — every pre-labelled frame has been ruled on."}
         </p>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
+          className="self-start"
           onClick={nextBatch}
-          className="self-start rounded border border-[var(--color-border)] px-3 py-1 text-sm"
         >
           {stillWaiting > 0 ? "Next batch" : "Check again"}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -123,7 +126,7 @@ export function LabellingSession() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-[var(--color-text-muted)]">
+        <p className="text-sm text-muted-foreground">
           <span className="font-mono">{remainingFrames.length}</span> in this batch,{" "}
           <span className="font-mono">{stillWaiting}</span> in the pool · {frame.video_id} @{" "}
           {frame.timestamp_seconds}s
@@ -147,7 +150,7 @@ export function LabellingSession() {
       </div>
 
       {brokenFrames.has(frame.id) && (
-        <p role="alert" className="text-sm text-[var(--color-failed)]">
+        <p role="alert" className="text-sm text-destructive">
           That frame's image could not be loaded, and re-requesting the batch did not fix it. The
           object may be missing from R2.
         </p>
@@ -200,12 +203,12 @@ export function LabellingSession() {
       />
 
       {submit.isError && (
-        <p role="alert" className="text-sm text-[var(--color-failed)]">
+        <p role="alert" className="text-sm text-destructive">
           {submit.error.message}
         </p>
       )}
       {reportMissing.isError && (
-        <p role="alert" className="text-sm text-[var(--color-failed)]">
+        <p role="alert" className="text-sm text-destructive">
           {reportMissing.error.message}
         </p>
       )}
@@ -214,7 +217,7 @@ export function LabellingSession() {
           `isSuccess` would keep the confirmation on screen across every later
           frame and read as a claim about whichever one is showing. */}
       {reportMissing.data?.image_id === frame.id && (
-        <p className="text-sm text-[var(--color-text-muted)]">Missing-object report recorded.</p>
+        <p className="text-sm text-muted-foreground">Missing-object report recorded.</p>
       )}
     </div>
   );

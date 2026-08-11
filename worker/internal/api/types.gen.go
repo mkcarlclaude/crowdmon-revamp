@@ -16,6 +16,45 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AdminVerdictSource.
+const (
+	AdminVerdictSourceAdmin AdminVerdictSource = "admin"
+	AdminVerdictSourceAnon  AdminVerdictSource = "anon"
+)
+
+// Valid indicates whether the value is a known member of the AdminVerdictSource enum.
+func (e AdminVerdictSource) Valid() bool {
+	switch e {
+	case AdminVerdictSourceAdmin:
+		return true
+	case AdminVerdictSourceAnon:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminVideoImageVerdictState.
+const (
+	NoPredictions AdminVideoImageVerdictState = "no_predictions"
+	Unverified    AdminVideoImageVerdictState = "unverified"
+	Verified      AdminVideoImageVerdictState = "verified"
+)
+
+// Valid indicates whether the value is a known member of the AdminVideoImageVerdictState enum.
+func (e AdminVideoImageVerdictState) Valid() bool {
+	switch e {
+	case NoPredictions:
+		return true
+	case Unverified:
+		return true
+	case Verified:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CompleteRequestStatus.
 const (
 	CompleteRequestStatusDone   CompleteRequestStatus = "done"
@@ -172,6 +211,24 @@ func (e VerdictKind) Valid() bool {
 	}
 }
 
+// Defines values for ListVerdictsParamsSource.
+const (
+	ListVerdictsParamsSourceAdmin ListVerdictsParamsSource = "admin"
+	ListVerdictsParamsSourceAnon  ListVerdictsParamsSource = "anon"
+)
+
+// Valid indicates whether the value is a known member of the ListVerdictsParamsSource enum.
+func (e ListVerdictsParamsSource) Valid() bool {
+	switch e {
+	case ListVerdictsParamsSourceAdmin:
+		return true
+	case ListVerdictsParamsSourceAnon:
+		return true
+	default:
+		return false
+	}
+}
+
 // ActiveClasses defines model for ActiveClasses.
 type ActiveClasses struct {
 	Classes []PrelabelClass `json:"classes"`
@@ -263,10 +320,76 @@ type AdminJob struct {
 	VideoUrl *string `json:"video_url"`
 }
 
+// AdminSession defines model for AdminSession.
+type AdminSession struct {
+	// Email Example: admin@example.com
+	Email string `json:"email"`
+}
+
+// AdminVerdict defines model for AdminVerdict.
+type AdminVerdict struct {
+	// AdjustedXMax Example: 0.48
+	AdjustedXMax *float32 `json:"adjusted_x_max"`
+
+	// AdjustedXMin Example: 0.14
+	AdjustedXMin *float32 `json:"adjusted_x_min"`
+
+	// AdjustedYMax Example: 0.61
+	AdjustedYMax *float32 `json:"adjusted_y_max"`
+
+	// AdjustedYMin Example: 0.22
+	AdjustedYMin *float32 `json:"adjusted_y_min"`
+
+	// AnnotatorId Example: admin@example.com
+	AnnotatorId string `json:"annotator_id"`
+
+	// ClassId Example: 3
+	ClassId int `json:"class_id"`
+
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// Id Example: 1
+	Id int `json:"id"`
+
+	// ImageId Example: 7
+	ImageId int `json:"image_id"`
+
+	// PredictionId Example: 42
+	PredictionId int `json:"prediction_id"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// Source Example: admin
+	Source AdminVerdictSource `json:"source"`
+
+	// TimestampSeconds Example: 42
+	TimestampSeconds float32     `json:"timestamp_seconds"`
+	Verdict          VerdictKind `json:"verdict"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
+// AdminVerdictSource Example: admin
+type AdminVerdictSource string
+
+// AdminVerdictList defines model for AdminVerdictList.
+type AdminVerdictList struct {
+	Verdicts []AdminVerdict `json:"verdicts"`
+}
+
 // AdminVideo defines model for AdminVideo.
 type AdminVideo struct {
 	// CreatedAt Example: 1754099000
 	CreatedAt int `json:"created_at"`
+
+	// FramesSampled Example: 200
+	FramesSampled int `json:"frames_sampled"`
 
 	// Id Example: dQw4w9WgXcQ
 	Id string `json:"id"`
@@ -274,8 +397,49 @@ type AdminVideo struct {
 	// ImageCount Example: 2685
 	ImageCount int `json:"image_count"`
 
+	// ModelId Example: owlvit-base-patch32.onnx
+	ModelId *string `json:"model_id"`
+
+	// PrelabelledAt Example: 1754099500
+	PrelabelledAt *int `json:"prelabelled_at"`
+
 	// Title Example: Genshin Impact — Archon quest
 	Title *string `json:"title"`
+}
+
+// AdminVideoImage defines model for AdminVideoImage.
+type AdminVideoImage struct {
+	// Id Example: 7
+	Id int `json:"id"`
+
+	// Predictions Example: 3
+	Predictions int `json:"predictions"`
+
+	// PublicSample Example: false
+	PublicSample bool `json:"public_sample"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// TimestampSeconds Example: 42
+	TimestampSeconds float32 `json:"timestamp_seconds"`
+
+	// VerdictState Example: unverified
+	VerdictState AdminVideoImageVerdictState `json:"verdict_state"`
+}
+
+// AdminVideoImageVerdictState Example: unverified
+type AdminVideoImageVerdictState string
+
+// AdminVideoImages defines model for AdminVideoImages.
+type AdminVideoImages struct {
+	Images []AdminVideoImage `json:"images"`
+
+	// Total Example: 2685
+	Total int `json:"total"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
 }
 
 // AdminVideoList defines model for AdminVideoList.
@@ -1067,6 +1231,22 @@ type LabellingBatchParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListVerdictsParams defines parameters for ListVerdicts.
+type ListVerdictsParams struct {
+	Limit  *int                      `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int                      `form:"offset,omitempty" json:"offset,omitempty"`
+	Source *ListVerdictsParamsSource `form:"source,omitempty" json:"source,omitempty"`
+}
+
+// ListVerdictsParamsSource defines parameters for ListVerdicts.
+type ListVerdictsParamsSource string
+
+// ListAdminVideoImagesParams defines parameters for ListAdminVideoImages.
+type ListAdminVideoImagesParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // SnapshotSourceParams defines parameters for SnapshotSource.
 type SnapshotSourceParams struct {
 	WorkerId string `form:"worker_id" json:"worker_id"`
@@ -1356,6 +1536,13 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AdminSession Whether the caller has a valid Access session, and who they are
+	//
+	// Reaching this handler at all is the answer: `requireAccess` has already verified the Access assertion and confirmed the email is on the admin allowlist by the time this runs. `AdminLayout` calls it once on mount to decide between the sidebar shell and the `/admin/login` gate screen. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/session (the `AdminSession` operationId).
+	AdminSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListSnapshots Every dataset snapshot built so far, newest first
 	//
 	// M15.1's 'listable with counts and dates' — the whole `snapshots` table (migration 0003), which needs no join: unlike a job, a finished snapshot carries no lease to trim off. Requires a Cloudflare Access assertion.
@@ -1370,9 +1557,16 @@ type ClientInterface interface {
 	// Corresponds with POST /api/admin/snapshots (the `CreateSnapshot` operationId).
 	CreateSnapshot(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListVideos Submitted videos and how many frames each has
+	// ListVerdicts Every verdict, newest first, joined to its frame and class
 	//
-	// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+	// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/verdicts (the `ListVerdicts` operationId).
+	ListVerdicts(ctx context.Context, params *ListVerdictsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListVideos Submitted videos, their frame counts, and their prelabel coverage
+	//
+	// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
 	ListVideos(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1394,6 +1588,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 	SubmitVideo(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAdminVideoImages One video's frames, with prediction counts and verdict state
+	//
+	// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
+	ListAdminVideoImages(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListActiveClasses The classes a prelabel job's detector currently runs against
 	//
@@ -1941,6 +2142,23 @@ func (c *Client) AdminLogin(ctx context.Context, reqEditors ...RequestEditorFn) 
 	return c.Client.Do(req)
 }
 
+// AdminSession Whether the caller has a valid Access session, and who they are
+//
+// Reaching this handler at all is the answer: `requireAccess` has already verified the Access assertion and confirmed the email is on the admin allowlist by the time this runs. `AdminLayout` calls it once on mount to decide between the sidebar shell and the `/admin/login` gate screen. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/session (the `AdminSession` operationId).
+func (c *Client) AdminSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminSessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListSnapshots Every dataset snapshot built so far, newest first
 //
 // M15.1's 'listable with counts and dates' — the whole `snapshots` table (migration 0003), which needs no join: unlike a job, a finished snapshot carries no lease to trim off. Requires a Cloudflare Access assertion.
@@ -1975,9 +2193,26 @@ func (c *Client) CreateSnapshot(ctx context.Context, reqEditors ...RequestEditor
 	return c.Client.Do(req)
 }
 
-// ListVideos Submitted videos and how many frames each has
+// ListVerdicts Every verdict, newest first, joined to its frame and class
 //
-// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/verdicts (the `ListVerdicts` operationId).
+func (c *Client) ListVerdicts(ctx context.Context, params *ListVerdictsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVerdictsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListVideos Submitted videos, their frame counts, and their prelabel coverage
+//
+// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
 func (c *Client) ListVideos(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2020,6 +2255,23 @@ func (c *Client) SubmitVideoWithBody(ctx context.Context, contentType string, bo
 // Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 func (c *Client) SubmitVideo(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSubmitVideoRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAdminVideoImages One video's frames, with prediction counts and verdict state
+//
+// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
+func (c *Client) ListAdminVideoImages(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAdminVideoImagesRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3028,6 +3280,33 @@ func NewAdminLoginRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewAdminSessionRequest constructs an http.Request for the AdminSession method
+func NewAdminSessionRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSnapshotsRequest constructs an http.Request for the ListSnapshots method
 func NewListSnapshotsRequest(server string) (*http.Request, error) {
 	var err error
@@ -3075,6 +3354,84 @@ func NewCreateSnapshotRequest(server string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListVerdictsRequest constructs an http.Request for the ListVerdicts method
+func NewListVerdictsRequest(server string, params *ListVerdictsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/verdicts")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Source != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source", *params.Source, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3145,6 +3502,79 @@ func NewSubmitVideoRequestWithBody(server string, contentType string, body io.Re
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListAdminVideoImagesRequest constructs an http.Request for the ListAdminVideoImages method
+func NewListAdminVideoImagesRequest(server string, id string, params *ListAdminVideoImagesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/videos/%s/images", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -4002,6 +4432,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/login (the `AdminLogin` operationId).
 	AdminLoginWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminLoginResponse, error)
 
+	// AdminSessionWithResponse Whether the caller has a valid Access session, and who they are
+	//
+	// Reaching this handler at all is the answer: `requireAccess` has already verified the Access assertion and confirmed the email is on the admin allowlist by the time this runs. `AdminLayout` calls it once on mount to decide between the sidebar shell and the `/admin/login` gate screen. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/session (the `AdminSession` operationId).
+	AdminSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminSessionResponse, error)
+
 	// ListSnapshotsWithResponse Every dataset snapshot built so far, newest first
 	//
 	// M15.1's 'listable with counts and dates' — the whole `snapshots` table (migration 0003), which needs no join: unlike a job, a finished snapshot carries no lease to trim off. Requires a Cloudflare Access assertion.
@@ -4020,9 +4459,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/admin/snapshots (the `CreateSnapshot` operationId).
 	CreateSnapshotWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateSnapshotResponse, error)
 
-	// ListVideosWithResponse Submitted videos and how many frames each has
+	// ListVerdictsWithResponse Every verdict, newest first, joined to its frame and class
 	//
-	// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+	// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/verdicts (the `ListVerdicts` operationId).
+	ListVerdictsWithResponse(ctx context.Context, params *ListVerdictsParams, reqEditors ...RequestEditorFn) (*ListVerdictsResponse, error)
+
+	// ListVideosWithResponse Submitted videos, their frame counts, and their prelabel coverage
+	//
+	// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -4046,6 +4494,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 	SubmitVideoWithResponse(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitVideoResponse, error)
+
+	// ListAdminVideoImagesWithResponse One video's frames, with prediction counts and verdict state
+	//
+	// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
+	ListAdminVideoImagesWithResponse(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*ListAdminVideoImagesResponse, error)
 
 	// ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
 	//
@@ -5176,6 +5633,68 @@ func (r AdminLoginResponse) ContentType() string {
 	return ""
 }
 
+type AdminSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminSession
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AdminSessionResponse) GetJSON200() *AdminSession {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminSessionResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AdminSessionResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminSessionResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListSnapshotsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5301,6 +5820,75 @@ func (r CreateSnapshotResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateSnapshotResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListVerdictsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminVerdictList
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListVerdictsResponse) GetJSON200() *AdminVerdictList {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListVerdictsResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListVerdictsResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListVerdictsResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListVerdictsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListVerdictsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListVerdictsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListVerdictsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListVerdictsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5439,6 +6027,75 @@ func (r SubmitVideoResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SubmitVideoResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListAdminVideoImagesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminVideoImages
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAdminVideoImagesResponse) GetJSON200() *AdminVideoImages {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListAdminVideoImagesResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListAdminVideoImagesResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListAdminVideoImagesResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListAdminVideoImagesResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAdminVideoImagesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAdminVideoImagesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAdminVideoImagesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAdminVideoImagesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6506,6 +7163,21 @@ func (c *ClientWithResponses) AdminLoginWithResponse(ctx context.Context, reqEdi
 	return ParseAdminLoginResponse(rsp)
 }
 
+// AdminSessionWithResponse Whether the caller has a valid Access session, and who they are
+//
+// Reaching this handler at all is the answer: `requireAccess` has already verified the Access assertion and confirmed the email is on the admin allowlist by the time this runs. `AdminLayout` calls it once on mount to decide between the sidebar shell and the `/admin/login` gate screen. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/session (the `AdminSession` operationId).
+func (c *ClientWithResponses) AdminSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminSessionResponse, error) {
+	rsp, err := c.AdminSession(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminSessionResponse(rsp)
+}
+
 // ListSnapshotsWithResponse Every dataset snapshot built so far, newest first
 //
 // M15.1's 'listable with counts and dates' — the whole `snapshots` table (migration 0003), which needs no join: unlike a job, a finished snapshot carries no lease to trim off. Requires a Cloudflare Access assertion.
@@ -6536,9 +7208,24 @@ func (c *ClientWithResponses) CreateSnapshotWithResponse(ctx context.Context, re
 	return ParseCreateSnapshotResponse(rsp)
 }
 
-// ListVideosWithResponse Submitted videos and how many frames each has
+// ListVerdictsWithResponse Every verdict, newest first, joined to its frame and class
 //
-// What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.
+// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/verdicts (the `ListVerdicts` operationId).
+func (c *ClientWithResponses) ListVerdictsWithResponse(ctx context.Context, params *ListVerdictsParams, reqEditors ...RequestEditorFn) (*ListVerdictsResponse, error) {
+	rsp, err := c.ListVerdicts(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVerdictsResponse(rsp)
+}
+
+// ListVideosWithResponse Submitted videos, their frame counts, and their prelabel coverage
+//
+// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -6579,6 +7266,21 @@ func (c *ClientWithResponses) SubmitVideoWithResponse(ctx context.Context, body 
 		return nil, err
 	}
 	return ParseSubmitVideoResponse(rsp)
+}
+
+// ListAdminVideoImagesWithResponse One video's frames, with prediction counts and verdict state
+//
+// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
+func (c *ClientWithResponses) ListAdminVideoImagesWithResponse(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*ListAdminVideoImagesResponse, error) {
+	rsp, err := c.ListAdminVideoImages(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAdminVideoImagesResponse(rsp)
 }
 
 // ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
@@ -7667,6 +8369,53 @@ func ParseAdminLoginResponse(rsp *http.Response) (*AdminLoginResponse, error) {
 	return response, nil
 }
 
+// ParseAdminSessionResponse parses an HTTP response from a AdminSessionWithResponse call
+func ParseAdminSessionResponse(rsp *http.Response) (*AdminSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListSnapshotsResponse parses an HTTP response from a ListSnapshotsWithResponse call
 func ParseListSnapshotsResponse(rsp *http.Response) (*ListSnapshotsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -7734,6 +8483,60 @@ func ParseCreateSnapshotResponse(rsp *http.Response) (*CreateSnapshotResponse, e
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListVerdictsResponse parses an HTTP response from a ListVerdictsWithResponse call
+func ParseListVerdictsResponse(rsp *http.Response) (*ListVerdictsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListVerdictsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminVerdictList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ErrorResponse
@@ -7863,6 +8666,60 @@ func ParseSubmitVideoResponse(rsp *http.Response) (*SubmitVideoResponse, error) 
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListAdminVideoImagesResponse parses an HTTP response from a ListAdminVideoImagesWithResponse call
+func ParseListAdminVideoImagesResponse(rsp *http.Response) (*ListAdminVideoImagesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAdminVideoImagesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminVideoImages
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest ErrorResponse

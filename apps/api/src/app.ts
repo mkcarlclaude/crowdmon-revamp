@@ -33,6 +33,7 @@ import {
   labellingStatsRoute,
 } from "./routes/admin-labelling";
 import { adminLoginHandler, adminLoginRoute } from "./routes/admin-login";
+import { adminSessionHandler, adminSessionRoute } from "./routes/admin-session";
 import {
   createSnapshotHandler,
   createSnapshotRoute,
@@ -42,9 +43,15 @@ import {
 import {
   createMissingReportHandler,
   createMissingReportRoute,
+  listVerdictsHandler,
+  listVerdictsRoute,
   submitVerdictsHandler,
   submitVerdictsRoute,
 } from "./routes/admin-verdicts";
+import {
+  listAdminVideoImagesHandler,
+  listAdminVideoImagesRoute,
+} from "./routes/admin-video-images";
 import { listActiveClassesHandler, listActiveClassesRoute } from "./routes/classes";
 import { healthHandler, healthRoute } from "./routes/health";
 import {
@@ -174,6 +181,9 @@ app.openapi(getImageRoute, getImageHandler);
 app.openapi(reportDryRunRoute, reportDryRunHandler);
 app.openapi(submitVerdictsRoute, submitVerdictsHandler);
 app.openapi(createMissingReportRoute, createMissingReportHandler);
+app.openapi(listVerdictsRoute, listVerdictsHandler);
+app.openapi(listAdminVideoImagesRoute, listAdminVideoImagesHandler);
+app.openapi(adminSessionRoute, adminSessionHandler);
 app.openapi(updatePublicSampleRoute, updatePublicSampleHandler);
 app.openapi(publicFrameRoute, publicFrameHandler);
 app.openapi(submitPublicVerdictsRoute, submitPublicVerdictsHandler);

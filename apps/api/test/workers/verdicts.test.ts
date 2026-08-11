@@ -282,3 +282,107 @@ describe("submitting a frame's rulings", () => {
     expect(res.status).toBe(401);
   });
 });
+
+/**
+ * `GET /api/admin/verdicts` (M16, ROADMAP M16.4): reading the same rows this
+ * file's other endpoint writes, joined out to the frame and class each one
+ * belongs to.
+ */
+describe("GET /api/admin/verdicts", () => {
+  async function list(query = ""): Promise<Response> {
+    return app.request(`/api/admin/verdicts${query}`, { headers: await adminHeaders() }, env);
+  }
+
+  it("rejects an unauthenticated request", async () => {
+    const res = await app.request("/api/admin/verdicts", {}, env);
+    expect(res.status).toBe(401);
+  });
+
+  it("returns an empty list rather than an error when nothing has been ruled on", async () => {
+    const res = await list();
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ verdicts: [] });
+  });
+
+  it("joins a verdict out to its frame and class, newest first", async () => {
+    const { videoId, classId, imageId, predictionId } = await seedPool();
+    await seedVerdict(predictionId);
+
+    const res = await list();
+    const body = (await res.json()) as { verdicts: Array<Record<string, unknown>> };
+
+    expect(res.status).toBe(200);
+    expect(body.verdicts).toHaveLength(1);
+    expect(body.verdicts[0]).toMatchObject({
+      prediction_id: predictionId,
+      verdict: "accept",
+      source: "admin",
+      annotator_id: "someone@example.com",
+      image_id: imageId,
+      video_id: videoId,
+      class_id: classId,
+      class_name: "Paimon",
+    });
+  });
+
+  it("orders newest first", async () => {
+    // Two verdicts on the same prediction — append-only (migration 0003
+    // refuses uniqueness on `prediction_id`), so ruling one box twice is an
+    // ordinary way to get two rows in a known order without seeding two
+    // frames just to check the sort.
+    const { predictionId } = await seedPool();
+    await seedVerdict(predictionId, { verdict: "reject" });
+    await seedVerdict(predictionId, { verdict: "accept" });
+
+    const res = await list();
+    const body = (await res.json()) as { verdicts: Array<{ verdict: string }> };
+
+    expect(body.verdicts.map((v) => v.verdict)).toEqual(["accept", "reject"]);
+  });
+
+  it("filters by source without pooling admin and anonymous rulings", async () => {
+    const { predictionId } = await seedPool();
+    await seedVerdict(predictionId, { source: "admin" });
+    await seedVerdict(predictionId, { source: "anon", annotatorId: "session-abc" });
+
+    const adminOnly = await list("?source=admin");
+    await expect(adminOnly.json()).resolves.toMatchObject({
+      verdicts: [{ source: "admin" }],
+    });
+
+    const anonOnly = await list("?source=anon");
+    await expect(anonOnly.json()).resolves.toMatchObject({
+      verdicts: [{ source: "anon", annotator_id: "session-abc" }],
+    });
+
+    const both = await list();
+    const body = (await both.json()) as { verdicts: unknown[] };
+    expect(body.verdicts).toHaveLength(2);
+  });
+
+  it("pages with limit and offset", async () => {
+    const { predictionId } = await seedPool();
+    // Three verdicts on one prediction — append-only, so ruling the same box
+    // three times over is an ordinary way to get three rows without seeding
+    // three frames just to page through them.
+    await seedVerdict(predictionId, { verdict: "reject" });
+    await seedVerdict(predictionId, { verdict: "accept" });
+    await seedVerdict(predictionId, { verdict: "reject" });
+
+    const page = await list("?limit=2&offset=1");
+    const body = (await page.json()) as { verdicts: Array<{ id: number }> };
+
+    expect(body.verdicts).toHaveLength(2);
+
+    const all = await list();
+    const allBody = (await all.json()) as { verdicts: Array<{ id: number }> };
+    expect(body.verdicts.map((v) => v.id)).toEqual(allBody.verdicts.slice(1, 3).map((v) => v.id));
+  });
+
+  it("rejects an out-of-range limit", async () => {
+    await seedPool();
+    const res = await list("?limit=0");
+    expect(res.status).toBe(400);
+  });
+});

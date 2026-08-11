@@ -3,7 +3,15 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    // shadcn/ui's generated components import each other through `@/`, and the
+    // CLI writes those imports itself. The alias has to exist in both this file
+    // and `vite.config.ts` — TypeScript resolves it for the typecheck, Vite for
+    // the build, and neither reads the other's copy.
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
   },
   "include": ["src", "test", "vite.config.ts"]
 }

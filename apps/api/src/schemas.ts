@@ -1176,13 +1176,28 @@ export const SnapshotJob = z
   .openapi("SnapshotJob");
 
 /**
- * One video as the dry-run form needs to see it: what to call it, and whether
- * it has any frames to sample.
+ * One video, for two screens that turned out to want almost the same row:
+ * the dry-run form's picker (M12.2) and `/admin/detection`'s coverage table
+ * (M16, ROADMAP M16 "scope line"). Extended rather than given `/admin/detection`
+ * a route of its own — `listVideosHandler` already computes one row per video
+ * on every call, and M16's own plan is explicit that this milestone adds
+ * exactly three *new* routes; three more fields on an existing one is not a
+ * fourth.
  *
  * `image_count` rather than a boolean: a video whose extraction is still
  * running has some frames and will have more, and an admin choosing between
  * "12 frames so far" and "2,685" is making a real choice about how meaningful
  * a 50-frame sample off it will be.
+ *
+ * `frames_sampled` is deliberately not derived from "how many frames carry a
+ * prediction." M11.4 runs a sampled image against every active class, and a
+ * menu, loading screen or black frame — VerificationCard's own comment calls
+ * these "the common case in a sampled timeline" — is exactly the frame a
+ * zero-shot detector is likeliest to propose nothing on, so counting
+ * predictions would undercount sampling specifically for the frames this
+ * system already expects to be empty. `images.selection_reason` (migration
+ * 0004) is stamped at selection time regardless of what the detector later
+ * finds, which is the fact this column exists to answer honestly.
  */
 const AdminVideo = z
   .object({
@@ -1190,6 +1205,13 @@ const AdminVideo = z
     title: z.string().nullable().openapi({ example: "Genshin Impact — Archon quest" }),
     image_count: z.int().nonnegative().openapi({ example: 2685 }),
     created_at: z.int().openapi({ example: 1_754_099_000 }),
+    frames_sampled: z.int().nonnegative().openapi({ example: 200 }),
+    // Null until at least one prediction exists for the video — no prelabel
+    // job has reported anything yet, which is a different fact from "reported
+    // and found zero classes," the same distinction `DryRun`'s own `boxes`
+    // field draws for the same reason.
+    model_id: z.string().nullable().openapi({ example: "owlvit-base-patch32.onnx" }),
+    prelabelled_at: z.int().nullable().openapi({ example: 1_754_099_500 }),
   })
   .openapi("AdminVideo");
 
@@ -1708,3 +1730,165 @@ export const CreatePublicVerdictsRequest = z
     verdicts: z.array(PublicStagedVerdict).min(1).max(MAX_VERDICTS_PER_IMAGE),
   })
   .openapi("CreatePublicVerdictsRequest");
+
+/**
+ * What a gate screen needs before it can stop being one (M16, CONTEXT.md §Q19
+ * amendment).
+ *
+ * Reaching the handler behind `requireAccess` already answers the only
+ * question this route exists for — the 401/403 `requireAccess` itself
+ * produces are the whole failure surface, and nothing here adds another.
+ * `email` rather than an empty 204: `AdminLayout`'s sidebar names who is
+ * signed in, and that value is already sitting in the assertion `session`
+ * verified — a second request to re-derive it would be the round trip this
+ * one exists to avoid.
+ */
+export const AdminSession = z
+  .object({
+    email: z.string().openapi({ example: "admin@example.com" }),
+  })
+  .openapi("AdminSession");
+
+/**
+ * `limit`/`offset` rather than a cursor, for both new list routes below
+ * (M16). CONTEXT.md §Q19's amendment: the tables are small, the caller is one
+ * operator, and D1's 100-bound-parameter ceiling (`d1-bound-param-limit`) is
+ * nowhere near either query. Shared rather than declared twice — `verdicts`
+ * and `videos/{id}/images` page the same way for the same reason, and two
+ * copies of this pair is two ceilings that could quietly drift apart.
+ */
+const PAGE_LIMIT_DEFAULT = 50;
+const PAGE_LIMIT_MAX = 200;
+
+const limitParam = z
+  .string()
+  .regex(/^\d+$/)
+  .transform(Number)
+  .refine((n) => n >= 1 && n <= PAGE_LIMIT_MAX)
+  .optional()
+  .openapi({ param: { name: "limit", in: "query" }, type: "integer", example: PAGE_LIMIT_DEFAULT });
+
+const offsetParam = z
+  .string()
+  .regex(/^\d+$/)
+  .transform(Number)
+  .optional()
+  .openapi({ param: { name: "offset", in: "query" }, type: "integer", example: 0 });
+
+/** The default `limitParam` falls back to when a caller omits it — both new routes'. */
+export const ADMIN_PAGE_LIMIT_DEFAULT = PAGE_LIMIT_DEFAULT;
+
+export const AdminVerdictListQuery = z.object({
+  limit: limitParam,
+  offset: offsetParam,
+  // Unfiltered by default: the page shows every verdict, admin and anon
+  // alike, with `source` on each row already (CONTEXT.md §Q10's two tiers
+  // stay visually distinct without narrowing the query). Filtering is a
+  // convenience for "just what I ruled on", not the route's only mode.
+  source: z
+    .enum(["admin", "anon"])
+    .optional()
+    .openapi({ param: { name: "source", in: "query" } }),
+});
+
+/**
+ * One verdict, joined out to the prediction, image and class it belongs to
+ * (M16's "reading back what was labelled"). Denormalized on purpose — the
+ * annotations page renders one row per verdict, and every field it shows
+ * (which frame, which class, whose ruling) lives here so the page needs no
+ * second request per row the way five separate lookups would force.
+ *
+ * `verdict` reuses `VerdictKind` rather than a narrower type: the column
+ * holds all three values regardless of `source` (migration 0003 puts no
+ * `CHECK` tying the two together), so a public visitor's row is exactly as
+ * capable of being `'accept'` as an admin's — the two-tier split (§Q10) is
+ * `source`, never the verdict kind itself.
+ */
+const AdminVerdict = z
+  .object({
+    id: z.int().positive().openapi({ example: 1 }),
+    prediction_id: z.int().positive().openapi({ example: 42 }),
+    verdict: VerdictKind,
+    adjusted_x_min: z.number().min(0).max(1).nullable().openapi({ example: 0.14 }),
+    adjusted_y_min: z.number().min(0).max(1).nullable().openapi({ example: 0.22 }),
+    adjusted_x_max: z.number().min(0).max(1).nullable().openapi({ example: 0.48 }),
+    adjusted_y_max: z.number().min(0).max(1).nullable().openapi({ example: 0.61 }),
+    source: z.enum(["admin", "anon"]).openapi({ example: "admin" }),
+    annotator_id: z.string().openapi({ example: "admin@example.com" }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+    image_id: z.int().positive().openapi({ example: 7 }),
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    r2_key: z.string().openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    timestamp_seconds: z.number().openapi({ example: 42 }),
+    class_id: z.int().positive().openapi({ example: 3 }),
+    class_name: z.string().openapi({ example: "Paimon" }),
+  })
+  .openapi("AdminVerdict");
+
+/** Named `AdminVerdictList`, not after the `listVerdicts` operation, matching every other list schema in this file. */
+export const AdminVerdictList = z
+  .object({ verdicts: z.array(AdminVerdict) })
+  .openapi("AdminVerdictList");
+
+/**
+ * The `{id}` path parameter for `GET /api/admin/videos/{id}/images` (M16).
+ *
+ * Named `id` rather than `video_id` — unlike `VideoIdParam` above — because
+ * that is the segment name the plan and the route path both use; the two
+ * params are not interchangeable despite naming the same kind of value; this
+ * one belongs to a browser-facing admin route with no worker-lease check
+ * behind it, where `VideoIdParam` belongs to `listVideoImagesRoute`'s
+ * worker-facing one.
+ */
+export const AdminVideoIdParam = z.object({
+  id: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: "id", in: "path" }, example: "dQw4w9WgXcQ" }),
+});
+
+export const AdminVideoImagesQuery = z.object({
+  limit: limitParam,
+  offset: offsetParam,
+});
+
+/**
+ * How a frame reads on the browsable per-video grid (M16, ROADMAP M16
+ * "prelabel re-run" scope line). Not the same shape as `VideoImage` above —
+ * that one is the worker's sampling pool (`r2_key` and a timestamp, nothing
+ * else, because `ImageSampler` needs nothing else); this one is an operator
+ * deciding what to look at next, so it carries a prediction count and a
+ * verdict state a worker has no use for.
+ *
+ * `verdict_state` is computed rather than stored, from the same admin-tier
+ * "unruled" definition `labellingStatsHandler` already uses (CONTEXT.md
+ * §Q10): a frame with no predictions at all is not merely "unverified" —
+ * there is nothing on it for an operator to rule on — so it gets its own
+ * state rather than being lumped in with a frame still waiting on a ruling.
+ */
+const AdminVideoImage = z
+  .object({
+    id: z.int().positive().openapi({ example: 7 }),
+    r2_key: z.string().openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    timestamp_seconds: z.number().openapi({ example: 42 }),
+    public_sample: z.boolean().openapi({ example: false }),
+    predictions: z.int().nonnegative().openapi({ example: 3 }),
+    verdict_state: z
+      .enum(["no_predictions", "unverified", "verified"])
+      .openapi({ example: "unverified" }),
+  })
+  .openapi("AdminVideoImage");
+
+/**
+ * Named `AdminVideoImages`, not after the `listAdminVideoImages` operation,
+ * matching `VideoImages` above. `total` is the video's whole frame count —
+ * unbounded by `limit` — so the grid can render "1–50 of 2,685" without a
+ * second request; `images` is the one page `limit`/`offset` selected.
+ */
+export const AdminVideoImages = z
+  .object({
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    total: z.int().nonnegative().openapi({ example: 2685 }),
+    images: z.array(AdminVideoImage),
+  })
+  .openapi("AdminVideoImages");

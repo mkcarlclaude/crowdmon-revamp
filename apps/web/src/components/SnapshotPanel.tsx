@@ -1,4 +1,6 @@
 import { useCreateSnapshot, useJobs, useSnapshots } from "../api/queries";
+import { Button } from "./ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 
 /**
  * Building and browsing dataset snapshots (M15.1).
@@ -10,6 +12,8 @@ import { useCreateSnapshot, useJobs, useSnapshots } from "../api/queries";
  * polled for the queue section above) is read again here rather than a
  * second endpoint, purely to say "a build is running" without inventing a
  * new poll.
+ *
+ * Restyled onto shadcn/ui's `Button` and `Table` in M16.
  */
 export function SnapshotPanel() {
   const create = useCreateSnapshot();
@@ -23,53 +27,52 @@ export function SnapshotPanel() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <button
+        <Button
           type="button"
           disabled={create.isPending || running}
           onClick={() => create.mutate()}
-          className="rounded border border-[var(--color-border)] px-3 py-1 text-sm disabled:opacity-50"
         >
           {create.isPending ? "Queueing…" : running ? "Building…" : "Build a snapshot"}
-        </button>
+        </Button>
         {create.isError && (
-          <span role="alert" className="text-sm text-[var(--color-failed)]">
+          <span role="alert" className="text-sm text-destructive">
             {create.error.message}
           </span>
         )}
       </div>
 
-      {snapshots.isPending && <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>}
+      {snapshots.isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
       {snapshots.error && (
-        <p role="alert" className="text-sm text-[var(--color-failed)]">
+        <p role="alert" className="text-sm text-destructive">
           {snapshots.error.message}
         </p>
       )}
       {snapshots.data && snapshots.data.snapshots.length === 0 && (
-        <p className="text-sm text-[var(--color-text-muted)]">No snapshots built yet.</p>
+        <p className="text-sm text-muted-foreground">No snapshots built yet.</p>
       )}
       {snapshots.data && snapshots.data.snapshots.length > 0 && (
-        <table className="text-sm">
-          <thead>
-            <tr className="text-left text-[var(--color-text-muted)]">
-              <th className="pr-4 font-normal">R2 key</th>
-              <th className="pr-4 font-normal">Images</th>
-              <th className="pr-4 font-normal">Labels</th>
-              <th className="pr-4 font-normal">Built</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>R2 key</TableHead>
+              <TableHead>Images</TableHead>
+              <TableHead>Labels</TableHead>
+              <TableHead>Built</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {snapshots.data.snapshots.map((snapshot) => (
-              <tr key={snapshot.id}>
-                <td className="pr-4 font-mono">{snapshot.r2_key}</td>
-                <td className="pr-4">{snapshot.image_count}</td>
-                <td className="pr-4">{snapshot.label_count}</td>
-                <td className="pr-4 text-[var(--color-text-muted)]">
+              <TableRow key={snapshot.id}>
+                <TableCell className="font-mono">{snapshot.r2_key}</TableCell>
+                <TableCell>{snapshot.image_count}</TableCell>
+                <TableCell>{snapshot.label_count}</TableCell>
+                <TableCell className="text-muted-foreground">
                   {new Date(snapshot.created_at * 1000).toLocaleString()}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       )}
     </div>
   );

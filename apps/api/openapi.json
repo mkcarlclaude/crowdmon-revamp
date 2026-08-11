@@ -941,13 +941,31 @@
           "created_at": {
             "type": "integer",
             "example": 1754099000
+          },
+          "frames_sampled": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 200
+          },
+          "model_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "owlvit-base-patch32.onnx"
+          },
+          "prelabelled_at": {
+            "type": "integer",
+            "nullable": true,
+            "example": 1754099500
           }
         },
         "required": [
           "id",
           "title",
           "image_count",
-          "created_at"
+          "created_at",
+          "frames_sampled",
+          "model_id",
+          "prelabelled_at"
         ]
       },
       "DryRun": {
@@ -1323,6 +1341,212 @@
             "example": 3
           }
         }
+      },
+      "AdminVerdictList": {
+        "type": "object",
+        "properties": {
+          "verdicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminVerdict"
+            }
+          }
+        },
+        "required": [
+          "verdicts"
+        ]
+      },
+      "AdminVerdict": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "prediction_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 42
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/VerdictKind"
+          },
+          "adjusted_x_min": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.14
+          },
+          "adjusted_y_min": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.22
+          },
+          "adjusted_x_max": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.48
+          },
+          "adjusted_y_max": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.61
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "anon"
+            ],
+            "example": "admin"
+          },
+          "annotator_id": {
+            "type": "string",
+            "example": "admin@example.com"
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          },
+          "image_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "r2_key": {
+            "type": "string",
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "example": 42
+          },
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 3
+          },
+          "class_name": {
+            "type": "string",
+            "example": "Paimon"
+          }
+        },
+        "required": [
+          "id",
+          "prediction_id",
+          "verdict",
+          "adjusted_x_min",
+          "adjusted_y_min",
+          "adjusted_x_max",
+          "adjusted_y_max",
+          "source",
+          "annotator_id",
+          "created_at",
+          "image_id",
+          "video_id",
+          "r2_key",
+          "timestamp_seconds",
+          "class_id",
+          "class_name"
+        ]
+      },
+      "AdminVideoImages": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 2685
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminVideoImage"
+            }
+          }
+        },
+        "required": [
+          "video_id",
+          "total",
+          "images"
+        ]
+      },
+      "AdminVideoImage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "r2_key": {
+            "type": "string",
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "example": 42
+          },
+          "public_sample": {
+            "type": "boolean",
+            "example": false
+          },
+          "predictions": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 3
+          },
+          "verdict_state": {
+            "type": "string",
+            "enum": [
+              "no_predictions",
+              "unverified",
+              "verified"
+            ],
+            "example": "unverified"
+          }
+        },
+        "required": [
+          "id",
+          "r2_key",
+          "timestamp_seconds",
+          "public_sample",
+          "predictions",
+          "verdict_state"
+        ]
+      },
+      "AdminSession": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "admin@example.com"
+          }
+        },
+        "required": [
+          "email"
+        ]
       },
       "AdminImage": {
         "type": "object",
@@ -2075,8 +2299,8 @@
         "tags": [
           "admin"
         ],
-        "summary": "Submitted videos and how many frames each has",
-        "description": "What the dry-run form picks from (M12.2). `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a 50-frame sample off it is. Requires a Cloudflare Access assertion.",
+        "summary": "Submitted videos, their frame counts, and their prelabel coverage",
+        "description": "What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.",
         "responses": {
           "200": {
             "description": "Videos, newest first",
@@ -3412,6 +3636,244 @@
           },
           "404": {
             "description": "No image with this id, or no class with the given class_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/verdicts": {
+      "get": {
+        "operationId": "listVerdicts",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Every verdict, newest first, joined to its frame and class",
+        "description": "Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 0
+            },
+            "required": false,
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "admin",
+                "anon"
+              ]
+            },
+            "required": false,
+            "name": "source",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verdicts, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminVerdictList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An out-of-range limit or offset, or an invalid source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/videos/{id}/images": {
+      "get": {
+        "operationId": "listAdminVideoImages",
+        "tags": [
+          "admin"
+        ],
+        "summary": "One video's frames, with prediction counts and verdict state",
+        "description": "Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dQw4w9WgXcQ"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 0
+            },
+            "required": false,
+            "name": "offset",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "This video's frame count and one page of its frames",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminVideoImages"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An out-of-range limit or offset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/session": {
+      "get": {
+        "operationId": "adminSession",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Whether the caller has a valid Access session, and who they are",
+        "description": "Reaching this handler at all is the answer: `requireAccess` has already verified the Access assertion and confirmed the email is on the admin allowlist by the time this runs. `AdminLayout` calls it once on mount to decide between the sidebar shell and the `/admin/login` gate screen. Requires a Cloudflare Access assertion.",
+        "responses": {
+          "200": {
+            "description": "A valid session, and the identity behind it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSession"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
             "content": {
               "application/json": {
                 "schema": {

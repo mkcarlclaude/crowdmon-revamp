@@ -1,6 +1,9 @@
 import { type FormEvent, useId, useState } from "react";
 import { useCreateClass } from "../api/queries";
 import { ApiError } from "../api/session";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 
 /**
  * Adding a class (M12.1) — the thing that used to require writing a migration
@@ -14,8 +17,13 @@ import { ApiError } from "../api/session";
  *
  * Client-side validation is thin for `SubmitForm`'s reason: the wire contract
  * already bounds both fields, and a second copy of those bounds here is a
- * second definition that drifts. The empty check exists only to avoid a round
- * trip that can only fail.
+ * second definition that drifts.
+ *
+ * Restyled onto shadcn/ui primitives in M16. The prompt field stays a plain
+ * `<textarea>` — `textarea` is not in the plan's expected component set, and
+ * a two-row free-text field has nothing a generated wrapper would add over
+ * the existing token classes — restyled to the new token names for visual
+ * consistency with the fields around it.
  */
 export function AddClassForm() {
   const nameId = useId();
@@ -42,24 +50,23 @@ export function AddClassForm() {
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-2">
-      <label htmlFor={nameId} className="text-sm text-[var(--color-text-muted)]">
+      <Label htmlFor={nameId} className="text-muted-foreground">
         Class name
-      </label>
-      <input
+      </Label>
+      <Input
         id={nameId}
         value={name}
         onChange={(event) => setName(event.target.value)}
         placeholder="Nahida"
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-2 text-sm"
       />
 
-      <label htmlFor={promptId} className="text-sm text-[var(--color-text-muted)]">
+      <Label htmlFor={promptId} className="text-muted-foreground">
         Appearance prompt
-      </label>
+      </Label>
       {/* Said here rather than only in the docs: an open-vocabulary detector
           has no concept of a proper noun, so a prompt that names the character
           finds nothing and looks like a bad model. */}
-      <p className="text-xs text-[var(--color-text-muted)]">
+      <p className="text-xs text-muted-foreground">
         Describe what the detector should see, not who it is — "a small girl with long
         white-and-green hair", not "Nahida".
       </p>
@@ -68,18 +75,14 @@ export function AddClassForm() {
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}
         rows={2}
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-2 text-sm"
+        className="rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
       />
 
       <div className="flex items-baseline gap-3">
-        <button
-          type="submit"
-          disabled={create.isPending}
-          className="rounded border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
-        >
+        <Button type="submit" disabled={create.isPending}>
           {create.isPending ? "Adding…" : "Add class"}
-        </button>
-        <span className="text-xs text-[var(--color-text-muted)]">
+        </Button>
+        <span className="text-xs text-muted-foreground">
           Added classes start retired — activate one once its prompt has been tried.
         </span>
       </div>
@@ -101,7 +104,7 @@ function CreateError({ error }: { error: Error }) {
   const issues = error instanceof ApiError ? error.issues : undefined;
 
   return (
-    <div role="alert" className="text-sm text-[var(--color-failed)]">
+    <div role="alert" className="text-sm text-destructive">
       <p>{error.message}</p>
       {issues && issues.length > 0 && (
         <ul className="mt-1 list-disc pl-5">

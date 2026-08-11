@@ -844,6 +844,60 @@ dataset counts, model versions, accept/adjust/reject rates); OTel holds system d
 (latency, throughput, queue depth, error rates). Admin shows the first and links out
 for the second. Two dashboards that disagree will disagree at the worst moment.
 
+**A login screen for an auth scheme with no login form (M16).** Access mints a session
+by redirecting the browser through an identity provider; there is no password field
+this application ever collects and no `POST` it could submit one to. That made a login
+*screen* look redundant right up until M16 built a sidebar shell with routed sub-pages,
+at which point the question stopped being "does this app need a credential form" — it
+never did — and became "where does an unauthenticated browser land." Before M16 the
+answer was nowhere in particular: `SessionExpiredBanner` (M5.4) rendered inline wherever
+a request happened to fail, which is a fine answer for a session that expires *mid-visit*
+and no answer at all for a browser that never had one — there was nothing to render a
+banner over. `/admin/login` is the destination: product name, one line of copy, one
+button that calls the same `reauthenticate()` `SessionExpiredBanner` already called,
+navigating to `/api/admin/login` because that is the path Access actually intercepts
+(the amendment above, "The recovery was broken," is why nowhere else works). It is a
+gate screen, not a credential form, because Access is still the entire auth scheme —
+this page collects nothing Access does not already collect itself.
+
+**The session probe is cosmetics, and saying so twice is the point.** `AdminLayout`
+calls the new `GET /api/admin/session` once on mount and redirects to `/admin/login` on
+anything but success. That redirect is a `<Navigate>` — client-side routing, the same
+mechanism this section has always said proves nothing — and it decides only which
+component tree renders in a browser that was never going to reach a real row of data
+either way, because `requireAccess` gates every `/api/admin/*` call this shell makes
+regardless of what the sidebar shows. **This does not amend "gate the API, not the UI
+route."** It could not: the route table in `apps/web/src/routes.tsx` still says the
+admin bundle is assumed public, in the same comment it has carried since M5.1, and
+`GET /api/admin/session` is behind `requireAccess` like every other admin endpoint —
+reaching its handler *is* the check, the response body is a courtesy. What changed is
+only that an unauthenticated visitor now sees a button instead of a shell issuing failed
+requests at a sidebar with nothing behind it; a stranger who skips straight to
+`/admin/dashboard` by typing the URL gets exactly as far as they did before M16, which
+is to say exactly as far as `requireAccess` lets them.
+
+**The detector re-run was scoped out of M16, and the cost is worth naming rather than
+leaving implicit.** `/admin/detection` shows prelabel coverage per video — how many
+frames exist, how many were sampled, under which model, when — and stops there
+deliberately. Re-running the detector over more of a video's frames to seed the
+verification pool needs four things this milestone does not have: a migration, because
+`idx_jobs_one_prelabel_per_video` (migrations 0005, 0007, 0008) permits exactly one
+`prelabel` job per video and a second sampling pass is a new kind of row this schema
+cannot currently represent; an admin enqueue route, since nothing today lets a browser
+queue a `prelabel` job at all — `completeJobHandler` does it automatically, and only
+once, when a video's last `chunk` job finishes; a Go worker change so `ImageSampler`
+draws only frames not already sampled, rather than re-running the same 200-image budget
+over a pool that has grown; and an explicit answer to this section's own provenance
+rule — a second sampling pass under a different threshold or model version has to stamp
+that regime onto the rows it produces, or the dataset silently becomes the "unrecorded
+mixture of regimes" the paragraph above this one already warns against. That is a
+milestone with a worker release inside it, not a button on an existing page, and the
+new-job-kind rollout order applies to it exactly as it did to `snapshot` (README.md's
+"v2 acceptance run" records job 328 failing terminally for this reason) — a re-run job
+queued before every worker polling the queue understands it does not wait quietly, it
+fails loud. M16 ships the read half so the page that eventually grows that button
+already tells the truth without one.
+
 ---
 
 ## 8. Rejected options

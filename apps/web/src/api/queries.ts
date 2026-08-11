@@ -2,6 +2,9 @@ import {
   AdminClass,
   AdminClassList,
   AdminImage,
+  AdminSession,
+  AdminVerdictList,
+  AdminVideoImages,
   AdminVideoList,
   type CreateClassRequest,
   type CreateDryRunRequest,
@@ -26,6 +29,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { z } from "zod";
 import { getAnonSessionId } from "./anon-session";
 import { apiFetch } from "./client";
+
+export const adminSessionKey = ["admin", "session"] as const;
+
+/**
+ * Whether the browser already has an Access session (M16, CONTEXT.md §Q19
+ * amendment). `AdminLayout` calls this once on mount and treats any error —
+ * 401, 403, or the `SessionExpiredError` a cross-origin Access redirect
+ * throws (`apps/web/src/api/session.ts`) — identically: redirect to
+ * `/admin/login`. There is no case here worth telling apart the way
+ * `SessionExpiredBanner` tells a mid-session expiry apart from other
+ * failures, because this probe has nothing else to fall back to showing —
+ * unlike a page with data already on screen, there is no "everything except
+ * this one thing" to keep rendering.
+ */
+export function useAdminSession() {
+  return useQuery({
+    queryKey: adminSessionKey,
+    queryFn: () => apiFetch("/api/admin/session", AdminSession),
+  });
+}
 
 export const jobsKey = ["jobs"] as const;
 
@@ -213,6 +236,13 @@ export function useSetPublicSample() {
             ),
           },
       );
+      // M16: `/admin/videos/:id` renders this same flag off a different
+      // query, keyed by video id, limit and offset rather than by image —
+      // this mutation has no video id to patch the one page in the cache,
+      // so every cached page of every video is invalidated instead. Broad,
+      // but cheap: the underlying table is small and an admin flagging a
+      // frame is not a request rate this needs to optimise around.
+      queryClient.invalidateQueries({ queryKey: adminVideoImagesKeyPrefix });
     },
   });
 }
@@ -369,5 +399,66 @@ export function useCreateSnapshot() {
       queryClient.invalidateQueries({ queryKey: jobsKey });
       queryClient.invalidateQueries({ queryKey: snapshotsKey });
     },
+  });
+}
+
+export const adminVideoImagesKeyPrefix = ["admin", "video-images"] as const;
+
+/** One page of one video's frames, so two pages of the same video get their own cache entry. */
+export const adminVideoImagesKey = (videoId: string, limit: number, offset: number) =>
+  [...adminVideoImagesKeyPrefix, videoId, limit, offset] as const;
+
+/**
+ * One video's frames, with prediction counts and verdict state, paginated
+ * (M16, ROADMAP M16.5): what `/admin/videos/:id` reads.
+ *
+ * A new route (`GET /api/admin/videos/{id}/images`), not the worker-facing
+ * `/api/videos/{video_id}/images` `useVideos`'s sibling hooks never touch —
+ * that endpoint requires a held `prelabel`/`dryrun` lease
+ * (`idx_jobs_one_prelabel_per_video`) no browser holds, which is exactly why
+ * this route exists separately (see the route's own comment in
+ * `admin-video-images.ts`).
+ */
+export function useAdminVideoImages(
+  videoId: string,
+  { limit, offset }: { limit: number; offset: number },
+) {
+  return useQuery({
+    queryKey: adminVideoImagesKey(videoId, limit, offset),
+    queryFn: () =>
+      apiFetch(
+        `/api/admin/videos/${encodeURIComponent(videoId)}/images?limit=${limit}&offset=${offset}`,
+        AdminVideoImages,
+      ),
+  });
+}
+
+export const adminVerdictsKey = (params: {
+  limit: number;
+  offset: number;
+  source?: "admin" | "anon";
+}) => ["admin", "verdicts", params] as const;
+
+/**
+ * Every verdict, joined to its frame and class, newest first (M16, ROADMAP
+ * M16.4): what `/admin/annotations` reads below `LabellingStats`. `source`
+ * omitted returns both tiers in one list — CONTEXT.md §Q10's split stays
+ * visible per row rather than by narrowing the query, and the annotations
+ * page's own tabs are what actually pass a `source` through.
+ */
+export function useAdminVerdicts(params: {
+  limit: number;
+  offset: number;
+  source?: "admin" | "anon";
+}) {
+  const query = new URLSearchParams({
+    limit: String(params.limit),
+    offset: String(params.offset),
+  });
+  if (params.source) query.set("source", params.source);
+
+  return useQuery({
+    queryKey: adminVerdictsKey(params),
+    queryFn: () => apiFetch(`/api/admin/verdicts?${query}`, AdminVerdictList),
   });
 }

@@ -1,6 +1,17 @@
 @import "tailwindcss";
 
 /**
+ * shadcn/ui's generated components (`src/components/ui/`) use a `dark:`
+ * variant on the assumption that some ancestor toggles a `.dark` class —
+ * that convention comes with the CLI and is left in place even though
+ * nothing in this app ever adds that class. This project's own dark/light
+ * split is `body` versus `.admin-theme` below, not a toggle, so every
+ * `dark:` utility those components carry simply never matches — which is
+ * the correct outcome for a page that is never in the state `.dark` names.
+ */
+@custom-variant dark (&:is(.dark *));
+
+/**
  * The token layer, and deliberately nothing more.
  *
  * M5's admin surface is a single-operator, data-dense tool; visual identity
@@ -27,6 +38,117 @@
 }
 
 body {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/**
+ * shadcn/ui's own token set (M16, CONTEXT.md §Q19 amendment) — the utility-
+ * generating names Tailwind needs declared at the top level, `@theme inline`
+ * rather than plain `@theme` so nothing here bakes in a literal value.
+ * `--color-background`, for instance, compiles to a `bg-background` utility
+ * whose rule is `background-color: var(--background)` — the bare, unprefixed
+ * property `.admin-theme` below is the only place in this file that sets.
+ *
+ * No `:root` fallback for that bare property, unlike `--color-border` above.
+ * Every shadcn component in this tree renders inside `AdminLayout`, which
+ * carries `.admin-theme` unconditionally, so a fallback here would only ever
+ * matter if that were somehow untrue — and would hide that breakage behind a
+ * plausible-looking guess instead of surfacing it as a control with no
+ * background at all.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/**
+ * The admin shell, light (M16, CONTEXT.md §Q19 amendment).
+ *
+ * Tailwind 4 utilities compile to `var(--color-*)`, so overriding the same
+ * five names above — surface, surface-raised, border, text, text-muted — on
+ * this class re-colours every moved M5–M15 component (`JobList`,
+ * `SubmitForm`, the rest) with no class name of its own touched: they were
+ * already written against `var(--color-border)` and never learn this class
+ * exists. `/` and `/verify` never carry `.admin-theme`, so their compiled
+ * output is untouched — `routes.test.tsx` and `PublicVerify.test.tsx` are
+ * the check that stays true before and after this file.
+ *
+ * The bare shadcn names — `--background`, `--card`, `--primary`, … — are set
+ * here for the first and only time; nothing above gives them a value. Where
+ * a shadcn concept plainly is one of this project's own (background is the
+ * page surface, foreground is the page text), it is defined in terms of the
+ * token already carrying that meaning rather than as a second, independently
+ * -tuned color that could drift from it. `--secondary` and `--accent` have
+ * no such counterpart — chrome shadcn's components need that this palette
+ * never did — so those are new, flat oklch values instead.
+ *
+ * Job-status hues (`--color-pending` etc.) are not overridden here: they are
+ * semantic accents rather than surface tones, legible at roughly the same
+ * lightness against either background, and `--color-failed` doubles as
+ * shadcn's `--destructive` below rather than being retuned for it.
+ */
+.admin-theme {
+  --color-surface: oklch(97% 0.004 264);
+  --color-surface-raised: oklch(100% 0 0);
+  --color-border: oklch(85% 0.009 264);
+  --color-text: oklch(20% 0.01 264);
+  --color-text-muted: oklch(42% 0.012 264);
+
+  --background: var(--color-surface);
+  --foreground: var(--color-text);
+  --card: var(--color-surface-raised);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-surface-raised);
+  --popover-foreground: var(--color-text);
+  --primary: var(--color-text);
+  --primary-foreground: var(--color-surface);
+  --secondary: oklch(94% 0.006 264);
+  --secondary-foreground: var(--color-text);
+  --muted: oklch(94% 0.006 264);
+  --muted-foreground: var(--color-text-muted);
+  --accent: oklch(94% 0.006 264);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-failed);
+  --destructive-foreground: var(--color-surface);
+  --input: var(--color-border);
+  --ring: var(--color-claimed);
+  --radius: 0.5rem;
+
+  --sidebar: oklch(99% 0.002 264);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-text);
+  --sidebar-primary-foreground: var(--color-surface);
+  --sidebar-accent: oklch(94% 0.006 264);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-claimed);
+
+  min-height: 100vh;
   background: var(--color-surface);
   color: var(--color-text);
 }

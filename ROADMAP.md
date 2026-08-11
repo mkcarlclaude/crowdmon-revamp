@@ -2,9 +2,10 @@
 
 **Scope:** [`PRD.md`](PRD.md) · **Design record:** [`CONTEXT.md`](CONTEXT.md)
 
-Nine milestones for v1, all delivered; six for v2, none started. Each is independently
-shippable and a valid stopping point — the project is open-ended by choice, so no
-milestone may depend on finishing the next one to be worth having.
+Nine milestones for v1, all delivered; six for v2, none started; six for v3, none
+started. Each is independently shippable and a valid stopping point — the project is
+open-ended by choice, so no milestone may depend on finishing the next one to be worth
+having.
 
 Issue bodies below are written to be pasted directly into GitHub.
 
@@ -13,6 +14,8 @@ Issue bodies below are written to be pasted directly into GitHub.
 - **[v2 — M10 to M15](#v2--labelling-platform).** Scope in `PRD.md` §9, design in
   `CONTEXT.md` §12, tracked as
   [issue #89](https://github.com/mkcarlclaude/crowdmon-revamp/issues/89).
+- **[v3 — M16](#v3--admin-dashboard-proper).** Scope and design in `CONTEXT.md` §Q19,
+  tracked as [issue #134](https://github.com/mkcarlclaude/crowdmon-revamp/issues/134).
 
 ---
 
@@ -1124,3 +1127,80 @@ Training and the flywheel proper are v4 or v5, on the home box, CPU-only and slo
 choice — `CONTEXT.md` §Q21 records the trap that will eat a multi-day run and the two
 ways out. The operational debt in `CONTEXT.md` §9 stays debt, including yt-dlp
 freshness, which was considered for v2 and left out to keep the sentence honest.
+
+---
+
+# v3 — Admin dashboard proper
+
+A restructuring milestone, not a capability one. Everything `/admin` could do at the
+close of v2 it still can — this is one milestone, not six, because nothing in it needed
+a schema change or a worker release to earn its own number.
+
+One requested feature is named here because it is deliberately absent: re-running the
+detector over more frames of a video to seed the verification pool. It looks like a
+page and is not — `idx_jobs_one_prelabel_per_video` (migrations 0005, 0007, 0008) is a
+UNIQUE index, one `prelabel` job per video ever, and a re-run needs a migration, an
+admin enqueue route, a worker change that samples only frames not already sampled, and
+an answer to CONTEXT.md §Q19's provenance rule — thresholds get stamped onto the rows
+they produced, or the dataset becomes an unrecorded mixture of regimes. `/admin/detection`
+ships the read half of that page instead: prelabel coverage per video, so the page that
+will eventually grow a button already tells the truth without one.
+
+Tracked as [issue #134](https://github.com/mkcarlclaude/crowdmon-revamp/issues/134),
+design in `CONTEXT.md` §Q19.
+
+## M16 — Admin dashboard proper
+
+*Goal: `/admin` stops being one scrolling page and becomes a shell with a sidebar,
+routed sub-pages, and a login screen a browser can land on.*
+*Depends on: M15.*
+*Done when:* an unauthenticated browser at `/admin` lands on a gate screen; an
+authenticated one lands on a sidebar shell whose pages cover everything the single page
+did, plus a verdict history and a per-video frame grid.
+
+### [M16.1 — Component layer and a light theme that stays in its lane](https://github.com/mkcarlclaude/crowdmon-revamp/issues/135)
+- [ ] shadcn/ui scaffolding: the `@/*` alias, `components.json`, the CLI's runtime
+      deps, and the base components landing in `src/components/ui/`
+- [ ] A light theme scoped to the admin shell by overriding the existing `--color-*`
+      variable names on a subtree, not by flipping them globally
+- [ ] `/` and `/verify` render identically before and after — the public surface is
+      unmoved by any of it
+
+### [M16.2 — The shell, and a login screen for an auth scheme with no login form](https://github.com/mkcarlclaude/crowdmon-revamp/issues/136)
+- [ ] `GET /api/admin/session` returns `{ email }` behind `requireAccess`, 401
+      otherwise — reaching the handler is the whole answer
+- [ ] `/admin/login`: a gate screen with one button that navigates to
+      `/api/admin/login`, never a credential form
+- [ ] `AdminLayout`: persistent sidebar, a session probe on mount, and a redirect to
+      the gate screen on failure — cosmetics, not the boundary; every `/api/admin/*`
+      route still verifies the caller independently
+- [ ] `/admin` redirects to `/admin/dashboard`; the dashboard page renders the word
+      "Dashboard" and nothing else, on purpose
+
+### [M16.3 — The existing surface, split into pages](https://github.com/mkcarlclaude/crowdmon-revamp/issues/137)
+- [ ] `Admin.tsx` deleted; its six sections become `/admin/videos`, `/admin/verify`,
+      `/admin/classes` and `/admin/snapshots` — the components each one mounts are
+      unchanged past their own restyle
+- [ ] Every moved component restyled onto shadcn primitives, one at a time, with its
+      test kept green
+- [ ] `routes.test.tsx`'s heading assertion at `/admin` becomes a redirect assertion
+
+### [M16.4 — Reading back what was labelled](https://github.com/mkcarlclaude/crowdmon-revamp/issues/138)
+- [ ] `GET /api/admin/verdicts?limit&offset&source` — verdict rows joined to
+      prediction, image and class, newest first
+- [ ] `/admin/annotations`: `LabellingStats` (moved) above a paginated list of the
+      admin's own verdicts
+
+### [M16.5 — Frames per video, browsable](https://github.com/mkcarlclaude/crowdmon-revamp/issues/139)
+- [ ] `GET /api/admin/videos/{id}/images?limit&offset` — a new route, not a reuse of
+      the worker-facing `listVideoImages`, which requires a held job lease no browser
+      holds
+- [ ] `/admin/videos/:id`: frame grid — image, timestamp, prediction count, verdict
+      state, public-sample toggle
+
+### [M16.6 — Detection coverage, read-only on purpose](https://github.com/mkcarlclaude/crowdmon-revamp/issues/140)
+- [ ] `/admin/detection`: prelabel coverage per video — frames extracted, frames
+      sampled, under which model, when
+- [ ] No re-run button. What one would cost is recorded instead: a migration, an admin
+      enqueue route, a worker change to sample only unsampled frames, and a provenance
+      rule for the mixed-regime dataset a re-run would otherwise produce silently

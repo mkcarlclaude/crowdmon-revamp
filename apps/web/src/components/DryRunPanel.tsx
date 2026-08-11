@@ -1,6 +1,7 @@
 import type { DryRunRow } from "@crowdmon/api/schemas";
 import { useId, useState } from "react";
 import { useCreateDryRun, useDryRuns, useVideos } from "../api/queries";
+import { Button } from "./ui/button";
 
 /**
  * Trying a candidate wording before it counts (M12.2).
@@ -14,6 +15,14 @@ import { useCreateDryRun, useDryRuns, useVideos } from "../api/queries";
  * The result is rendered as frames with boxes drawn over them rather than as
  * numbers, because the question a dry-run answers is not "how many" — it is
  * "is it finding the right thing", and a confidence column cannot answer that.
+ *
+ * Restyled onto shadcn/ui primitives in M16, except the video picker, which
+ * stays a native `<select>`: shadcn's `Select` is a Radix listbox rather than
+ * a form control, so `DryRunPanel.test.tsx`'s
+ * `userEvent.selectOptions(...)` — the standard way to drive a native
+ * `<select>` — would have needed rewriting to click-and-role-option
+ * interactions for no behavioural gain, only styling. Restyled to the new
+ * token classes instead.
  */
 export function DryRunPanel({ classId, prompt }: { classId: number; prompt: string }) {
   const videoId = useId();
@@ -30,17 +39,17 @@ export function DryRunPanel({ classId, prompt }: { classId: number; prompt: stri
   const runnable = Boolean(prompt.trim()) && Boolean(chosen?.image_count) && !running;
 
   return (
-    <div className="mt-3 border-t border-[var(--color-border)] pt-3">
+    <div className="mt-3 border-t border-border pt-3">
       <div className="flex flex-wrap items-end gap-2">
         <div className="flex flex-col gap-1">
-          <label htmlFor={videoId} className="text-xs text-[var(--color-text-muted)]">
+          <label htmlFor={videoId} className="text-xs text-muted-foreground">
             Try this wording against
           </label>
           <select
             id={videoId}
             value={video}
             onChange={(event) => setVideo(event.target.value)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-sm"
+            className="h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             <option value="">Pick a video…</option>
             {videos.data?.videos.map((candidate) => (
@@ -50,23 +59,24 @@ export function DryRunPanel({ classId, prompt }: { classId: number; prompt: stri
             ))}
           </select>
         </div>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           disabled={!runnable || start.isPending}
           onClick={() => start.mutate({ video_id: video, appearance_prompt: prompt.trim() })}
-          className="rounded border border-[var(--color-border)] px-3 py-1 text-sm disabled:opacity-50"
         >
           {start.isPending ? "Queueing…" : "Dry-run"}
-        </button>
+        </Button>
         {chosen?.image_count === 0 && (
-          <span className="text-xs text-[var(--color-text-muted)]">
+          <span className="text-xs text-muted-foreground">
             No frames extracted from that video yet.
           </span>
         )}
       </div>
 
       {start.isError && (
-        <p role="alert" className="mt-2 text-sm text-[var(--color-failed)]">
+        <p role="alert" className="mt-2 text-sm text-destructive">
           {start.error.message}
         </p>
       )}
@@ -79,7 +89,7 @@ export function DryRunPanel({ classId, prompt }: { classId: number; prompt: stri
 function DryRunResult({ run }: { run: DryRunRow }) {
   if (run.status === "failed") {
     return (
-      <p role="alert" className="mt-3 text-sm text-[var(--color-failed)]">
+      <p role="alert" className="mt-3 text-sm text-destructive">
         The dry-run failed: {run.failure_reason ?? "no reason recorded"}
       </p>
     );
@@ -90,7 +100,7 @@ function DryRunResult({ run }: { run: DryRunRow }) {
   // them the same way would show "found nothing" for a run still in progress.
   if (run.boxes === null) {
     return (
-      <p className="mt-3 text-sm text-[var(--color-text-muted)]">
+      <p className="mt-3 text-sm text-muted-foreground">
         Running against {run.sample_size} frames — {run.status}.
       </p>
     );
@@ -108,14 +118,14 @@ function DryRunResult({ run }: { run: DryRunRow }) {
         <span className="font-mono">{run.boxes.length}</span> boxes on{" "}
         <span className="font-mono">{byFrame.size}</span> of{" "}
         <span className="font-mono">{sampled.length}</span> frames.{" "}
-        <span className="text-[var(--color-text-muted)]">“{run.appearance_prompt}”</span>
+        <span className="text-muted-foreground">“{run.appearance_prompt}”</span>
       </p>
 
       {byFrame.size === 0 ? (
         // Stated rather than left as an empty grid: a candidate that grounds
         // on nothing is the most useful thing a dry-run can tell you, and it
         // must not look like the page failed to load.
-        <p className="text-sm text-[var(--color-text-muted)]">
+        <p className="text-sm text-muted-foreground">
           This wording matched nothing on any sampled frame.
         </p>
       ) : (
@@ -145,7 +155,7 @@ function FrameWithBoxes({
   boxes: NonNullable<DryRunRow["boxes"]>;
 }) {
   return (
-    <figure className="relative overflow-hidden rounded border border-[var(--color-border)]">
+    <figure className="relative overflow-hidden rounded-md border border-border">
       <img
         src={`/api/admin/image?key=${encodeURIComponent(r2Key)}`}
         alt={r2Key}
