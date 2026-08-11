@@ -1,5 +1,9 @@
-// Placeholder for the M16 route table (this commit). `SnapshotPanel` moves
-// here from the deleted `Admin.tsx` in the next commit.
+import { SnapshotPanel } from "../../components/SnapshotPanel";
+
+/**
+ * `/admin/snapshots` (M16): the deleted `Admin.tsx`'s "Dataset snapshots"
+ * section, `SnapshotPanel` mounted exactly as it was there.
+ */
 export function AdminSnapshotsPage() {
-  return <h1 className="text-2xl font-semibold text-foreground">Snapshots</h1>;
+  return <SnapshotPanel />;
 }

@@ -1,5 +1,16 @@
-// Placeholder for the M16 route table (this commit). `AddClassForm` and
-// `ClassRoster` move here from the deleted `Admin.tsx` in the next commit.
+import { AddClassForm } from "../../components/AddClassForm";
+import { ClassRoster } from "../../components/ClassRoster";
+
+/**
+ * `/admin/classes` (M16): the deleted `Admin.tsx`'s "Classes" section,
+ * `AddClassForm` and `ClassRoster` mounted exactly as they were there (the
+ * dry-run panel stays nested per class, inside `ClassRoster`).
+ */
 export function AdminClassesPage() {
-  return <h1 className="text-2xl font-semibold text-foreground">Classes</h1>;
+  return (
+    <div className="flex flex-col gap-6">
+      <AddClassForm />
+      <ClassRoster />
+    </div>
+  );
 }
