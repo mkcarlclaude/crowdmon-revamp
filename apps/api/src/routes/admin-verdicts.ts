@@ -2,6 +2,9 @@ import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import type { AppEnv } from "../bindings";
 import { chunkForBinding, placeholders } from "../d1";
 import {
+  ADMIN_PAGE_LIMIT_DEFAULT,
+  AdminVerdictList,
+  AdminVerdictListQuery,
   CreateMissingReportRequest,
   CreateVerdictsRequest,
   errorResponse,
@@ -246,4 +249,91 @@ export const createMissingReportHandler: RouteHandler<
   if (!row) return c.json({ error: "the report could not be recorded" }, 400);
 
   return c.json(row, 201);
+};
+
+/** The shape D1 returns for the join in `listVerdicts`. */
+interface AdminVerdictRow {
+  id: number;
+  prediction_id: number;
+  verdict: "accept" | "adjust" | "reject";
+  adjusted_x_min: number | null;
+  adjusted_y_min: number | null;
+  adjusted_x_max: number | null;
+  adjusted_y_max: number | null;
+  source: "admin" | "anon";
+  annotator_id: string;
+  created_at: number;
+  image_id: number;
+  video_id: string;
+  r2_key: string;
+  timestamp_seconds: number;
+  class_id: number;
+  class_name: string;
+}
+
+/**
+ * "What did the pool get ruled on, and by whom" (M16, ROADMAP M16 — reading
+ * back what was labelled). Everything `submitVerdictsHandler` above writes,
+ * read back joined to the frame and class it belongs to, newest first.
+ *
+ * Filters on `source`, never on the caller's own identity: `verdicts` already
+ * carries `source` and `annotator_id` on every row (CONTEXT.md §Q10's two-tier
+ * split), and "what did I submit" is that same query with `source=admin`
+ * plus a client-side glance at `annotator_id` — not a second code path that
+ * would have to agree with this one about what a verdict is.
+ */
+export const listVerdictsRoute = createRoute({
+  method: "get",
+  path: "/api/admin/verdicts",
+  operationId: "listVerdicts",
+  tags: ["admin"],
+  summary: "Every verdict, newest first, joined to its frame and class",
+  description:
+    "Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an " +
+    "annotations page renders needs all four without a second request per row. `source` " +
+    "narrows to admin or anonymous rulings; omitted, both tiers come back in one list, " +
+    "each carrying which tier it belongs to. Requires a Cloudflare Access assertion.",
+  request: { query: AdminVerdictListQuery },
+  responses: {
+    200: {
+      description: "Verdicts, newest first",
+      content: { "application/json": { schema: AdminVerdictList } },
+    },
+    400: errorResponse("An out-of-range limit or offset, or an invalid source"),
+    401: errorResponse("Missing or invalid Access assertion"),
+    403: errorResponse("A verified identity that is not an administrator"),
+    503: errorResponse("Admin access is not configured on this deployment"),
+  },
+});
+
+export const listVerdictsHandler: RouteHandler<typeof listVerdictsRoute, AppEnv> = async (c) => {
+  const { limit, offset, source } = c.req.valid("query");
+
+  // Assembled rather than written out twice, the same idiom `listJobsHandler`
+  // uses for its own optional `WHERE`: `source` is bound like every other
+  // parameter, never interpolated, and what varies is only whether the
+  // clause is present.
+  const filter = source ? "WHERE v.source = ?" : "";
+  const bindings = source
+    ? [source, limit ?? ADMIN_PAGE_LIMIT_DEFAULT, offset ?? 0]
+    : [limit ?? ADMIN_PAGE_LIMIT_DEFAULT, offset ?? 0];
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT v.id, v.prediction_id, v.verdict,
+            v.adjusted_x_min, v.adjusted_y_min, v.adjusted_x_max, v.adjusted_y_max,
+            v.source, v.annotator_id, v.created_at,
+            i.id AS image_id, i.video_id, i.r2_key, i.timestamp_seconds,
+            c.id AS class_id, c.name AS class_name
+       FROM verdicts v
+       JOIN predictions p ON p.id = v.prediction_id
+       JOIN images i      ON i.id = p.image_id
+       JOIN classes c     ON c.id = p.class_id
+       ${filter}
+      ORDER BY v.id DESC
+      LIMIT ? OFFSET ?`,
+  )
+    .bind(...bindings)
+    .all<AdminVerdictRow>();
+
+  return c.json({ verdicts: results }, 200);
 };
