@@ -2,6 +2,7 @@ import {
   AdminClass,
   AdminClassList,
   AdminImage,
+  AdminSession,
   AdminVideoList,
   type CreateClassRequest,
   type CreateDryRunRequest,
@@ -26,6 +27,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { z } from "zod";
 import { getAnonSessionId } from "./anon-session";
 import { apiFetch } from "./client";
+
+export const adminSessionKey = ["admin", "session"] as const;
+
+/**
+ * Whether the browser already has an Access session (M16, CONTEXT.md §Q19
+ * amendment). `AdminLayout` calls this once on mount and treats any error —
+ * 401, 403, or the `SessionExpiredError` a cross-origin Access redirect
+ * throws (`apps/web/src/api/session.ts`) — identically: redirect to
+ * `/admin/login`. There is no case here worth telling apart the way
+ * `SessionExpiredBanner` tells a mid-session expiry apart from other
+ * failures, because this probe has nothing else to fall back to showing —
+ * unlike a page with data already on screen, there is no "everything except
+ * this one thing" to keep rendering.
+ */
+export function useAdminSession() {
+  return useQuery({
+    queryKey: adminSessionKey,
+    queryFn: () => apiFetch("/api/admin/session", AdminSession),
+  });
+}
 
 export const jobsKey = ["jobs"] as const;
 

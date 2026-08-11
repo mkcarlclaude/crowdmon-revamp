@@ -22,10 +22,18 @@ export default defineConfig({
     // Lowers the threshold at which `vite build` prints its bundle-size
     // warning. It is only that — a warning. `vite build` still exits 0 past
     // it, so nothing here fails a CI run or blocks a deploy; this is a
-    // tripwire for whoever is watching build output, not a gate. The admin
-    // surface is three screens (current output is ~552 kB), so anything past
-    // 600 kB is worth a look, not an automatic block.
-    chunkSizeWarningLimit: 600,
+    // tripwire for whoever is watching build output, not a gate.
+    //
+    // Raised from 600 in M16: shadcn/ui's Radix primitives plus a sidebar
+    // shell and eight routed admin pages crossed it (~692 kB), exactly as
+    // ROADMAP M16's own plan expected — "a component library plus five new
+    // pages will cross it." Raised deliberately, in the commit that crosses
+    // it, per that plan's own rule, rather than left to trip on some later
+    // PR that added one component nobody thought was the straw. 800 leaves
+    // headroom for the remaining M16 pages (a frame grid, a verdict list)
+    // without being so loose the tripwire stops meaning anything — the next
+    // deliberate crossing should raise it again, not the number picked here.
+    chunkSizeWarningLimit: 800,
   },
   server: {
     // `wrangler dev` serves the real Worker, including the real Access
