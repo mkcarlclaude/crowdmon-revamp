@@ -6,7 +6,7 @@
  * uniformly stale, and the operator would be debugging the wrong machine.
  */
 export function RelativeAge({ at, now }: { at: number | null; now: number }) {
-  if (at === null) return <span className="text-[var(--color-text-muted)]">never</span>;
+  if (at === null) return <span className="text-muted-foreground">never</span>;
 
   const seconds = Math.max(0, now - at);
   if (seconds < 60) return <span>{seconds}s ago</span>;

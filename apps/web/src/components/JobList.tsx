@@ -1,6 +1,7 @@
 import type { AdminJobRow } from "@crowdmon/api/schemas";
 import { useJobs } from "../api/queries";
 import { RelativeAge } from "./RelativeAge";
+import { Badge } from "./ui/badge";
 
 const STATUS_COLOR: Record<AdminJobRow["status"], string> = {
   pending: "var(--color-pending)",
@@ -44,10 +45,10 @@ function groupByVideo(jobs: VideoJobRow[]) {
 export function JobList() {
   const { data, isPending, error } = useJobs();
 
-  if (isPending) return <p className="text-[var(--color-text-muted)]">Loading…</p>;
+  if (isPending) return <p className="text-muted-foreground">Loading…</p>;
   if (error)
     return (
-      <p role="alert" className="text-[var(--color-failed)]">
+      <p role="alert" className="text-destructive">
         {error.message}
       </p>
     );
@@ -57,21 +58,27 @@ export function JobList() {
   const videoJobs = data.jobs.filter((job): job is VideoJobRow => job.video_id !== null);
 
   if (videoJobs.length === 0) {
-    return <p className="text-[var(--color-text-muted)]">No jobs yet.</p>;
+    return <p className="text-muted-foreground">No jobs yet.</p>;
   }
 
   return (
     <div className="flex flex-col gap-4">
       {groupByVideo(videoJobs).map(([videoId, group]) => (
+        // `section` + `aria-label`, not the `Card` component: `Card` renders
+        // a plain `div`, which carries no accessible role at all, and this
+        // element's whole job is to be a `region` a screen reader can jump
+        // between — `JobList.test.tsx` queries it as one. Styled to match
+        // `Card`'s own recipe instead of using the component, so the region
+        // semantics and the shadcn look are not a tradeoff.
         <section
           key={videoId}
           aria-label={videoId}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4"
+          className="rounded-xl border border-border bg-card p-4 text-card-foreground shadow-sm"
         >
           <h3 className="font-mono text-sm">{videoId}</h3>
           {group.download && <JobRow job={group.download} now={data.now} />}
           {group.chunks.length > 0 && (
-            <ul className="mt-2 border-l border-[var(--color-border)] pl-4">
+            <ul className="mt-2 border-l border-border pl-4">
               {group.chunks
                 .sort((a, b) => (a.chunk?.segment_index ?? 0) - (b.chunk?.segment_index ?? 0))
                 .map((chunk) => (
@@ -90,23 +97,26 @@ export function JobList() {
 function JobRow({ job, now }: { job: AdminJobRow; now: number }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-1 text-sm">
-      <span style={{ color: STATUS_COLOR[job.status] }}>{job.status}</span>
-      <span className="font-mono text-[var(--color-text-muted)]">#{job.id}</span>
+      <Badge
+        variant="outline"
+        style={{ borderColor: STATUS_COLOR[job.status], color: STATUS_COLOR[job.status] }}
+      >
+        {job.status}
+      </Badge>
+      <span className="font-mono text-muted-foreground">#{job.id}</span>
       {job.chunk && <span>segment {job.chunk.segment_index}</span>}
       {/* Attempts are shown always, not only when non-zero: the number
           approaching M6.1's ceiling is the signal, and a field that appears
           only sometimes is a field nobody learns to read. */}
-      <span className="text-[var(--color-text-muted)]">attempts {job.attempts}</span>
+      <span className="text-muted-foreground">attempts {job.attempts}</span>
       {job.claimed_by && <span className="font-mono">{job.claimed_by}</span>}
-      <span className="text-[var(--color-text-muted)]">
+      <span className="text-muted-foreground">
         heartbeat <RelativeAge at={job.heartbeat_at} now={now} />
       </span>
-      <span className="text-[var(--color-text-muted)]">
+      <span className="text-muted-foreground">
         created <RelativeAge at={job.created_at} now={now} />
       </span>
-      {job.failure_reason && (
-        <span className="text-[var(--color-failed)]">{job.failure_reason}</span>
-      )}
+      {job.failure_reason && <span className="text-destructive">{job.failure_reason}</span>}
     </div>
   );
 }

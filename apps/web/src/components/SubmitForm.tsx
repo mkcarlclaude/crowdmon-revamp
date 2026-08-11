@@ -1,6 +1,9 @@
 import { type FormEvent, useId, useState } from "react";
 import { useSubmitVideo } from "../api/queries";
 import { ApiError } from "../api/session";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 
 /**
  * Client-side validation is deliberately thin.
@@ -10,6 +13,12 @@ import { ApiError } from "../api/session";
  * matching in the contract would make a change to it a breaking API change).
  * Duplicating that here would produce a second, drifting definition. The empty
  * check exists only to avoid a round trip that can only fail.
+ *
+ * Restyled onto shadcn/ui primitives in M16 — `Input`, `Label` and `Button`
+ * render the same `<input>`/`<label>`/`<button>` elements the previous
+ * markup did, with `id`/`htmlFor` still wired the same way, so nothing here
+ * needed a behaviour change to move: `SubmitForm.test.tsx` queries by label
+ * text and button role, neither of which this restyle touches.
  */
 export function SubmitForm() {
   const inputId = useId();
@@ -30,24 +39,20 @@ export function SubmitForm() {
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-2">
-      <label htmlFor={inputId} className="text-sm text-[var(--color-text-muted)]">
+      <Label htmlFor={inputId} className="text-muted-foreground">
         YouTube URL
-      </label>
+      </Label>
       <div className="flex gap-2">
-        <input
+        <Input
           id={inputId}
           value={url}
           onChange={(event) => setUrl(event.target.value)}
           placeholder="https://www.youtube.com/watch?v=..."
-          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-2 font-mono text-sm"
+          className="font-mono"
         />
-        <button
-          type="submit"
-          disabled={submit.isPending}
-          className="rounded border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
-        >
+        <Button type="submit" disabled={submit.isPending}>
           {submit.isPending ? "Submitting…" : "Submit"}
-        </button>
+        </Button>
       </div>
 
       {submit.isSuccess && (
@@ -71,7 +76,7 @@ function SubmitError({ error }: { error: Error }) {
   const issues = error instanceof ApiError ? error.issues : undefined;
 
   return (
-    <div role="alert" className="text-sm text-[var(--color-failed)]">
+    <div role="alert" className="text-sm text-destructive">
       <p>{error.message}</p>
       {issues && issues.length > 0 && (
         <ul className="mt-1 list-disc pl-5">
