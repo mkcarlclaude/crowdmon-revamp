@@ -75,4 +75,23 @@ describe("AdminLayout", () => {
     }
     expect(screen.getByTestId("admin-email")).toHaveTextContent("admin@example.com");
   });
+
+  it("marks only the current route's sidebar item active", async () => {
+    stubSession({ status: 200, body: { email: "admin@example.com" } });
+
+    renderLayout("/admin/dashboard");
+
+    await screen.findByText("dashboard content");
+    const activeLink = screen.getByRole("link", { name: "Dashboard" });
+    const otherLink = screen.getByRole("link", { name: "Videos" });
+
+    expect(activeLink.closest('[data-slot="sidebar-menu-button"]')).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(otherLink.closest('[data-slot="sidebar-menu-button"]')).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+  });
 });
