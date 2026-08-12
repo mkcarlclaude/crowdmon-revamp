@@ -384,15 +384,32 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async
   // by the time this runs. Joined to `classes` for the name the boxes will be
   // labelled with — the wording itself is deliberately the `dryruns` row's
   // copy, not the class's current text (migration 0007's own comment).
+  //
+  // Also `LEFT JOIN`ed to `images` (M17, plan §A): a single-frame dry-run's
+  // `image_id` names the frame, and this is the one place that id is turned
+  // into the R2 key a worker can actually fetch. Deliberately not left for
+  // the worker to resolve — selection moved server-side entirely, so the
+  // worker's whole job is running the wording against the key it was handed,
+  // never deciding which key that is. `LEFT` rather than `JOIN`: `image_id`
+  // is null for the wide mode, and an inner join would silently drop every
+  // wide-mode dry-run's claim.
   const dryrun =
     job.kind === "dryrun"
       ? await c.env.DB.prepare(
-          `SELECT c.name AS class_name, d.appearance_prompt, d.sample_size
-             FROM dryruns d JOIN classes c ON c.id = d.class_id
+          `SELECT c.name AS class_name, d.appearance_prompt, d.sample_size, d.image_id, i.r2_key
+             FROM dryruns d
+             JOIN classes c      ON c.id = d.class_id
+             LEFT JOIN images i  ON i.id = d.image_id
             WHERE d.job_id = ?`,
         )
           .bind(job.id)
-          .first<{ class_name: string; appearance_prompt: string; sample_size: number }>()
+          .first<{
+            class_name: string;
+            appearance_prompt: string;
+            sample_size: number;
+            image_id: number | null;
+            r2_key: string | null;
+          }>()
       : null;
 
   // A job whose work definition is incomplete cannot be run, and handing it
@@ -418,6 +435,16 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async
   if (job.kind === "dryrun" && !dryrun) {
     return failUnrunnable(c, job.id, "dryrun row missing");
   }
+  // No equivalent check for a single-frame dry-run whose `images` row has
+  // vanished: migration 0010's own comment is why — D1 enforces
+  // `dryruns.image_id REFERENCES images(id)` unconditionally, with no
+  // opt-out (migration 0005's finding), so `image_id` can only ever be
+  // written pointing at a row that exists, and there is no `ON DELETE
+  // CASCADE` to let that row disappear out from under it later either. The
+  // `LEFT JOIN` above still has to be a `LEFT JOIN` (for the wide mode's
+  // `image_id IS NULL`), but `dryrun.image_id !== null` and
+  // `dryrun.r2_key === null` together is not a reachable combination, so
+  // there is nothing here to retire against.
 
   return c.json(
     {
@@ -443,7 +470,20 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async
       // fail that validation on the way out.
       queue_wait_seconds: Math.max(0, claimedAt - job.created_at),
       ...(chunk ? { chunk } : {}),
-      ...(dryrun ? { dryrun } : {}),
+      // Built explicitly rather than spread from the join row: `dryrun` above
+      // also carries `image_id` and `r2_key: null` (the wide mode's shape),
+      // neither of which belongs in `DryRunWork` — `r2_key` is only present
+      // when there is one to hand over, never a literal null on the wire.
+      ...(dryrun
+        ? {
+            dryrun: {
+              class_name: dryrun.class_name,
+              appearance_prompt: dryrun.appearance_prompt,
+              sample_size: dryrun.sample_size,
+              ...(dryrun.r2_key !== null ? { r2_key: dryrun.r2_key } : {}),
+            },
+          }
+        : {}),
     },
     200,
   );

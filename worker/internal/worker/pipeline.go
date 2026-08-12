@@ -105,6 +105,14 @@ type ImageSampler interface {
 // *sample.Sampler satisfies both, so the two Pipeline fields below are
 // ordinarily the same value — which is fine, and still leaves a test free to
 // stub one without the other.
+//
+// Still in use after M17 (plan §A) added a single-frame dry-run mode, and
+// deliberately not deleted: that mode is additional, not a replacement — the
+// wide, random-sample mode this interface serves stays as the confirmation
+// step before a wording is accepted, because one fixed frame overfits (a
+// wording tuned to one pose and one lighting condition can be worse across a
+// whole video). `Pipeline.dryrun` now calls this only when the job carries no
+// `R2Key`; see that method's own comment for the branch.
 type BoundedImageSampler interface {
 	SampleN(ctx context.Context, videoID string, budget int) ([]SampledImage, error)
 }
@@ -844,8 +852,9 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 	return nil
 }
 
-// dryrun is phase four: run one candidate wording across a small sample of a
-// video's frames and report the boxes, writing nothing to the dataset (M12.2).
+// dryrun is phase four: run one candidate wording against a video's frames
+// and report the boxes, writing nothing to the dataset (M12.2; M17 plan §A
+// adds the single-frame mode).
 //
 // Structurally the prelabel branch with three things removed, and each removal
 // is the point rather than a simplification. There is no PromptSource call —
@@ -855,6 +864,19 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 // looked at are not a dataset decision. And the report goes to `dryruns`
 // rather than `predictions`, which is what makes "a dry-run writes nothing"
 // (ROADMAP.md M12.2) a property of the schema instead of a promise.
+//
+// Two input paths, not one, since M17 (see BoundedImageSampler's own comment
+// for why it and the wide path were not deleted): `job.Dryrun.R2Key` set means
+// the API already picked the one frame to run against (jobs.ts's claim
+// hydration joins `images` for it), and this worker's job is only to detect
+// on that key — no sampling, because nothing is being selected here. `R2Key`
+// unset means the wide mode: `job.Dryrun.SampleSize` frames drawn at random
+// across the whole video, exactly as before M17. The two paths are kept
+// visibly separate below rather than folded into one loop over a
+// one-or-many list — the whole reason M17 exists is that these are different
+// activities (comparable iteration vs. a confirmation draw), and a unified
+// path would blur that distinction in the one place it is supposed to be
+// legible.
 func (p Pipeline) dryrun(ctx context.Context, job *api.Job) error {
 	ctx, span := tracer().Start(ctx, "job.dryrun", trace.WithAttributes(
 		attribute.Int("crowdmon.job.id", job.Id),
@@ -874,6 +896,10 @@ func (p Pipeline) dryrun(ctx context.Context, job *api.Job) error {
 	// Retryable, not terminal, exactly as prelabel's own configuration check
 	// is: a worker built without a sampler, a detector or a dry-run reporter
 	// is a deployment that is wrong right now and may be right in a minute.
+	// `DryRunSampler` stays a hard requirement even on the single-frame path
+	// below, which never calls it: a worker mis-wired for one dry-run mode is
+	// mis-wired for dry-runs, and a job claimed at random off the queue must
+	// not succeed or fail depending on which mode it happened to be.
 	if p.DryRunSampler == nil || p.Detector == nil || p.DryRuns == nil {
 		return recordErr(span, fmt.Errorf(
 			"this worker has no pre-labelling configured: it cannot run the dry-run job %d", job.Id))
@@ -890,9 +916,23 @@ func (p Pipeline) dryrun(ctx context.Context, job *api.Job) error {
 		Version:    "candidate",
 	}}
 
-	sampled, err := p.sampleN(ctx, *job.VideoId, job.Dryrun.SampleSize)
-	if err != nil {
-		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", *job.VideoId, err))
+	var sampled []SampledImage
+	if job.Dryrun.R2Key != nil {
+		// Single-frame mode: the frame was chosen server-side, before this
+		// job was ever claimable, and this worker's only job is to run the
+		// candidate wording against that exact key — see the type comment
+		// above for why a worker resolving its own frame is exactly what M17
+		// moves away from. No `dryrun.select` span here: unlike the wide
+		// path, nothing is being selected, so a span named after selection
+		// would describe an operation that did not happen.
+		sampled = []SampledImage{{Key: *job.Dryrun.R2Key}}
+		span.SetAttributes(attribute.String("crowdmon.dryrun.image_key", *job.Dryrun.R2Key))
+	} else {
+		var err error
+		sampled, err = p.sampleN(ctx, *job.VideoId, job.Dryrun.SampleSize)
+		if err != nil {
+			return recordErr(span, fmt.Errorf("sampling frames for %s: %w", *job.VideoId, err))
+		}
 	}
 
 	span.SetAttributes(

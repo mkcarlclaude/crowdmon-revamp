@@ -347,6 +347,11 @@
             "minimum": 0,
             "exclusiveMinimum": true,
             "example": 50
+          },
+          "r2_key": {
+            "type": "string",
+            "minLength": 1,
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
           }
         },
         "required": [
@@ -997,6 +1002,13 @@
             "type": "string",
             "example": "dQw4w9WgXcQ"
           },
+          "image_id": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 42
+          },
           "appearance_prompt": {
             "type": "string",
             "example": "a tiny white-haired floating companion with a dark crown"
@@ -1054,6 +1066,7 @@
           "class_id",
           "class_name",
           "video_id",
+          "image_id",
           "appearance_prompt",
           "sample_size",
           "status",
@@ -1117,6 +1130,12 @@
       "CreateDryRunRequest": {
         "type": "object",
         "properties": {
+          "image_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 42
+          },
           "video_id": {
             "type": "string",
             "minLength": 1,
@@ -1130,7 +1149,6 @@
           }
         },
         "required": [
-          "video_id",
           "appearance_prompt"
         ]
       },
@@ -3272,8 +3290,8 @@
         "tags": [
           "admin"
         ],
-        "summary": "Try a candidate prompt against a sample of one video's frames",
-        "description": "Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.",
+        "summary": "Try a candidate prompt against one frame, or a sample of a whole video",
+        "description": "Enqueues a `dryrun` job, either against one named frame (`image_id`, iterated repeatedly to compare wordings on a fixed input) or a random sample across a whole video (`video_id`, the confirmation step before a wording is accepted). Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.",
         "parameters": [
           {
             "schema": {
@@ -3337,7 +3355,7 @@
             }
           },
           "404": {
-            "description": "No class with this id, or no such video",
+            "description": "No class with this id, or no such video or image",
             "content": {
               "application/json": {
                 "schema": {
@@ -3366,7 +3384,7 @@
           "admin"
         ],
         "summary": "This class's recent dry-runs, newest first",
-        "description": "The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.",
+        "description": "The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. An optional `image_id` narrows this to one frame's own attempts (M17, plan §A) — what a comparison strip iterating wordings against a fixed frame actually wants, rather than `DRYRUN_HISTORY` rows that might mix in a different frame's runs. Requires a Cloudflare Access assertion.",
         "parameters": [
           {
             "schema": {
@@ -3376,6 +3394,15 @@
             "required": true,
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 42
+            },
+            "required": false,
+            "name": "image_id",
+            "in": "query"
           }
         ],
         "responses": {

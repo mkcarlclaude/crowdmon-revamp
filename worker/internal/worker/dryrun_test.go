@@ -234,6 +234,92 @@ func TestDryRunDoesNotReportWhenDetectionFails(t *testing.T) {
 	}
 }
 
+// singleFrameDryRunJob is dryRunJob's single-frame twin (M17, plan §A): the
+// claim carries an `r2_key` because the API already picked the frame, and
+// `SampleSize` is 1 — the value `createDryRunHandler` always writes for this
+// mode, never something a worker has to infer.
+func singleFrameDryRunJob() *api.Job {
+	return &api.Job{
+		Id:      11,
+		Kind:    api.JobKindDryrun,
+		VideoId: strPtr("dQw4w9WgXcQ"),
+		Dryrun: &api.DryRunWork{
+			ClassName:        "Paimon",
+			AppearancePrompt: "a tiny white-haired floating companion",
+			SampleSize:       1,
+			R2Key:            strPtr("frames/dQw4w9WgXcQ/00300.000.jpg"),
+		},
+	}
+}
+
+func TestDryRunSingleFrameDetectsOnTheGivenKeyWithoutSampling(t *testing.T) {
+	// The whole point of M17's single-frame mode: the API already chose the
+	// frame at claim time, so this worker must run the wording against
+	// exactly that key rather than asking its own sampler for one.
+	sampler := &fakeBoundedSampler{images: []worker.SampledImage{
+		{Key: "frames/dQw4w9WgXcQ/00000.000.jpg"}, // would be picked if sampling ran
+	}}
+	detector := &fakeDetector{
+		modelID: "owlvit-base-patch32.onnx",
+		boxes: map[string][]queue.Box{
+			"frames/dQw4w9WgXcQ/00300.000.jpg": {
+				{ClassName: "Paimon", XMax: 0.5, YMax: 0.5, Confidence: 0.41},
+			},
+		},
+	}
+	reporter := &fakeDryRunReporter{}
+
+	p := worker.Pipeline{DryRunSampler: sampler, Detector: detector, DryRuns: reporter}
+
+	if err := p.Work(context.Background(), singleFrameDryRunJob()); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	// No sampling at all: SampleN must never be called on this path, or a
+	// worker under load could burn time drawing a sample nothing uses.
+	if sampler.calls != 0 {
+		t.Errorf("sampler called %d times, want 0 — the frame is already chosen", sampler.calls)
+	}
+	if len(detector.seen) != 1 || detector.seen[0] != "frames/dQw4w9WgXcQ/00300.000.jpg" {
+		t.Errorf("detector saw keys %v, want exactly the job's r2_key", detector.seen)
+	}
+	if reporter.calls != 1 {
+		t.Fatalf("reported %d times, want 1", reporter.calls)
+	}
+	if len(reporter.sent.Boxes) != 1 || reporter.sent.Boxes[0].Key != "frames/dQw4w9WgXcQ/00300.000.jpg" {
+		t.Errorf("reported boxes %+v, want one box attributed to the named frame", reporter.sent.Boxes)
+	}
+	// Exactly the one frame, not the sampler's would-be pick — this is the
+	// fact `sampled_keys` has to record for the single-frame mode to be
+	// distinguishable on screen from a wide run that happened to sample one
+	// frame.
+	if len(reporter.sent.SampledKeys) != 1 || reporter.sent.SampledKeys[0] != "frames/dQw4w9WgXcQ/00300.000.jpg" {
+		t.Errorf("reported sampled keys %v, want exactly the named frame", reporter.sent.SampledKeys)
+	}
+}
+
+func TestDryRunWideModeStillSamplesWhenNoKeyIsGiven(t *testing.T) {
+	// The regression this whole change has to not cause: a claim with no
+	// `r2_key` (the wide mode, unaffected by M17) must still go through the
+	// sampler exactly as it always has.
+	sampler := &fakeBoundedSampler{images: []worker.SampledImage{
+		{Key: "frames/dQw4w9WgXcQ/00000.000.jpg"},
+		{Key: "frames/dQw4w9WgXcQ/00600.000.jpg"},
+	}}
+	p := worker.Pipeline{DryRunSampler: sampler, Detector: &fakeDetector{}, DryRuns: &fakeDryRunReporter{}}
+
+	if err := p.Work(context.Background(), dryRunJob()); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	if sampler.calls != 1 {
+		t.Errorf("sampler called %d times, want exactly 1", sampler.calls)
+	}
+	if sampler.budget != 50 {
+		t.Errorf("sampled a budget of %d, want the job's 50", sampler.budget)
+	}
+}
+
 func TestDryRunRejectedByTheContractIsTerminal(t *testing.T) {
 	// A box outside [0, 1] or a batch past the bound is this worker's bug and
 	// will be refused identically next time, so retrying only burns attempts.

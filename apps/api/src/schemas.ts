@@ -179,6 +179,18 @@ export const Job = z
           example: "a tiny white-haired floating companion with a dark crown",
         }),
         sample_size: z.int().positive().openapi({ example: 50 }),
+        // Present only for the single-frame mode (M17, plan §A) — the claim
+        // handler joins `images` on `dryruns.image_id` and hands back the key
+        // directly, exactly as `chunk`'s window arrives pre-resolved. This is
+        // load-bearing, not a convenience: a worker that had to resolve the
+        // id itself would be a second place "which frame" could be decided,
+        // and the whole point of this field is that selection happened once,
+        // server-side, before the job was ever claimable. Absent for the wide
+        // mode (`image_id IS NULL`), where the worker still draws its own
+        // sample via `sample_size`.
+        r2_key: z.string().min(1).optional().openapi({
+          example: "frames/dQw4w9WgXcQ/00042.000.jpg",
+        }),
       })
       .optional()
       .openapi("DryRunWork"),
@@ -858,8 +870,17 @@ export const ClassIdParam = z.object({
 });
 
 /**
- * How many frames one dry-run runs the candidate wording over (M12.2's
- * "~50 frames").
+ * How many frames the *wide* dry-run mode runs the candidate wording over
+ * (M12.2's "~50 frames").
+ *
+ * M17 (plan §A) added a second, narrower mode — one named frame, iterated
+ * repeatedly, so a reworded prompt is compared against the *same* input
+ * instead of a fresh random fifty each time. This constant did not shrink to
+ * match it: the wide draw stays as the confirmation step before a wording is
+ * accepted, because a wording tuned to nail one pose and one lighting
+ * condition can still be worse across a whole video. "Iterate narrow,
+ * confirm wide" needs both sample sizes to keep existing, not one replacing
+ * the other.
  *
  * Fixed here rather than accepted from the caller, and that is a cost
  * decision as much as a contract one: detection is CPU-only on the box's two
@@ -878,10 +899,14 @@ export const DRYRUN_SAMPLE_SIZE = 50;
 /**
  * The bound on `ReportDryRunRequest.boxes`.
  *
- * One class, `DRYRUN_SAMPLE_SIZE` frames, so 20 boxes on a single frame is
- * already far past anything a usable prompt produces — this is sized to reject
- * a detector that has started emitting garbage rather than to accommodate a
- * plausible run, the same posture `MAX_PREDICTIONS_PER_JOB` takes.
+ * Sized against the wide mode: one class, `DRYRUN_SAMPLE_SIZE` frames, so 20
+ * boxes on a single frame is already far past anything a usable prompt
+ * produces — this is sized to reject a detector that has started emitting
+ * garbage rather than to accommodate a plausible run, the same posture
+ * `MAX_PREDICTIONS_PER_JOB` takes. Left unchanged by M17's single-frame mode
+ * on purpose: the wide path still exists and still needs this room, and a
+ * single-frame run's own boxes are a small fraction of it — there is nothing
+ * to gain by narrowing a ceiling neither mode gets close to on a real prompt.
  */
 export const MAX_DRYRUN_BOXES = DRYRUN_SAMPLE_SIZE * 20;
 
@@ -915,24 +940,50 @@ const DryRunBox = z
   .openapi("DryRunBox");
 
 /**
- * What starting a dry-run takes (M12.2).
+ * What starting a dry-run takes (M12.2; M17 plan §A adds the single-frame
+ * mode).
  *
- * `video_id` is the caller's, not the server's pick. Which footage a prompt is
- * tried against is the judgement being made — a character who appears in one
- * video and not another is the difference between a prompt that looks broken
+ * Exactly one of `image_id` or `video_id`, never both and never neither —
+ * enforced by the `superRefine` below rather than a discriminated union,
+ * because the two modes share every other field and a discriminant tag would
+ * be one more thing this contract asks a caller to think about for no
+ * benefit to either runtime.
+ *
+ * `image_id` is the new, narrow mode: one named frame, so a reworded prompt
+ * is compared against the *same* input on the next run instead of a fresh
+ * random draw. `video_id` is the original wide mode, kept deliberately (see
+ * `DRYRUN_SAMPLE_SIZE`'s own comment on why) — a random sample across the
+ * whole video, for confirming a wording before it is accepted rather than
+ * for iterating on one.
+ *
+ * Whichever is given is the caller's pick, not the server's. Which footage
+ * (or which frame of it) a prompt is tried against is the judgement being
+ * made — a character who appears in one video and not another, or in one
+ * pose and not another, is the difference between a prompt that looks broken
  * and one that looks fine — so choosing it silently would hide the variable
  * that matters most in reading the result.
  *
- * No `sample_size`: see `DRYRUN_SAMPLE_SIZE`.
+ * No `sample_size`: see `DRYRUN_SAMPLE_SIZE` for the wide mode's value; the
+ * narrow mode's is always 1 and the handler writes it, never the caller.
  */
 export const CreateDryRunRequest = z
   .object({
-    video_id: z.string().min(1).openapi({ example: "dQw4w9WgXcQ" }),
+    image_id: z.int().positive().optional().openapi({ example: 42 }),
+    video_id: z.string().min(1).optional().openapi({ example: "dQw4w9WgXcQ" }),
     appearance_prompt: z
       .string()
       .min(1)
       .max(MAX_APPEARANCE_PROMPT)
       .openapi({ example: "a tiny white-haired floating companion with a dark crown" }),
+  })
+  .superRefine((body, ctx) => {
+    if (Boolean(body.image_id) === Boolean(body.video_id)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "give exactly one of image_id or video_id, never both and never neither",
+        path: ["image_id"],
+      });
+    }
   })
   .openapi("CreateDryRunRequest");
 
@@ -951,6 +1002,13 @@ export const CreateDryRunRequest = z
  * `boxes` over 50 `sampled_keys` has a very definite one — the wording matched
  * nothing. Collapsing those two into `[]` would make "still running" and "this
  * prompt is useless" render identically.
+ *
+ * `image_id` is `.nullable()` rather than `.optional()`, matching migration
+ * 0010's own column: `null` is the wide mode read back honestly, not an
+ * absent field. `video_id` stays required either way — even a narrow,
+ * single-frame run has one, derived from the image at creation time (M17,
+ * plan §A), because migration 0008's `CHECK` requires a non-null `video_id`
+ * for every job kind but `snapshot`.
  */
 export const DryRun = z
   .object({
@@ -959,6 +1017,7 @@ export const DryRun = z
     class_id: z.int().positive().openapi({ example: 1 }),
     class_name: z.string().openapi({ example: "Paimon" }),
     video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    image_id: z.int().positive().nullable().openapi({ example: 42 }),
     appearance_prompt: z.string().openapi({
       example: "a tiny white-haired floating companion with a dark crown",
     }),
@@ -991,6 +1050,27 @@ export const DryRunList = z.object({ dryruns: z.array(DryRun) }).openapi("DryRun
  * compare a wording against the two before it, which is the actual activity.
  */
 export const DRYRUN_HISTORY = 3;
+
+/**
+ * `GET /api/admin/classes/{id}/dryruns`'s optional filter (M17, plan §A).
+ *
+ * Narrows the history to one frame's own attempts, which is what
+ * `DryRunPanel`'s comparison strip actually wants once an admin has picked a
+ * frame and is iterating wordings against it — without this, `DRYRUN_HISTORY`
+ * rows newest-first could show a mix of runs against different frames (or
+ * different videos, in the wide mode) interleaved with the ones the operator
+ * is actually comparing. Same digits-then-parse treatment as `ClassIdParam`,
+ * for that schema's own reason.
+ */
+export const ListDryRunsQuery = z.object({
+  image_id: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((n) => n > 0)
+    .optional()
+    .openapi({ param: { name: "image_id", in: "query" }, type: "integer", example: 42 }),
+});
 
 /**
  * What a dry-run worker reports back (M12.2).
