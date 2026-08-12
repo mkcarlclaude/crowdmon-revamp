@@ -624,8 +624,11 @@ type CreateDryRunRequest struct {
 	// AppearancePrompt Example: a tiny white-haired floating companion with a dark crown
 	AppearancePrompt string `json:"appearance_prompt"`
 
+	// ImageId Example: 42
+	ImageId *int `json:"image_id,omitempty"`
+
 	// VideoId Example: dQw4w9WgXcQ
-	VideoId string `json:"video_id"`
+	VideoId *string `json:"video_id,omitempty"`
 }
 
 // CreateMissingReportRequest defines model for CreateMissingReportRequest.
@@ -666,6 +669,9 @@ type DryRun struct {
 
 	// Id Example: 1
 	Id int `json:"id"`
+
+	// ImageId Example: 42
+	ImageId *int `json:"image_id"`
 
 	// JobId Example: 42
 	JobId int `json:"job_id"`
@@ -730,6 +736,9 @@ type DryRunWork struct {
 
 	// ClassName Example: Paimon
 	ClassName string `json:"class_name"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key *string `json:"r2_key,omitempty"`
 
 	// SampleSize Example: 50
 	SampleSize int `json:"sample_size"`
@@ -1299,6 +1308,11 @@ type VideoSubmission struct {
 	VideoId string `json:"video_id"`
 }
 
+// ListDryRunsParams defines parameters for ListDryRuns.
+type ListDryRunsParams struct {
+	ImageId *int `form:"image_id,omitempty" json:"image_id,omitempty"`
+}
+
 // GetImageParams defines parameters for GetImage.
 type GetImageParams struct {
 	Key string `form:"key" json:"key"`
@@ -1522,18 +1536,18 @@ type ClientInterface interface {
 	// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
 	UpdateClass(ctx context.Context, id int, body UpdateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateDryRunWithBody Try a candidate prompt against a sample of one video's frames
+	// CreateDryRunWithBody Try a candidate prompt against one frame, or a sample of a whole video
 	//
-	// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+	// Enqueues a `dryrun` job, either against one named frame (`image_id`, iterated repeatedly to compare wordings on a fixed input) or a random sample across a whole video (`video_id`, the confirmation step before a wording is accepted). Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
 	CreateDryRunWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateDryRun Try a candidate prompt against a sample of one video's frames
+	// CreateDryRun Try a candidate prompt against one frame, or a sample of a whole video
 	//
-	// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+	// Enqueues a `dryrun` job, either against one named frame (`image_id`, iterated repeatedly to compare wordings on a fixed input) or a random sample across a whole video (`video_id`, the confirmation step before a wording is accepted). Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1542,10 +1556,10 @@ type ClientInterface interface {
 
 	// ListDryRuns This class's recent dry-runs, newest first
 	//
-	// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.
+	// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. An optional `image_id` narrows this to one frame's own attempts (M17, plan §A) — what a comparison strip iterating wordings against a fixed frame actually wants, rather than `DRYRUN_HISTORY` rows that might mix in a different frame's runs. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
-	ListDryRuns(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListDryRuns(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetImage One frame's bytes, by R2 key
 	//
@@ -1995,9 +2009,9 @@ func (c *Client) UpdateClass(ctx context.Context, id int, body UpdateClassJSONRe
 	return c.Client.Do(req)
 }
 
-// CreateDryRunWithBody Try a candidate prompt against a sample of one video's frames
+// CreateDryRunWithBody Try a candidate prompt against one frame, or a sample of a whole video
 //
-// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+// Enqueues a `dryrun` job, either against one named frame (`image_id`, iterated repeatedly to compare wordings on a fixed input) or a random sample across a whole video (`video_id`, the confirmation step before a wording is accepted). Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2014,9 +2028,9 @@ func (c *Client) CreateDryRunWithBody(ctx context.Context, id int, contentType s
 	return c.Client.Do(req)
 }
 
-// CreateDryRun Try a candidate prompt against a sample of one video's frames
+// CreateDryRun Try a candidate prompt against one frame, or a sample of a whole video
 //
-// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+// Enqueues a `dryrun` job, either against one named frame (`image_id`, iterated repeatedly to compare wordings on a fixed input) or a random sample across a whole video (`video_id`, the confirmation step before a wording is accepted). Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2035,11 +2049,11 @@ func (c *Client) CreateDryRun(ctx context.Context, id int, body CreateDryRunJSON
 
 // ListDryRuns This class's recent dry-runs, newest first
 //
-// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.
+// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. An optional `image_id` narrows this to one frame's own attempts (M17, plan §A) — what a comparison strip iterating wordings against a fixed frame actually wants, rather than `DRYRUN_HISTORY` rows that might mix in a different frame's runs. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
-func (c *Client) ListDryRuns(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListDryRunsRequest(c.Server, id)
+func (c *Client) ListDryRuns(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDryRunsRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3006,7 +3020,7 @@ func NewCreateDryRunRequestWithBody(server string, id int, contentType string, b
 }
 
 // NewListDryRunsRequest constructs an http.Request for the ListDryRuns method
-func NewListDryRunsRequest(server string, id int) (*http.Request, error) {
+func NewListDryRunsRequest(server string, id int, params *ListDryRunsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3029,6 +3043,33 @@ func NewListDryRunsRequest(server string, id int) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ImageId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "image_id", *params.ImageId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -4556,18 +4597,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /api/admin/classes/{id} (the `UpdateClass` operationId).
 	UpdateClassWithResponse(ctx context.Context, id int, body UpdateClassJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateClassResponse, error)
 
-	// CreateDryRunWithBodyWithResponse Try a candidate prompt against a sample of one video's frames
+	// CreateDryRunWithBodyWithResponse Try a candidate prompt against one frame, or a sample of a whole video
 	//
-	// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+	// Enqueues a `dryrun` job, either against one named frame (`image_id`, iterated repeatedly to compare wordings on a fixed input) or a random sample across a whole video (`video_id`, the confirmation step before a wording is accepted). Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/admin/classes/{id}/dryrun (the `CreateDryRun` operationId).
 	CreateDryRunWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDryRunResponse, error)
 
-	// CreateDryRunWithResponse Try a candidate prompt against a sample of one video's frames
+	// CreateDryRunWithResponse Try a candidate prompt against one frame, or a sample of a whole video
 	//
-	// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+	// Enqueues a `dryrun` job, either against one named frame (`image_id`, iterated repeatedly to compare wordings on a fixed input) or a random sample across a whole video (`video_id`, the confirmation step before a wording is accepted). Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4576,12 +4617,12 @@ type ClientWithResponsesInterface interface {
 
 	// ListDryRunsWithResponse This class's recent dry-runs, newest first
 	//
-	// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.
+	// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. An optional `image_id` narrows this to one frame's own attempts (M17, plan §A) — what a comparison strip iterating wordings against a fixed frame actually wants, rather than `DRYRUN_HISTORY` rows that might mix in a different frame's runs. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
-	ListDryRunsWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListDryRunsResponse, error)
+	ListDryRunsWithResponse(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*ListDryRunsResponse, error)
 
 	// GetImageWithResponse One frame's bytes, by R2 key
 	//
@@ -7281,9 +7322,9 @@ func (c *ClientWithResponses) UpdateClassWithResponse(ctx context.Context, id in
 	return ParseUpdateClassResponse(rsp)
 }
 
-// CreateDryRunWithBodyWithResponse Try a candidate prompt against a sample of one video's frames
+// CreateDryRunWithBodyWithResponse Try a candidate prompt against one frame, or a sample of a whole video
 //
-// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+// Enqueues a `dryrun` job, either against one named frame (`image_id`, iterated repeatedly to compare wordings on a fixed input) or a random sample across a whole video (`video_id`, the confirmation step before a wording is accepted). Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7296,9 +7337,9 @@ func (c *ClientWithResponses) CreateDryRunWithBodyWithResponse(ctx context.Conte
 	return ParseCreateDryRunResponse(rsp)
 }
 
-// CreateDryRunWithResponse Try a candidate prompt against a sample of one video's frames
+// CreateDryRunWithResponse Try a candidate prompt against one frame, or a sample of a whole video
 //
-// Enqueues a `dryrun` job. Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
+// Enqueues a `dryrun` job, either against one named frame (`image_id`, iterated repeatedly to compare wordings on a fixed input) or a random sample across a whole video (`video_id`, the confirmation step before a wording is accepted). Writes nothing to `predictions` — the boxes land on the dry-run's own row and are never label data. The wording is the candidate, not the class's current prompt: trying text before saving it is the point. Requires a Cloudflare Access assertion.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7313,13 +7354,13 @@ func (c *ClientWithResponses) CreateDryRunWithResponse(ctx context.Context, id i
 
 // ListDryRunsWithResponse This class's recent dry-runs, newest first
 //
-// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. Requires a Cloudflare Access assertion.
+// The 3 most recent dry-runs for one class, with their boxes inline. `status` is joined from the job rather than duplicated onto the dry-run, so a run the reaper took back reads as `pending` here without anything having to update a second column. An optional `image_id` narrows this to one frame's own attempts (M17, plan §A) — what a comparison strip iterating wordings against a fixed frame actually wants, rather than `DRYRUN_HISTORY` rows that might mix in a different frame's runs. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
-func (c *ClientWithResponses) ListDryRunsWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ListDryRunsResponse, error) {
-	rsp, err := c.ListDryRuns(ctx, id, reqEditors...)
+func (c *ClientWithResponses) ListDryRunsWithResponse(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*ListDryRunsResponse, error) {
+	rsp, err := c.ListDryRuns(ctx, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

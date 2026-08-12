@@ -5,13 +5,17 @@ import { DRYRUN_HISTORY, DRYRUN_SAMPLE_SIZE } from "../../src/schemas";
 import { ADMIN_EMAIL, adminHeaders, configureAccess, installAdminIdentity } from "./admin-identity";
 
 /**
- * Prompt dry-runs (M12.2): trying a candidate wording against ~50 frames and
- * looking at the boxes, before that wording is allowed to pre-label anything.
+ * Prompt dry-runs (M12.2): trying a candidate wording against a sample of
+ * frames and looking at the boxes, before that wording is allowed to
+ * pre-label anything. M17 (plan §A) adds a second, single-frame mode —
+ * `image_id` instead of `video_id` — so a reworded prompt can be compared
+ * against the *same* frame run over run; the original random-sample mode
+ * stays as the confirmation step before a wording is accepted.
  *
  * The property most of these tests exist to hold down is the one the milestone
  * words as "writing nothing": a dry-run must not put a row in `predictions` or
  * stamp `images.selection_reason`, or its boxes become indistinguishable from
- * an approved class's.
+ * an approved class's. That is unchanged by which mode created the row.
  */
 
 beforeAll(installAdminIdentity);
@@ -45,6 +49,16 @@ async function seedClass(name = "Paimon"): Promise<number> {
     .first<{ id: number }>();
 
   if (!row) throw new Error("seeding a class returned no row");
+  return row.id;
+}
+
+/** The id `seedVideo` gave the `i`th frame it inserted. */
+async function imageId(i = 0): Promise<number> {
+  const row = await env.DB.prepare("SELECT id FROM images WHERE r2_key = ?")
+    .bind(`frames/${VIDEO}/0000${i}.000.jpg`)
+    .first<{ id: number }>();
+
+  if (!row) throw new Error(`no seeded image at index ${i}`);
   return row.id;
 }
 
@@ -206,6 +220,87 @@ describe("POST /api/admin/classes/{id}/dryrun", () => {
   });
 });
 
+describe("POST /api/admin/classes/{id}/dryrun — single-frame mode (M17, plan §A)", () => {
+  beforeEach(() => seedVideo());
+
+  it("rejects a body naming both image_id and video_id", async () => {
+    const classId = await seedClass();
+    const id = await imageId();
+
+    const res = await createDryRun(classId, {
+      image_id: id,
+      video_id: VIDEO,
+      appearance_prompt: CANDIDATE,
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a body naming neither image_id nor video_id", async () => {
+    const classId = await seedClass();
+
+    const res = await createDryRun(classId, { appearance_prompt: CANDIDATE });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("answers 404 for an unknown image", async () => {
+    const classId = await seedClass();
+
+    const res = await createDryRun(classId, { image_id: 999_999, appearance_prompt: CANDIDATE });
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("999999"),
+    });
+  });
+
+  it("derives video_id from the image and writes a sample_size of 1", async () => {
+    const classId = await seedClass();
+    const id = await imageId();
+
+    const res = await createDryRun(classId, { image_id: id, appearance_prompt: CANDIDATE });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      class_id: classId,
+      video_id: VIDEO,
+      image_id: id,
+      appearance_prompt: CANDIDATE,
+      sample_size: 1,
+      status: "pending",
+      boxes: null,
+      sampled_keys: null,
+    });
+
+    // jobs.video_id has to be non-null — migration 0008's CHECK requires it
+    // for every kind but `snapshot` — and this is where that value came from:
+    // not a caller-supplied field, the image's own `video_id` column.
+    const job = await env.DB.prepare("SELECT video_id FROM jobs WHERE id = ?")
+      .bind(body.job_id)
+      .first<{ video_id: string }>();
+    expect(job?.video_id).toBe(VIDEO);
+
+    const row = await env.DB.prepare("SELECT image_id, sample_size FROM dryruns WHERE job_id = ?")
+      .bind(body.job_id)
+      .first<{ image_id: number; sample_size: number }>();
+    expect(row).toEqual({ image_id: id, sample_size: 1 });
+  });
+
+  it("allows a second wording against the same frame — this is the whole point", async () => {
+    const classId = await seedClass();
+    const id = await imageId();
+
+    expect(
+      (await createDryRun(classId, { image_id: id, appearance_prompt: "wording one" })).status,
+    ).toBe(201);
+    expect(
+      (await createDryRun(classId, { image_id: id, appearance_prompt: "wording two" })).status,
+    ).toBe(201);
+  });
+});
+
 describe("claiming a dryrun job", () => {
   beforeEach(() => seedVideo());
 
@@ -229,6 +324,10 @@ describe("claiming a dryrun job", () => {
     // The chunk work definition belongs to a different kind and must not
     // appear here.
     expect(job.chunk).toBeUndefined();
+    // Nor does a key: the wide mode's worker still resolves its own sample,
+    // and a stray `r2_key` here would tell it (or an observer reading the
+    // wire) that a frame had already been chosen when none was.
+    expect((job.dryrun as Record<string, unknown>).r2_key).toBeUndefined();
   });
 
   it("retires a dryrun job whose work definition is missing", async () => {
@@ -247,6 +346,50 @@ describe("claiming a dryrun job", () => {
       failure_reason: string;
     }>();
     expect(job).toMatchObject({ status: "failed", failure_reason: "dryrun row missing" });
+  });
+
+  it("hands the worker the frame's r2_key for a single-frame job (M17, plan §A)", async () => {
+    // The property the whole rollout hazard is about: a worker must never
+    // have to resolve its own frame for this mode, so the key has to arrive
+    // on the claim, pre-resolved.
+    const classId = await seedClass();
+    const id = await imageId(1);
+    await createDryRun(classId, { image_id: id, appearance_prompt: CANDIDATE });
+
+    const res = await claim();
+
+    expect(res.status).toBe(200);
+    const job = (await res.json()) as Record<string, unknown>;
+    expect(job).toMatchObject({
+      kind: "dryrun",
+      video_id: VIDEO,
+      dryrun: {
+        class_name: "Paimon",
+        appearance_prompt: CANDIDATE,
+        sample_size: 1,
+        r2_key: `frames/${VIDEO}/00001.000.jpg`,
+      },
+    });
+  });
+
+  it("D1 refuses to delete an image a dry-run still names — the guarantee the claim handler relies on", async () => {
+    // Migration 0010's own comment: D1 enforces `dryruns.image_id REFERENCES
+    // images(id)` unconditionally (migration 0005's finding — there is no
+    // pragma that turns foreign-key enforcement off), so a single-frame
+    // dry-run's `image_id` can never dangle. This is what lets the claim
+    // handler (jobs.ts) skip an "image row missing" retirement branch for the
+    // single-frame mode where `chunk`'s own such check exists for `chunks` —
+    // the state that check guards against is reachable there and is not
+    // reachable here. Asserted directly rather than trusted, in migration
+    // 0005's own idiom of verifying a D1 enforcement claim against the real
+    // engine rather than assuming it.
+    const classId = await seedClass();
+    const id = await imageId();
+    await createDryRun(classId, { image_id: id, appearance_prompt: CANDIDATE });
+
+    await expect(env.DB.prepare("DELETE FROM images WHERE id = ?").bind(id).run()).rejects.toThrow(
+      /FOREIGN KEY/i,
+    );
   });
 });
 
@@ -406,9 +549,10 @@ describe("POST /api/jobs/{id}/dryrun", () => {
 describe("GET /api/admin/classes/{id}/dryruns", () => {
   beforeEach(() => seedVideo());
 
-  async function listDryRuns(classId: number) {
+  async function listDryRuns(classId: number, filterImageId?: number) {
+    const query = filterImageId === undefined ? "" : `?image_id=${filterImageId}`;
     return app.request(
-      `/api/admin/classes/${classId}/dryruns`,
+      `/api/admin/classes/${classId}/dryruns${query}`,
       { headers: await adminHeaders() },
       env,
     );
@@ -495,6 +639,39 @@ describe("GET /api/admin/classes/{id}/dryruns", () => {
     const res = await listDryRuns(classId);
 
     await expect(res.json()).resolves.toEqual({ dryruns: [] });
+  });
+
+  it("narrows to one frame's own attempts when image_id is given (M17, plan §A)", async () => {
+    // A comparison strip iterating wordings against one fixed frame wants
+    // only that frame's runs — `DRYRUN_HISTORY` newest-first rows could
+    // otherwise mix in a different frame's attempts, or the wide mode's.
+    const classId = await seedClass();
+    const first = await imageId(0);
+    const second = await imageId(1);
+
+    await createDryRun(classId, { image_id: first, appearance_prompt: "wording on frame one" });
+    await createDryRun(classId, { image_id: second, appearance_prompt: "wording on frame two" });
+    await createDryRun(classId, { image_id: first, appearance_prompt: "another on frame one" });
+
+    const res = await listDryRuns(classId, first);
+    const body = (await res.json()) as {
+      dryruns: Array<{ image_id: number | null; appearance_prompt: string }>;
+    };
+
+    expect(body.dryruns).toHaveLength(2);
+    expect(body.dryruns.every((run) => run.image_id === first)).toBe(true);
+    // Newest first, unchanged by the filter.
+    expect(body.dryruns[0]?.appearance_prompt).toBe("another on frame one");
+  });
+
+  it("reads image_id back as null for the wide mode", async () => {
+    const classId = await seedClass();
+    await createDryRun(classId);
+
+    const res = await listDryRuns(classId);
+    const body = (await res.json()) as { dryruns: Array<{ image_id: number | null }> };
+
+    expect(body.dryruns[0]?.image_id).toBeNull();
   });
 });
 

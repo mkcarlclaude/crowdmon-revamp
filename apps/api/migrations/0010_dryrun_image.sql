@@ -1,0 +1,48 @@
+-- Names the single frame a dry-run iterates against (M17, plan §A).
+--
+-- Why a dry-run needs this at all
+-- --------------------------------
+-- Migration 0007's dry-run samples `DRYRUN_SAMPLE_SIZE` frames at random on
+-- every run. Reword the candidate prompt and run again, and the comparison
+-- is between two different sets of fifty frames as well as two different
+-- wordings — two variables move at once, and nothing observed is
+-- attributable to the wording alone. Fixing the input to one named image
+-- makes successive runs comparable, and it is also the whole reason the
+-- iteration loop was slow: fifty detect calls on the home box's two cores is
+-- minutes per attempt, one is seconds.
+--
+-- Why this is one nullable column and not a rebuild
+-- ----------------------------------------------------
+-- `ALTER TABLE ... ADD COLUMN` is additive — it neither drops nor recreates
+-- `dryruns` or anything that references it, so none of the child-row
+-- cascade hazard migrations 0005, 0007 and 0008 each had to work around
+-- (D1 ignoring `PRAGMA foreign_keys=OFF`, so `DROP TABLE` cascades a child
+-- away unless it is rebuilt and moved first) applies here. There is no
+-- table to rebuild.
+--
+-- The `REFERENCES images(id)` clause is real, not documentation-only, and it
+-- is worth being precise about why: migration 0005's header records that D1
+-- keeps foreign-key enforcement on unconditionally, for every session, with
+-- no opt-out — querying `PRAGMA foreign_keys` right after setting it `OFF`
+-- still reports `1`. Verified directly against this column too (an `INSERT`
+-- naming an `image_id` with no matching `images` row is rejected). So an
+-- `image_id`, once written, is guaranteed to keep resolving for as long as
+-- the row survives — there is no `ON DELETE CASCADE` here (unlike
+-- `dryruns.job_id`), which means the *converse* is also guaranteed: deleting
+-- an `images` row while a `dryruns` row still names it is refused, not
+-- silently allowed to dangle. Nothing in this codebase deletes an `images`
+-- row in production (migration 0003's own comment on `predictions.image_id`'s
+-- dormant cascade), so this is a guarantee this migration gets for free
+-- rather than one it had to design for.
+--
+-- Nullable, and NULL is a real value with a real meaning rather than a
+-- placeholder for "not migrated yet": it is the old, wide mode kept
+-- deliberately — `POST /api/admin/classes/{id}/dryrun` still accepts
+-- `{video_id, appearance_prompt}` and samples `DRYRUN_SAMPLE_SIZE` frames at
+-- random, because one fixed frame overfits. A wording tuned to nail one
+-- pose and one lighting condition can be worse across the whole video, so
+-- the wide draw stays as the confirmation step before a wording is
+-- accepted: iterate narrow, confirm wide. Every row written before this
+-- migration reads as `image_id IS NULL`, which is exactly the true fact
+-- about it — nothing before M17 ever named a single frame.
+ALTER TABLE dryruns ADD COLUMN image_id INTEGER REFERENCES images(id);
