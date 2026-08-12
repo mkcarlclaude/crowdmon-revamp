@@ -113,34 +113,86 @@ export const listVideosRoute = createRoute({
 });
 
 export const listVideosHandler: RouteHandler<typeof listVideosRoute, AppEnv> = async (c) => {
-  // Four correlated subqueries over the already-limited rows, not a `LEFT
-  // JOIN ... GROUP BY` against `images` or `predictions`. The join form
-  // applies `LIMIT` after aggregating, so it scans every row in both tables —
-  // 2,685 images for one v1 video, and growing per video — to produce fifty
-  // videos' worth of counts on a request this page and the dry-run picker
-  // both make on every mount. This form touches only what `idx_images_identity`
-  // and `idx_predictions_class`-adjacent scans need for fifty videos.
+  // One aggregate pass per table, joined onto `videos` — not the four
+  // correlated scalar subqueries this used to run per video row. That form
+  // was written to avoid a `LEFT JOIN ... GROUP BY`, on the theory that the
+  // join "applies `LIMIT` after aggregating, so it scans every row in both
+  // tables," while the correlated form "touches only what
+  // `idx_images_identity` ... need for fifty videos." `wrangler d1 insights`
+  // disproved the second half of that: production was reading 39,652 rows
+  // per call against 9,714 images and 1,055 predictions across 7 videos —
+  // within 2% of 4 × 9,714. `idx_images_identity` does turn each correlated
+  // subquery into an index *search* rather than a table scan, so it's not
+  // wrong that the form "touches only what the index needs" — but two of
+  // the four subqueries join through to `predictions`, and they pay for an
+  // `idx_predictions_image` probe per *image* in the video (mostly misses),
+  // not per prediction. Four scans of `images`' worth of work, run once per
+  // video row, however it's indexed.
   //
-  // Counts rather than existence checks, and NULL never appears on
-  // `image_count` or `frames_sampled`: a video whose extraction has not
-  // started reads zero rather than dropping out of the list, because the
-  // dry-run form has to be able to say why it cannot be run against that
-  // video. `model_id` and `prelabelled_at` stay nullable — MIN/MAX over zero
-  // rows is SQL's own honest "nothing yet," not a sentinel this handler has
-  // to invent.
+  // The join form's "scans every row" complaint is real, but it only costs
+  // once, not four times, and `videos` itself is tiny (7 rows in production,
+  // growing by hours of extraction work each) — so "every row of `images`
+  // and `predictions`, once" is a fixed, cheap cost that does not scale with
+  // how many videos exist, only with how many frames and predictions do.
+  // Measured against a seeded dataset scaled up from production (10,000
+  // images, 1,055 predictions, 7 videos, via `meta.rows_read`): the
+  // correlated form reads 45,311 rows; this form reads 16,385 — roughly the
+  // one-time cost of `SCAN images USING INDEX idx_images_identity` for
+  // `image_count`/`frames_sampled`, plus one pass over `predictions` joined
+  // to `images` by primary key for `model_id`/`prelabelled_at`, which stays
+  // cheap because `predictions` is two orders of magnitude smaller than
+  // `images`. `EXPLAIN QUERY PLAN` confirms the shape: one `SCAN images`,
+  // not one per video, and no per-image probe into `predictions` at all.
+  //
+  // `model_id` needs an argmax, not `MAX(model_id)` — the model that logged
+  // the *most recent* prediction for a video, not the alphabetically
+  // greatest model name. `ROW_NUMBER() OVER (PARTITION BY video_id ORDER BY
+  // created_at DESC, id DESC)` picks that row directly; `id DESC` is a
+  // deterministic tie-break for two predictions in the same second, which
+  // the old `ORDER BY created_at DESC LIMIT 1` left to whatever order SQLite
+  // happened to visit rows in. (SQLite's bare-column-follows-`MAX()` idiom —
+  // `SELECT p.model_id, MAX(p.created_at) ... GROUP BY i.video_id` — gives
+  // the same answer with a plain `GROUP BY` and no window function, but
+  // measured worse here: 22,163 rows. The planner drives that form off
+  // `images` to get `GROUP BY`'s ordering for free, which reintroduces a
+  // per-image probe into `idx_predictions_image` — the exact cost this
+  // rewrite exists to remove.)
+  //
+  // `image_count` and `frames_sampled` must read zero, never NULL, for a
+  // video with no images yet — the dry-run picker depends on that video
+  // still appearing in the list so it can explain why it cannot run there.
+  // A `LEFT JOIN` to the `images` aggregate produces NULL for such a video,
+  // so both are COALESCEd to 0. `model_id` and `prelabelled_at` stay
+  // nullable: MIN/MAX (and this argmax) over zero rows is SQL's own honest
+  // "nothing yet," not a sentinel this handler has to invent.
   const { results } = await c.env.DB.prepare(
     `SELECT v.id, v.title, v.created_at,
-            (SELECT COUNT(*) FROM images i WHERE i.video_id = v.id) AS image_count,
-            (SELECT COUNT(*) FROM images i
-              WHERE i.video_id = v.id AND i.selection_reason IS NOT NULL) AS frames_sampled,
-            (SELECT p.model_id FROM predictions p
-               JOIN images i ON i.id = p.image_id
-              WHERE i.video_id = v.id
-              ORDER BY p.created_at DESC LIMIT 1) AS model_id,
-            (SELECT MAX(p.created_at) FROM predictions p
-               JOIN images i ON i.id = p.image_id
-              WHERE i.video_id = v.id) AS prelabelled_at
+            COALESCE(img.image_count, 0) AS image_count,
+            COALESCE(img.frames_sampled, 0) AS frames_sampled,
+            latest.model_id,
+            latest.prelabelled_at
        FROM videos v
+       LEFT JOIN (
+         SELECT video_id,
+                COUNT(*) AS image_count,
+                SUM(CASE WHEN selection_reason IS NOT NULL THEN 1 ELSE 0 END) AS frames_sampled
+           FROM images
+          GROUP BY video_id
+       ) img ON img.video_id = v.id
+       LEFT JOIN (
+         SELECT video_id, model_id, created_at AS prelabelled_at
+           FROM (
+             SELECT i.video_id AS video_id,
+                    p.model_id AS model_id,
+                    p.created_at AS created_at,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY i.video_id ORDER BY p.created_at DESC, p.id DESC
+                    ) AS rn
+               FROM predictions p
+               JOIN images i ON i.id = p.image_id
+           )
+          WHERE rn = 1
+       ) latest ON latest.video_id = v.id
       ORDER BY v.created_at DESC, v.id DESC
       LIMIT ?`,
   )
