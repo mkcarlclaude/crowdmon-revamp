@@ -3,7 +3,8 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../src/app";
 import { MAX_VERDICTS_PER_IMAGE } from "../../src/schemas";
 import { ADMIN_EMAIL, adminHeaders, configureAccess, installAdminIdentity } from "./admin-identity";
-import { seedImage, seedPool, seedPrediction, seedVerdict } from "./labelling-seed";
+import { seedClass, seedImage, seedPool, seedPrediction, seedVerdict } from "./labelling-seed";
+import { seedVideo } from "./seed";
 
 /**
  * Verdict writes behind Access (M13.2).
@@ -286,7 +287,8 @@ describe("submitting a frame's rulings", () => {
 /**
  * `GET /api/admin/verdicts` (M16, ROADMAP M16.4): reading the same rows this
  * file's other endpoint writes, joined out to the frame and class each one
- * belongs to.
+ * belongs to. M18 (plan §A) adds five filters beyond `source`, a `total`
+ * alongside the page, and the prediction's original box (plan §B).
  */
 describe("GET /api/admin/verdicts", () => {
   async function list(query = ""): Promise<Response> {
@@ -298,21 +300,25 @@ describe("GET /api/admin/verdicts", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns an empty list rather than an error when nothing has been ruled on", async () => {
+  it("returns an empty list and a zero total rather than an error when nothing has been ruled on", async () => {
     const res = await list();
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ verdicts: [] });
+    await expect(res.json()).resolves.toEqual({ verdicts: [], total: 0 });
   });
 
-  it("joins a verdict out to its frame and class, newest first", async () => {
+  it("joins a verdict out to its frame and class, newest first, with the prediction's original box", async () => {
     const { videoId, classId, imageId, predictionId } = await seedPool();
     await seedVerdict(predictionId);
 
     const res = await list();
-    const body = (await res.json()) as { verdicts: Array<Record<string, unknown>> };
+    const body = (await res.json()) as {
+      verdicts: Array<Record<string, unknown>>;
+      total: number;
+    };
 
     expect(res.status).toBe(200);
+    expect(body.total).toBe(1);
     expect(body.verdicts).toHaveLength(1);
     expect(body.verdicts[0]).toMatchObject({
       prediction_id: predictionId,
@@ -323,6 +329,15 @@ describe("GET /api/admin/verdicts", () => {
       video_id: videoId,
       class_id: classId,
       class_name: "Paimon",
+      // `seedPrediction`'s own fixed coordinates — the box `submitVerdicts`'
+      // own tests already prove `adjust` never mutates. A preview needs both
+      // this and `adjusted_*` to show what the detector proposed next to
+      // what an admin ruled.
+      x_min: 0.1,
+      y_min: 0.2,
+      x_max: 0.5,
+      y_max: 0.6,
+      confidence: 0.87,
     });
   });
 
@@ -349,16 +364,141 @@ describe("GET /api/admin/verdicts", () => {
     const adminOnly = await list("?source=admin");
     await expect(adminOnly.json()).resolves.toMatchObject({
       verdicts: [{ source: "admin" }],
+      total: 1,
     });
 
     const anonOnly = await list("?source=anon");
     await expect(anonOnly.json()).resolves.toMatchObject({
       verdicts: [{ source: "anon", annotator_id: "session-abc" }],
+      total: 1,
     });
 
     const both = await list();
-    const body = (await both.json()) as { verdicts: unknown[] };
+    const body = (await both.json()) as { verdicts: unknown[]; total: number };
     expect(body.verdicts).toHaveLength(2);
+    expect(body.total).toBe(2);
+  });
+
+  it("filters by verdict, a single value or several at once", async () => {
+    const { predictionId } = await seedPool();
+    await seedVerdict(predictionId, { verdict: "accept" });
+    await seedVerdict(predictionId, { verdict: "reject" });
+
+    const rejectOnly = await list("?verdict=reject");
+    await expect(rejectOnly.json()).resolves.toMatchObject({
+      verdicts: [{ verdict: "reject" }],
+      total: 1,
+    });
+
+    // Two occurrences of the same query key — Hono's own query parser turns
+    // this into an array, which is the shape `AdminVerdictListQuery`'s
+    // `verdict` field is built to accept alongside a single occurrence.
+    const both = await list("?verdict=accept&verdict=reject");
+    const body = (await both.json()) as { verdicts: Array<{ verdict: string }>; total: number };
+    expect(body.total).toBe(2);
+    expect(body.verdicts.map((v) => v.verdict).sort()).toEqual(["accept", "reject"]);
+  });
+
+  it("filters by class", async () => {
+    const { imageId, predictionId } = await seedPool();
+    const otherClassId = await seedClass("Klee");
+    const otherPredictionId = await seedPrediction(imageId, otherClassId);
+    await seedVerdict(predictionId);
+    await seedVerdict(otherPredictionId);
+
+    const res = await list(`?class_id=${otherClassId}`);
+    await expect(res.json()).resolves.toMatchObject({
+      verdicts: [{ prediction_id: otherPredictionId, class_name: "Klee" }],
+      total: 1,
+    });
+  });
+
+  it("filters by video", async () => {
+    const { predictionId } = await seedPool();
+    const otherVideoId = "aaaaaaaaaaa";
+    await seedVideo(otherVideoId);
+    const otherImageId = await seedImage(otherVideoId, 1);
+    const otherClassId = await seedClass("Klee");
+    const otherPredictionId = await seedPrediction(otherImageId, otherClassId);
+    await seedVerdict(predictionId);
+    await seedVerdict(otherPredictionId);
+
+    const res = await list(`?video_id=${otherVideoId}`);
+    await expect(res.json()).resolves.toMatchObject({
+      verdicts: [{ video_id: otherVideoId }],
+      total: 1,
+    });
+  });
+
+  it("filters by annotator", async () => {
+    const { predictionId } = await seedPool();
+    await seedVerdict(predictionId, { annotatorId: "alice@example.com" });
+    await seedVerdict(predictionId, { annotatorId: "bob@example.com" });
+
+    const res = await list("?annotator_id=alice@example.com");
+    await expect(res.json()).resolves.toMatchObject({
+      verdicts: [{ annotator_id: "alice@example.com" }],
+      total: 1,
+    });
+  });
+
+  it("filters by a created_at time range", async () => {
+    const { predictionId } = await seedPool();
+    await seedVerdict(predictionId);
+    const row = (
+      await env.DB.prepare("SELECT id, created_at FROM verdicts").all<{
+        id: number;
+        created_at: number;
+      }>()
+    ).results[0];
+    if (!row) throw new Error("seeding a verdict inserted nothing");
+    const { id, created_at: createdAt } = row;
+
+    // Shifted well clear of "now" in both directions so a `from`/`to` bound
+    // set to the real value has something unambiguous to include or exclude
+    // — `seedVerdict` writes no `created_at` of its own, so the row already
+    // carries whatever `strftime('%s', 'now')` produced on insert.
+    expect((await list(`?from=${createdAt}&to=${createdAt}`)).status).toBe(200);
+    await expect((await list(`?from=${createdAt}&to=${createdAt}`)).json()).resolves.toMatchObject({
+      verdicts: [{ id }],
+      total: 1,
+    });
+    await expect((await list(`?from=${createdAt + 3600}`)).json()).resolves.toMatchObject({
+      verdicts: [],
+      total: 0,
+    });
+    await expect((await list(`?to=${createdAt - 3600}`)).json()).resolves.toMatchObject({
+      verdicts: [],
+      total: 0,
+    });
+  });
+
+  it("combines filters with AND", async () => {
+    const { classId, imageId, predictionId } = await seedPool();
+    const otherClassId = await seedClass("Klee");
+    const otherPredictionId = await seedPrediction(imageId, otherClassId);
+    await seedVerdict(predictionId, { verdict: "accept" }); // classId, accept
+    await seedVerdict(otherPredictionId, { verdict: "reject" }); // otherClassId, reject
+
+    // `verdict=reject` alone matches the second row; `class_id=classId` alone
+    // matches the first. Neither filter is satisfied by the other row, so
+    // the pair together — AND, not OR — matches nothing, which is only true
+    // if both conditions land in the same `WHERE` clause.
+    const res = await list(`?verdict=reject&class_id=${classId}`);
+    await expect(res.json()).resolves.toEqual({ verdicts: [], total: 0 });
+  });
+
+  it("counts the whole filtered set, not just the page", async () => {
+    const { predictionId } = await seedPool();
+    await seedVerdict(predictionId, { verdict: "reject" });
+    await seedVerdict(predictionId, { verdict: "accept" });
+    await seedVerdict(predictionId, { verdict: "reject" });
+
+    const page = await list("?limit=1");
+    const body = (await page.json()) as { verdicts: unknown[]; total: number };
+
+    expect(body.verdicts).toHaveLength(1);
+    expect(body.total).toBe(3);
   });
 
   it("pages with limit and offset", async () => {
@@ -384,5 +524,45 @@ describe("GET /api/admin/verdicts", () => {
     await seedPool();
     const res = await list("?limit=0");
     expect(res.status).toBe(400);
+  });
+});
+
+/**
+ * `GET /api/admin/verdicts/annotators` (M18, plan §A): the filter
+ * dropdown's own data, grouped by `(annotator_id, source)`.
+ */
+describe("GET /api/admin/verdicts/annotators", () => {
+  async function annotators(): Promise<Response> {
+    return app.request("/api/admin/verdicts/annotators", { headers: await adminHeaders() }, env);
+  }
+
+  it("rejects an unauthenticated request", async () => {
+    expect((await app.request("/api/admin/verdicts/annotators", {}, env)).status).toBe(401);
+  });
+
+  it("returns nothing when nobody has ruled on anything yet", async () => {
+    await expect((await annotators()).json()).resolves.toEqual({ annotators: [] });
+  });
+
+  it("groups by annotator and source with a count each", async () => {
+    const { predictionId } = await seedPool();
+    await seedVerdict(predictionId, { annotatorId: "admin@example.com", source: "admin" });
+    await seedVerdict(predictionId, { annotatorId: "admin@example.com", source: "admin" });
+    await seedVerdict(predictionId, { annotatorId: "session-abc", source: "anon" });
+
+    const body = (await (await annotators()).json()) as {
+      annotators: Array<{ annotator_id: string; source: string; verdicts: number }>;
+    };
+
+    expect(body.annotators).toContainEqual({
+      annotator_id: "admin@example.com",
+      source: "admin",
+      verdicts: 2,
+    });
+    expect(body.annotators).toContainEqual({
+      annotator_id: "session-abc",
+      source: "anon",
+      verdicts: 1,
+    });
   });
 });

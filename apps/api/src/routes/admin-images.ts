@@ -100,7 +100,25 @@ export const getImageHandler: RouteHandler<typeof getImageRoute, AppEnv> = async
 };
 
 /**
- * Curating the public pool (M14.1, migration 0004, CONTEXT.md §12).
+ * The floor a curator has to respect between two public-sample frames from
+ * the same video (M18, plan §C).
+ *
+ * At 1fps extraction, two kept frames within half a minute of each other are
+ * adjacent enough that a human cannot tell them apart — the plan's own
+ * diagnosis of the "keeps serving near-identical frames" report is that the
+ * pool itself is temporally clustered, not that the draw is insufficiently
+ * random (`publicFrameHandler` already draws with `ORDER BY RANDOM()` over
+ * the whole pool). Thirty seconds is the plan's own floor, not a computed
+ * value: it is short enough that a curator scanning one scene for several
+ * good frames is not fighting the rule, and long enough that "the same
+ * moment, twice" cannot slip through by habit — an admin scanning a video's
+ * frame grid naturally clicks a contiguous run of good-looking frames.
+ */
+export const PUBLIC_SAMPLE_MIN_SPACING_SECONDS = 30;
+
+/**
+ * Curating the public pool (M14.1, migration 0004, CONTEXT.md §12; M18, plan
+ * §C's spacing rule).
  *
  * The only writer of `images.public_sample`. Never `selection_reason` —
  * that column is written once, at selection time, by a different actor
@@ -112,6 +130,16 @@ export const getImageHandler: RouteHandler<typeof getImageRoute, AppEnv> = async
  * eligible to be handed to a visitor), not to the flag itself — an admin
  * flagging a frame before its predictions land is an ordinary sequencing
  * choice, not a state this route needs to refuse.
+ *
+ * **Flagging in is refused when it would put two public-sample frames from
+ * one video within `PUBLIC_SAMPLE_MIN_SPACING_SECONDS` of each other;
+ * flagging out never is.** Enforced here, in the handler, rather than left to
+ * whichever screen calls it — CONTEXT.md §Q19's amendment already draws
+ * `/admin/videos/:id`'s frame grid as one caller of this route and a future
+ * curation surface would be another, and the rule has to hold regardless of
+ * which one made the request. Unflagging is never refused: removing a frame
+ * from the pool cannot make it more clustered, so there is nothing for this
+ * check to protect against on the way out.
  */
 export const updatePublicSampleRoute = createRoute({
   method: "patch",
@@ -123,8 +151,11 @@ export const updatePublicSampleRoute = createRoute({
     "Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the " +
     "public page draw from instead of the bucket. Kept separate from the frozen " +
     "evaluation pool by construction — this route only ever writes the flag an admin " +
-    "chose, never anything selection-time logic wrote. Requires a Cloudflare Access " +
-    "assertion.",
+    "chose, never anything selection-time logic wrote. Flagging a frame IN is refused " +
+    "with 409 when another public-sample frame from the same video already sits within " +
+    `${PUBLIC_SAMPLE_MIN_SPACING_SECONDS} seconds of it — at 1fps extraction that pair is ` +
+    "close enough to read as the same frame shown twice, which is what a visitor actually " +
+    "reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.",
   request: {
     params: ImageIdParam,
     body: {
@@ -141,6 +172,10 @@ export const updatePublicSampleRoute = createRoute({
     401: errorResponse("Missing or invalid Access assertion"),
     403: errorResponse("A verified identity that is not an administrator"),
     404: errorResponse("No image with this id"),
+    409: errorResponse(
+      "Flagging this frame in would put it within the minimum spacing of an already-flagged " +
+        "frame from the same video, named in the message",
+    ),
     503: errorResponse("Admin access is not configured on this deployment"),
   },
 });
@@ -151,6 +186,56 @@ export const updatePublicSampleHandler: RouteHandler<
 > = async (c) => {
   const { id } = c.req.valid("param");
   const { public_sample } = c.req.valid("json");
+
+  // Read first rather than leaning on `UPDATE ... RETURNING` to discover a
+  // missing id, unlike this handler's previous shape — the spacing check
+  // below needs `video_id` and `timestamp_seconds` before it can run, and a
+  // second SELECT just to fetch what the first one already had would be a
+  // wasted round trip for the common case of flagging out or flagging in with
+  // nothing nearby.
+  const image = await c.env.DB.prepare(
+    "SELECT id, video_id, timestamp_seconds FROM images WHERE id = ?",
+  )
+    .bind(id)
+    .first<{ id: number; video_id: string; timestamp_seconds: number }>();
+
+  if (!image) return c.json({ error: `no image with id ${id}` }, 404);
+
+  if (public_sample) {
+    // The nearest already-flagged frame from the same video, if one is
+    // closer than the floor allows. `id != ?` excludes the row being updated
+    // itself — an admin re-flagging a frame that is already in the pool (a
+    // no-op PATCH) must not trip over its own existing flag.
+    const conflict = await c.env.DB.prepare(
+      `SELECT id, timestamp_seconds FROM images
+        WHERE video_id = ?
+          AND public_sample = 1
+          AND id != ?
+          AND ABS(timestamp_seconds - ?) < ?
+        ORDER BY ABS(timestamp_seconds - ?) LIMIT 1`,
+    )
+      .bind(
+        image.video_id,
+        id,
+        image.timestamp_seconds,
+        PUBLIC_SAMPLE_MIN_SPACING_SECONDS,
+        image.timestamp_seconds,
+      )
+      .first<{ id: number; timestamp_seconds: number }>();
+
+    if (conflict) {
+      return c.json(
+        {
+          error:
+            `frame ${id} (${image.timestamp_seconds}s) is within ` +
+            `${PUBLIC_SAMPLE_MIN_SPACING_SECONDS}s of already-flagged frame ${conflict.id} ` +
+            `(${conflict.timestamp_seconds}s) from video ${image.video_id} — a visitor would ` +
+            "see them as near-duplicates",
+        },
+        409,
+      );
+    }
+  }
 
   const updated = await c.env.DB.prepare(
     "UPDATE images SET public_sample = ? WHERE id = ? RETURNING id, public_sample",

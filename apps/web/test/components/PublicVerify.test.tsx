@@ -172,4 +172,40 @@ describe("PublicVerify", () => {
       fetchMock.mock.calls.filter(([url]) => (url as string).startsWith("/api/public/frame")),
     ).toHaveLength(2);
   });
+
+  /**
+   * `exclude` (M18, plan §C): `usePublicFrame`'s own comment explains the
+   * mechanism — `nextFrame()` triggers a refetch, and the refetch's `queryFn`
+   * reads the still-cached previous frame's id off the query client at the
+   * moment it runs, before the new response replaces it.
+   */
+  it("asks the API to exclude the frame currently on screen when moving to another one", async () => {
+    const fetchMock = stubApi({ frames: [frame(1), frame(2)] });
+
+    render(wrap(<PublicVerify />));
+    await screen.findByRole("img");
+
+    await userEvent.click(screen.getByRole("button", { name: /skip to another frame/i }));
+    await waitFor(() => expect(screen.getByRole("img")).toHaveAttribute("src", frame(2).url));
+
+    const frameRequests = fetchMock.mock.calls
+      .map(([url]) => url as string)
+      .filter((url) => url.startsWith("/api/public/frame"));
+
+    expect(frameRequests[0]).toBe("/api/public/frame");
+    expect(frameRequests[1]).toBe("/api/public/frame?exclude=1");
+  });
+
+  it("does not exclude anything on the very first load — there is nothing on screen yet", async () => {
+    const fetchMock = stubApi();
+
+    render(wrap(<PublicVerify />));
+    await screen.findByRole("img");
+
+    const frameRequests = fetchMock.mock.calls
+      .map(([url]) => url as string)
+      .filter((url) => url.startsWith("/api/public/frame"));
+
+    expect(frameRequests).toEqual(["/api/public/frame"]);
+  });
 });

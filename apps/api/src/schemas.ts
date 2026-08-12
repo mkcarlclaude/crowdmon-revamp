@@ -1638,6 +1638,32 @@ export const AdminImage = z
   .openapi("AdminImage");
 
 /**
+ * The frame a visitor is currently looking at, so `/api/public/frame` can
+ * avoid handing back the same one (M18, plan §C).
+ *
+ * A query parameter carrying an image id, not a session-scoped "last shown"
+ * server-side — the route already has no session state (`publicFrameHandler`'s
+ * own module comment: no adjust, no batching, nothing but a random draw), and
+ * inventing one just to remember one integer would be a second source of
+ * truth for what the client already knows: the frame on its own screen right
+ * now. Optional, because the first load of a session has nothing to exclude.
+ *
+ * Carries no trust, the same as `session_id` on the anonymous verdict routes:
+ * a caller naming an id that is not what they were actually shown gets a
+ * frame that merely might repeat, never a frame it should not have been able
+ * to reach — every row `publicFrameHandler` can return is already public.
+ */
+export const PublicFrameQuery = z.object({
+  exclude: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((id) => id > 0)
+    .optional()
+    .openapi({ param: { name: "exclude", in: "query" }, type: "integer", example: 7 }),
+});
+
+/**
  * One box on the public verification page (M14.2).
  *
  * A trimmed `ProposedBox`: no `prompt_version`, no `model_id`. Those name
@@ -1778,6 +1804,34 @@ const offsetParam = z
 /** The default `limitParam` falls back to when a caller omits it — both new routes'. */
 export const ADMIN_PAGE_LIMIT_DEFAULT = PAGE_LIMIT_DEFAULT;
 
+/**
+ * How many distinct values `verdict` may carry in one request (M18, plan §A).
+ *
+ * Not an arbitrary cap — it is `VerdictKind`'s own cardinality. A caller
+ * cannot usefully narrow to more than three verdict kinds because there are
+ * only three, so this bounds the generated `IN (...)` placeholder count by
+ * the schema itself rather than by a guess, the same way `MAX_ACTIVE_CLASSES`
+ * bounds a different list elsewhere in this file.
+ */
+export const MAX_VERDICT_FILTER_VALUES = 3;
+
+/**
+ * A query parameter that accepts one value or several of the same enum,
+ * repeated (`?verdict=accept&verdict=adjust`) rather than comma-joined into
+ * one string. Hono's own query parser is why: `c.req.queries()` already
+ * collapses a single occurrence to a bare string and multiple occurrences to
+ * an array (`hono/validator`), so a caller who names the filter once needs no
+ * special syntax and a caller who names it twice gets an array for free —
+ * this only has to describe both shapes to zod, never parse either by hand.
+ */
+const multiValueParam = <T extends z.ZodEnum>(schema: T, max: number) =>
+  z
+    .union([schema, z.array(schema).min(1).max(max)])
+    .optional()
+    .transform((value) =>
+      value === undefined ? undefined : Array.isArray(value) ? value : [value],
+    );
+
 export const AdminVerdictListQuery = z.object({
   limit: limitParam,
   offset: offsetParam,
@@ -1789,6 +1843,51 @@ export const AdminVerdictListQuery = z.object({
     .enum(["admin", "anon"])
     .optional()
     .openapi({ param: { name: "source", in: "query" } }),
+  // Multi-select, unlike `source`: an operator reviewing "everything that
+  // isn't a plain accept" wants `adjust` and `reject` together, and forcing
+  // two separate page loads to get that (as `source`'s two-tab shape would)
+  // is a worse UI for a three-valued enum than one checkbox group.
+  verdict: multiValueParam(VerdictKind, MAX_VERDICT_FILTER_VALUES).openapi({
+    param: { name: "verdict", in: "query" },
+    example: "accept",
+  }),
+  class_id: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((n) => n > 0)
+    .optional()
+    .openapi({ param: { name: "class_id", in: "query" }, type: "integer", example: 3 }),
+  video_id: z
+    .string()
+    .min(1)
+    .optional()
+    .openapi({ param: { name: "video_id", in: "query" }, example: "dQw4w9WgXcQ" }),
+  // Not narrowed to `AdminAnnotatorList`'s rows by this schema — a caller
+  // could in principle name an annotator who has since been excluded
+  // entirely (ROADMAP M14.4's "excluding one bad actor" case), and the
+  // filter should still run rather than 400 on an id the dropdown no longer
+  // offers.
+  annotator_id: z
+    .string()
+    .min(1)
+    .optional()
+    .openapi({ param: { name: "annotator_id", in: "query" }, example: "admin@example.com" }),
+  // Unix seconds, matching `verdicts.created_at`'s own storage format
+  // (SQLite `unixepoch()`), so the bound is a plain integer comparison with
+  // no timezone parsing on either side of the wire.
+  from: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .optional()
+    .openapi({ param: { name: "from", in: "query" }, type: "integer", example: 1_754_000_000 }),
+  to: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .optional()
+    .openapi({ param: { name: "to", in: "query" }, type: "integer", example: 1_754_099_000 }),
 });
 
 /**
@@ -1803,8 +1902,15 @@ export const AdminVerdictListQuery = z.object({
  * `CHECK` tying the two together), so a public visitor's row is exactly as
  * capable of being `'accept'` as an admin's — the two-tier split (§Q10) is
  * `source`, never the verdict kind itself.
+ *
+ * `x_min`..`confidence` are the *prediction's* original box (M18, plan §B) —
+ * `adjusted_*` above is the verdict's, which is null on anything that is not
+ * an `adjust`. A preview that only had the adjusted box could not show what
+ * the detector actually proposed, which is the one comparison worth drawing.
+ * Both live on this one row rather than requiring a second request per
+ * verdict, for the same reason the rest of this row is denormalized.
  */
-const AdminVerdict = z
+export const AdminVerdict = z
   .object({
     id: z.int().positive().openapi({ example: 1 }),
     prediction_id: z.int().positive().openapi({ example: 42 }),
@@ -1813,6 +1919,11 @@ const AdminVerdict = z
     adjusted_y_min: z.number().min(0).max(1).nullable().openapi({ example: 0.22 }),
     adjusted_x_max: z.number().min(0).max(1).nullable().openapi({ example: 0.48 }),
     adjusted_y_max: z.number().min(0).max(1).nullable().openapi({ example: 0.61 }),
+    x_min: z.number().min(0).max(1).openapi({ example: 0.12 }),
+    y_min: z.number().min(0).max(1).openapi({ example: 0.2 }),
+    x_max: z.number().min(0).max(1).openapi({ example: 0.5 }),
+    y_max: z.number().min(0).max(1).openapi({ example: 0.6 }),
+    confidence: z.number().openapi({ example: 0.87 }),
     source: z.enum(["admin", "anon"]).openapi({ example: "admin" }),
     annotator_id: z.string().openapi({ example: "admin@example.com" }),
     created_at: z.int().openapi({ example: 1_754_099_000 }),
@@ -1825,10 +1936,47 @@ const AdminVerdict = z
   })
   .openapi("AdminVerdict");
 
-/** Named `AdminVerdictList`, not after the `listVerdicts` operation, matching every other list schema in this file. */
+/** One row of `AdminVerdictList.verdicts` — what `VerdictPreviewDialog` (web) renders. */
+export type AdminVerdictRow = z.infer<typeof AdminVerdict>;
+
+/**
+ * Named `AdminVerdictList`, not after the `listVerdicts` operation, matching
+ * every other list schema in this file.
+ *
+ * `total` is the count over the same filter conditions as `verdicts`,
+ * unbounded by `limit` — `AdminVideoImages.total`'s own reasoning: with six
+ * possible filters stacked together, an empty page is ambiguous between
+ * "nothing was ever labelled" and "nothing matches this combination," and a
+ * UI cannot tell those apart, or show how many pages exist, without a count
+ * that was not itself cut off at `limit`.
+ */
 export const AdminVerdictList = z
-  .object({ verdicts: z.array(AdminVerdict) })
+  .object({
+    verdicts: z.array(AdminVerdict),
+    total: z.int().nonnegative().openapi({ example: 142 }),
+  })
   .openapi("AdminVerdictList");
+
+/**
+ * One annotator's footprint in `verdicts`, for the filter dropdown (M18, plan
+ * §A). Grouped by `(annotator_id, source)` rather than `annotator_id` alone:
+ * an admin's Access email and an anonymous session id are drawn from
+ * disjoint spaces in practice, but nothing enforces that at the schema level,
+ * so the pair is what actually identifies one contributor's row here — the
+ * same pairing `listVerdictsHandler`'s own filters keep separate.
+ */
+const AdminAnnotator = z
+  .object({
+    annotator_id: z.string().openapi({ example: "admin@example.com" }),
+    source: z.enum(["admin", "anon"]).openapi({ example: "admin" }),
+    verdicts: z.int().nonnegative().openapi({ example: 87 }),
+  })
+  .openapi("AdminAnnotator");
+
+/** Named `AdminAnnotatorList`, not after the `listVerdictAnnotators` operation, matching this file's other lists. */
+export const AdminAnnotatorList = z
+  .object({ annotators: z.array(AdminAnnotator) })
+  .openapi("AdminAnnotatorList");
 
 /**
  * The `{id}` path parameter for `GET /api/admin/videos/{id}/images` (M16).

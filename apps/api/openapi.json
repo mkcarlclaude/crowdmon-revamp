@@ -1350,10 +1350,16 @@
             "items": {
               "$ref": "#/components/schemas/AdminVerdict"
             }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 142
           }
         },
         "required": [
-          "verdicts"
+          "verdicts",
+          "total"
         ]
       },
       "AdminVerdict": {
@@ -1401,6 +1407,34 @@
             "minimum": 0,
             "maximum": 1,
             "example": 0.61
+          },
+          "x_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.12
+          },
+          "y_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.2
+          },
+          "x_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.5
+          },
+          "y_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.6
+          },
+          "confidence": {
+            "type": "number",
+            "example": 0.87
           },
           "source": {
             "type": "string",
@@ -1455,6 +1489,11 @@
           "adjusted_y_min",
           "adjusted_x_max",
           "adjusted_y_max",
+          "x_min",
+          "y_min",
+          "x_max",
+          "y_max",
+          "confidence",
           "source",
           "annotator_id",
           "created_at",
@@ -1464,6 +1503,47 @@
           "timestamp_seconds",
           "class_id",
           "class_name"
+        ]
+      },
+      "AdminAnnotatorList": {
+        "type": "object",
+        "properties": {
+          "annotators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminAnnotator"
+            }
+          }
+        },
+        "required": [
+          "annotators"
+        ]
+      },
+      "AdminAnnotator": {
+        "type": "object",
+        "properties": {
+          "annotator_id": {
+            "type": "string",
+            "example": "admin@example.com"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "anon"
+            ],
+            "example": "admin"
+          },
+          "verdicts": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 87
+          }
+        },
+        "required": [
+          "annotator_id",
+          "source",
+          "verdicts"
         ]
       },
       "AdminVideoImages": {
@@ -3682,8 +3762,8 @@
         "tags": [
           "admin"
         ],
-        "summary": "Every verdict, newest first, joined to its frame and class",
-        "description": "Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.",
+        "summary": "Every verdict, newest first, joined to its frame and class, filterable six ways",
+        "description": "Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row, and now also carries the prediction's original box (`x_min`..`confidence`) alongside the verdict's adjusted one, so a preview can show what the detector proposed next to what an admin ruled. `source`, `verdict`, `class_id`, `video_id`, `annotator_id` and a `from`/`to` time range all narrow independently and combine with AND; any omitted narrows nothing. `total` is the count over the same combination, not cut off by `limit`, so a filtered page and an empty one are distinguishable. Requires a Cloudflare Access assertion.",
         "parameters": [
           {
             "schema": {
@@ -3714,11 +3794,79 @@
             "required": false,
             "name": "source",
             "in": "query"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/VerdictKind"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VerdictKind"
+                  },
+                  "minItems": 1,
+                  "maxItems": 3
+                }
+              ],
+              "example": "accept"
+            },
+            "required": false,
+            "name": "verdict",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 3
+            },
+            "required": false,
+            "name": "class_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dQw4w9WgXcQ"
+            },
+            "required": false,
+            "name": "video_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "admin@example.com"
+            },
+            "required": false,
+            "name": "annotator_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1754000000
+            },
+            "required": false,
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1754099000
+            },
+            "required": false,
+            "name": "to",
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Verdicts, newest first",
+            "description": "One page of verdicts, newest first, and the total matching the filter",
             "content": {
               "application/json": {
                 "schema": {
@@ -3728,11 +3876,63 @@
             }
           },
           "400": {
-            "description": "An out-of-range limit or offset, or an invalid source",
+            "description": "An out-of-range limit or offset, or an invalid filter value",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/verdicts/annotators": {
+      "get": {
+        "operationId": "listVerdictAnnotators",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Every annotator who has ruled on something, grouped by source, with a count",
+        "description": "`SELECT annotator_id, source, COUNT(*) FROM verdicts GROUP BY annotator_id, source` — everyone who has ever ruled on a prediction, admin and anonymous alike, with how many rulings each has made. Built for the annotator filter's dropdown on `/admin/annotations` rather than any operator-facing leaderboard, though CONTEXT.md §Q10's own \"plain counts, not rank-percentile theatre\" would apply if one were ever built from this. Requires a Cloudflare Access assertion.",
+        "responses": {
+          "200": {
+            "description": "Every distinct annotator with a verdict count, most active first within a source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAnnotatorList"
                 }
               }
             }
@@ -3921,7 +4121,7 @@
           "admin"
         ],
         "summary": "Flag or unflag an image for the public verification page",
-        "description": "Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.",
+        "description": "Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Flagging a frame IN is refused with 409 when another public-sample frame from the same video already sits within 30 seconds of it — at 1fps extraction that pair is close enough to read as the same frame shown twice, which is what a visitor actually reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.",
         "parameters": [
           {
             "schema": {
@@ -3994,6 +4194,16 @@
               }
             }
           },
+          "409": {
+            "description": "Flagging this frame in would put it within the minimum spacing of an already-flagged frame from the same video, named in the message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Admin access is not configured on this deployment",
             "content": {
@@ -4014,7 +4224,18 @@
           "public"
         ],
         "summary": "One frame from the hand-curated public sample, for a visitor with no account",
-        "description": "A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.",
+        "description": "A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. An optional `exclude` names an image id to draw around — the frame currently on the caller's own screen — so 'another frame' cannot hand back the one already showing (M18, plan §C); the degenerate case of a pool with exactly one qualifying frame still returns it rather than 404, because excluding the only candidate is not the same claim as there being nothing to show. No Access assertion; rate limited.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 7
+            },
+            "required": false,
+            "name": "exclude",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
             "description": "One frame, its boxes, and where to fetch its bytes",

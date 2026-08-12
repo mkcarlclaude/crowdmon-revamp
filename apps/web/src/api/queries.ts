@@ -1,4 +1,5 @@
 import {
+  AdminAnnotatorList,
   AdminClass,
   AdminClassList,
   AdminImage,
@@ -324,18 +325,35 @@ export function useCreateDryRun(classId: number) {
 export const publicFrameKey = ["public", "frame"] as const;
 
 /**
- * One frame for a visitor with no account (M14.2).
+ * One frame for a visitor with no account (M14.2; M18, plan §C's `exclude`).
  *
  * `staleTime: Infinity` for `useLabellingBatch`'s own reason: the frame on
  * screen is being judged, not polled, and a background refetch landing
  * mid-judgement would swap the picture out from under the visitor's cursor.
  * `PublicVerify` asks for a new one explicitly, once a verdict has been
  * submitted.
+ *
+ * `exclude` is read off the cache rather than threaded through as a hook
+ * argument: `PublicVerify.nextFrame()` already asks for a new frame with
+ * `queryClient.refetchQueries({ queryKey: publicFrameKey })`, and a refetch
+ * runs `queryFn` again while the previous response is still sitting in the
+ * cache — `getQueryData` at that moment *is* "the frame currently on
+ * screen." Reaching into the cache here means the exclusion follows from the
+ * refetch that was already the right trigger for "show me another one,"
+ * rather than adding a second thing (a hook argument, a ref) that has to be
+ * kept in step with what `<img>` is actually displaying.
  */
 export function usePublicFrame() {
+  const queryClient = useQueryClient();
+
   return useQuery({
     queryKey: publicFrameKey,
-    queryFn: () => apiFetch("/api/public/frame", PublicFrame),
+    queryFn: () => {
+      const current = queryClient.getQueryData<z.infer<typeof PublicFrame>>(publicFrameKey);
+      const path =
+        current === undefined ? "/api/public/frame" : `/api/public/frame?exclude=${current.id}`;
+      return apiFetch(path, PublicFrame);
+    },
     staleTime: Number.POSITIVE_INFINITY,
   });
 }
@@ -433,32 +451,72 @@ export function useAdminVideoImages(
   });
 }
 
-export const adminVerdictsKey = (params: {
-  limit: number;
-  offset: number;
+/**
+ * Every filter `GET /api/admin/verdicts` accepts, beyond paging (M18, plan
+ * §A). One type shared by the query key, the hook's params and
+ * `Annotations.tsx`'s own filter state, rather than three shapes that have
+ * to be kept in sync by hand — a filter this type does not know about is a
+ * filter the request URL below silently drops.
+ */
+export interface VerdictFilters {
   source?: "admin" | "anon";
-}) => ["admin", "verdicts", params] as const;
+  verdict?: Array<"accept" | "adjust" | "reject">;
+  classId?: number;
+  videoId?: string;
+  annotatorId?: string;
+  from?: number;
+  to?: number;
+}
+
+export const adminVerdictsKey = (params: VerdictFilters & { limit: number; offset: number }) =>
+  ["admin", "verdicts", params] as const;
 
 /**
  * Every verdict, joined to its frame and class, newest first (M16, ROADMAP
- * M16.4): what `/admin/annotations` reads below `LabellingStats`. `source`
- * omitted returns both tiers in one list — CONTEXT.md §Q10's split stays
- * visible per row rather than by narrowing the query, and the annotations
- * page's own tabs are what actually pass a `source` through.
+ * M16.4; M18, plan §A adds five filters and a `total`): what
+ * `/admin/annotations` reads below `LabellingStats`. `source` omitted
+ * returns both tiers in one list — CONTEXT.md §Q10's split stays visible per
+ * row rather than by narrowing the query, and the annotations page's own
+ * tabs are what actually pass a `source` through. Every other filter is
+ * omitted by default the same way.
+ *
+ * `verdict` becomes a repeated query parameter (`verdict=accept&verdict=…`),
+ * matching what `AdminVerdictListQuery` actually parses on the API side —
+ * Hono's own query parser turns one occurrence into a string and several
+ * into an array, so this is the wire shape the schema was built to read, not
+ * a comma-joined string that would need a second parsing convention.
  */
-export function useAdminVerdicts(params: {
-  limit: number;
-  offset: number;
-  source?: "admin" | "anon";
-}) {
+export function useAdminVerdicts(params: VerdictFilters & { limit: number; offset: number }) {
   const query = new URLSearchParams({
     limit: String(params.limit),
     offset: String(params.offset),
   });
   if (params.source) query.set("source", params.source);
+  for (const kind of params.verdict ?? []) query.append("verdict", kind);
+  if (params.classId !== undefined) query.set("class_id", String(params.classId));
+  if (params.videoId) query.set("video_id", params.videoId);
+  if (params.annotatorId) query.set("annotator_id", params.annotatorId);
+  if (params.from !== undefined) query.set("from", String(params.from));
+  if (params.to !== undefined) query.set("to", String(params.to));
 
   return useQuery({
     queryKey: adminVerdictsKey(params),
     queryFn: () => apiFetch(`/api/admin/verdicts?${query}`, AdminVerdictList),
+  });
+}
+
+export const adminVerdictAnnotatorsKey = ["admin", "verdicts", "annotators"] as const;
+
+/**
+ * Populates the annotator filter's dropdown (M18, plan §A). No paging and no
+ * arguments — `listVerdictAnnotatorsHandler` binds nothing and returns every
+ * distinct `(annotator_id, source)` pair in one grouped scan, which is small
+ * by construction (bounded by how many people have ever ruled on anything,
+ * not by how many verdicts they have written).
+ */
+export function useAdminVerdictAnnotators() {
+  return useQuery({
+    queryKey: adminVerdictAnnotatorsKey,
+    queryFn: () => apiFetch("/api/admin/verdicts/annotators", AdminAnnotatorList),
   });
 }
