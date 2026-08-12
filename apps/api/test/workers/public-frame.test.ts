@@ -176,4 +176,45 @@ describe("the public frame", () => {
       expect(frame.id).toBe(only);
     });
   });
+
+  /**
+   * Migration 0009's index, asserted through the planner rather than through
+   * `sqlite_master` (M18).
+   *
+   * Checking the index merely *exists* would pass on an index nothing uses,
+   * which is the failure actually worth guarding: `idx_images_public_sample`
+   * is **partial** (`WHERE public_sample = 1`), and SQLite will only reach
+   * for it when a query's own predicate matches that literal. Rewriting the
+   * handler's `= 1` to `IS NOT NULL`, or to a bound parameter, silently
+   * returns the draw to a full scan of `images` — 9,715 rows read to return
+   * one, measured against production before this index landed — with every
+   * other test in this file still green, because the results are identical
+   * and only the cost changed.
+   *
+   * So this asserts the plan, and it is deliberately coupled to the query
+   * text in `publicFrameHandler`: if that predicate changes, this test is
+   * supposed to fail and make somebody re-measure.
+   */
+  describe("the draw's query plan", () => {
+    it("reaches the partial index rather than scanning images", async () => {
+      const { results } = await env.DB.prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT i.id, i.r2_key FROM images i
+          WHERE i.public_sample = 1
+            AND EXISTS (SELECT 1 FROM predictions p WHERE p.image_id = i.id)
+            AND (? IS NULL OR i.id != ?)
+          ORDER BY RANDOM() LIMIT 1`,
+      )
+        .bind(null, null)
+        .all<{ detail: string }>();
+
+      const plan = results.map((row) => row.detail).join("\n");
+
+      expect(plan).toContain("idx_images_public_sample");
+      // The `images` access must be a SEARCH through the index, never a SCAN
+      // of the table. `predictions` is reached separately via
+      // `idx_predictions_image` and is not what this asserts.
+      expect(plan).not.toMatch(/SCAN i\b/);
+    });
+  });
 });
