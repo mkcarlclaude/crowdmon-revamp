@@ -1,4 +1,4 @@
-import { Navigate, NavLink, Outlet } from "react-router";
+import { Navigate, NavLink, Outlet, useLocation } from "react-router";
 import { useAdminSession } from "../api/queries";
 import { GrafanaLink } from "./GrafanaLink";
 import {
@@ -39,6 +39,7 @@ import {
  */
 export function AdminLayout() {
   const session = useAdminSession();
+  const location = useLocation();
 
   if (session.isPending) {
     return (
@@ -65,7 +66,7 @@ export function AdminLayout() {
                 <SidebarMenu>
                   {NAV_ITEMS.map((item) => (
                     <SidebarMenuItem key={item.to}>
-                      <SidebarMenuButton asChild>
+                      <SidebarMenuButton asChild isActive={location.pathname.startsWith(item.to)}>
                         <NavLink to={item.to}>{item.label}</NavLink>
                       </SidebarMenuButton>
                     </SidebarMenuItem>

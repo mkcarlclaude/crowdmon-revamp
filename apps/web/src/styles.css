@@ -125,8 +125,20 @@ body {
   --card-foreground: var(--color-text);
   --popover: var(--color-surface-raised);
   --popover-foreground: var(--color-text);
-  --primary: var(--color-text);
-  --primary-foreground: var(--color-surface);
+  /*
+   * Brand primary — Paimon's cape/crown violet-indigo, not derived from
+   * `--color-text` the way `--background`/`--foreground` above are. Primary
+   * and text are different concepts (one is "the accent for the few genuinely
+   * primary actions", the other is "body copy") that happened to share a
+   * value; that coincidence is what made every primary button, active nav
+   * item and focus ring render as grey. Hue 288 sits in the one part of the
+   * wheel none of the semantic job-status hues (240/85/150/25 above) or the
+   * reserved detection magenta (#e5326f, CONTEXT.md) occupy. Flat oklch, like
+   * `--secondary`/`--accent` below, because there is no existing token this
+   * one should track.
+   */
+  --primary: oklch(55% 0.16 288);
+  --primary-foreground: oklch(100% 0 0);
   --secondary: oklch(94% 0.006 264);
   --secondary-foreground: var(--color-text);
   --muted: oklch(94% 0.006 264);
@@ -136,17 +148,22 @@ body {
   --destructive: var(--color-failed);
   --destructive-foreground: var(--color-surface);
   --input: var(--color-border);
-  --ring: var(--color-claimed);
+  /* Focus rings are brand, not status — was `--color-claimed`, which is a
+     job-status hue and only coincidentally close in lightness to something
+     ring-shaped. Nothing else reads `--ring`/`--sidebar-ring`; job-status
+     chips reference `--color-claimed` directly (JobList, VerificationCard,
+     etc.), so this repoint doesn't touch them. */
+  --ring: var(--primary);
   --radius: 0.5rem;
 
   --sidebar: oklch(99% 0.002 264);
   --sidebar-foreground: var(--color-text);
-  --sidebar-primary: var(--color-text);
-  --sidebar-primary-foreground: var(--color-surface);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: oklch(94% 0.006 264);
   --sidebar-accent-foreground: var(--color-text);
   --sidebar-border: var(--color-border);
-  --sidebar-ring: var(--color-claimed);
+  --sidebar-ring: var(--primary);
 
   min-height: 100vh;
   background: var(--color-surface);
