@@ -7,6 +7,7 @@ import {
   errorResponse,
   ImageIdParam,
   PublicFrame,
+  PublicFrameQuery,
   VerdictBatch,
 } from "../schemas";
 
@@ -69,7 +70,13 @@ export const publicFrameRoute = createRoute({
     "batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is " +
     "one short-lived signed URL per request. Only images that already carry at least " +
     "one prediction are eligible, so a frame flagged before pre-labelling ran is never " +
-    "handed to a visitor with nothing to rule on. No Access assertion; rate limited.",
+    "handed to a visitor with nothing to rule on. An optional `exclude` names an image id " +
+    "to draw around — the frame currently on the caller's own screen — so 'another frame' " +
+    "cannot hand back the one already showing (M18, plan §C); the degenerate case of a pool " +
+    "with exactly one qualifying frame still returns it rather than 404, because excluding " +
+    "the only candidate is not the same claim as there being nothing to show. No Access " +
+    "assertion; rate limited.",
+  request: { query: PublicFrameQuery },
   responses: {
     200: {
       description: "One frame, its boxes, and where to fetch its bytes",
@@ -82,23 +89,50 @@ export const publicFrameRoute = createRoute({
 });
 
 export const publicFrameHandler: RouteHandler<typeof publicFrameRoute, AppEnv> = async (c) => {
+  const { exclude } = c.req.valid("query");
+
   // `ORDER BY RANDOM()` over a hand-curated pool rather than the paged,
   // stateful walk `labellingBatchHandler` does over the labelling queue: the
   // public page is not a queue an operator drains, it is the same small
   // sample shown again to whoever loads it next, so there is no "remaining"
   // to track and no reason to prefer one frame's turn over another's.
+  //
+  // `exclude` is bound as a plain parameter, not spliced into the query text
+  // — `? IS NULL OR i.id != ?` lets one prepared statement serve both "no
+  // frame to avoid" and "avoid this one" without a second SQL string to keep
+  // in sync with the first.
   const image = await c.env.DB.prepare(
     `SELECT i.id, i.r2_key FROM images i
       WHERE i.public_sample = 1
         AND EXISTS (SELECT 1 FROM predictions p WHERE p.image_id = i.id)
+        AND (? IS NULL OR i.id != ?)
       ORDER BY RANDOM() LIMIT 1`,
-  ).first<RandomPublicImageRow>();
+  )
+    .bind(exclude ?? null, exclude ?? null)
+    .first<RandomPublicImageRow>();
 
-  if (!image) {
+  // The pool-of-one guard: `exclude` narrowed the pool to nothing, but that
+  // is a fact about the exclusion, not about the pool itself. Re-running
+  // without it is the honest way to tell the two apart — a second query
+  // rather than an `OR COUNT(*) = 1` clause bolted onto the first, because
+  // this only has to run at all in the one case that already fails.
+  const fallback =
+    image === null && exclude !== undefined
+      ? await c.env.DB.prepare(
+          `SELECT i.id, i.r2_key FROM images i
+            WHERE i.public_sample = 1
+              AND EXISTS (SELECT 1 FROM predictions p WHERE p.image_id = i.id)
+            ORDER BY RANDOM() LIMIT 1`,
+        ).first<RandomPublicImageRow>()
+      : null;
+
+  const chosen = image ?? fallback;
+
+  if (!chosen) {
     return c.json({ error: "no image is currently flagged into the public sample" }, 404);
   }
 
-  const { mode, expiresAt, byKey } = await frameUrls(c.env, [image.r2_key]);
+  const { mode, expiresAt, byKey } = await frameUrls(c.env, [chosen.r2_key]);
 
   // Never the proxy fallback here — see this file's module comment. Failing
   // loudly with the same shape `requireAccess` uses for a missing gate: the
@@ -115,16 +149,16 @@ export const publicFrameHandler: RouteHandler<typeof publicFrameRoute, AppEnv> =
       WHERE p.image_id = ?
       ORDER BY p.id`,
   )
-    .bind(image.id)
+    .bind(chosen.id)
     .all<PublicBoxRow>();
 
   return c.json(
     {
-      id: image.id,
-      r2_key: image.r2_key,
+      id: chosen.id,
+      r2_key: chosen.r2_key,
       // The `?? ""` is unreachable, matching `labellingBatchHandler`'s own —
       // the key just signed is the only key in the map.
-      url: byKey.get(image.r2_key) ?? "",
+      url: byKey.get(chosen.r2_key) ?? "",
       predictions: boxes,
       expires_at: expiresAt,
     },

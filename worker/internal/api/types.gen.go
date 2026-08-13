@@ -16,6 +16,24 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AdminAnnotatorSource.
+const (
+	AdminAnnotatorSourceAdmin AdminAnnotatorSource = "admin"
+	AdminAnnotatorSourceAnon  AdminAnnotatorSource = "anon"
+)
+
+// Valid indicates whether the value is a known member of the AdminAnnotatorSource enum.
+func (e AdminAnnotatorSource) Valid() bool {
+	switch e {
+	case AdminAnnotatorSourceAdmin:
+		return true
+	case AdminAnnotatorSourceAnon:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AdminVerdictSource.
 const (
 	AdminVerdictSourceAdmin AdminVerdictSource = "admin"
@@ -252,6 +270,26 @@ type ActiveClasses struct {
 	Classes []PrelabelClass `json:"classes"`
 }
 
+// AdminAnnotator defines model for AdminAnnotator.
+type AdminAnnotator struct {
+	// AnnotatorId Example: admin@example.com
+	AnnotatorId string `json:"annotator_id"`
+
+	// Source Example: admin
+	Source AdminAnnotatorSource `json:"source"`
+
+	// Verdicts Example: 87
+	Verdicts int `json:"verdicts"`
+}
+
+// AdminAnnotatorSource Example: admin
+type AdminAnnotatorSource string
+
+// AdminAnnotatorList defines model for AdminAnnotatorList.
+type AdminAnnotatorList struct {
+	Annotators []AdminAnnotator `json:"annotators"`
+}
+
 // AdminChunkWork defines model for AdminChunkWork.
 type AdminChunkWork struct {
 	// EndSeconds Example: 60
@@ -367,6 +405,9 @@ type AdminVerdict struct {
 	// ClassName Example: Paimon
 	ClassName string `json:"class_name"`
 
+	// Confidence Example: 0.87
+	Confidence float32 `json:"confidence"`
+
 	// CreatedAt Example: 1754099000
 	CreatedAt int `json:"created_at"`
 
@@ -391,6 +432,18 @@ type AdminVerdict struct {
 
 	// VideoId Example: dQw4w9WgXcQ
 	VideoId string `json:"video_id"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
 }
 
 // AdminVerdictSource Example: admin
@@ -398,6 +451,8 @@ type AdminVerdictSource string
 
 // AdminVerdictList defines model for AdminVerdictList.
 type AdminVerdictList struct {
+	// Total Example: 142
+	Total    int            `json:"total"`
 	Verdicts []AdminVerdict `json:"verdicts"`
 }
 
@@ -1262,13 +1317,24 @@ type LabellingBatchParams struct {
 
 // ListVerdictsParams defines parameters for ListVerdicts.
 type ListVerdictsParams struct {
-	Limit  *int                      `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *int                      `form:"offset,omitempty" json:"offset,omitempty"`
-	Source *ListVerdictsParamsSource `form:"source,omitempty" json:"source,omitempty"`
+	Limit   *int                      `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset  *int                      `form:"offset,omitempty" json:"offset,omitempty"`
+	Source  *ListVerdictsParamsSource `form:"source,omitempty" json:"source,omitempty"`
+	Verdict *struct {
+		union json.RawMessage
+	} `form:"verdict,omitempty" json:"verdict,omitempty"`
+	ClassId     *int    `form:"class_id,omitempty" json:"class_id,omitempty"`
+	VideoId     *string `form:"video_id,omitempty" json:"video_id,omitempty"`
+	AnnotatorId *string `form:"annotator_id,omitempty" json:"annotator_id,omitempty"`
+	From        *int    `form:"from,omitempty" json:"from,omitempty"`
+	To          *int    `form:"to,omitempty" json:"to,omitempty"`
 }
 
 // ListVerdictsParamsSource defines parameters for ListVerdicts.
 type ListVerdictsParamsSource string
+
+// ListVerdictsParamsVerdict1 defines parameters for ListVerdicts.
+type ListVerdictsParamsVerdict1 = []VerdictKind
 
 // ListAdminVideoImagesParams defines parameters for ListAdminVideoImages.
 type ListAdminVideoImagesParams struct {
@@ -1279,6 +1345,11 @@ type ListAdminVideoImagesParams struct {
 // SnapshotSourceParams defines parameters for SnapshotSource.
 type SnapshotSourceParams struct {
 	WorkerId string `form:"worker_id" json:"worker_id"`
+}
+
+// PublicFrameParams defines parameters for PublicFrame.
+type PublicFrameParams struct {
+	Exclude *int `form:"exclude,omitempty" json:"exclude,omitempty"`
 }
 
 // ListVideoImagesParams defines parameters for ListVideoImages.
@@ -1503,7 +1574,7 @@ type ClientInterface interface {
 
 	// UpdatePublicSampleWithBody Flag or unflag an image for the public verification page
 	//
-	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Flagging a frame IN is refused with 409 when another public-sample frame from the same video already sits within 30 seconds of it — at 1fps extraction that pair is close enough to read as the same frame shown twice, which is what a visitor actually reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1512,7 +1583,7 @@ type ClientInterface interface {
 
 	// UpdatePublicSample Flag or unflag an image for the public verification page
 	//
-	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Flagging a frame IN is refused with 409 when another public-sample frame from the same video already sits within 30 seconds of it — at 1fps extraction that pair is close enough to read as the same frame shown twice, which is what a visitor actually reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1586,12 +1657,19 @@ type ClientInterface interface {
 	// Corresponds with POST /api/admin/snapshots (the `CreateSnapshot` operationId).
 	CreateSnapshot(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListVerdicts Every verdict, newest first, joined to its frame and class
+	// ListVerdicts Every verdict, newest first, joined to its frame and class, filterable six ways
 	//
-	// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.
+	// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row, and now also carries the prediction's original box (`x_min`..`confidence`) alongside the verdict's adjusted one, so a preview can show what the detector proposed next to what an admin ruled. `source`, `verdict`, `class_id`, `video_id`, `annotator_id` and a `from`/`to` time range all narrow independently and combine with AND; any omitted narrows nothing. `total` is the count over the same combination, not cut off by `limit`, so a filtered page and an empty one are distinguishable. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/verdicts (the `ListVerdicts` operationId).
 	ListVerdicts(ctx context.Context, params *ListVerdictsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListVerdictAnnotators Every annotator who has ruled on something, grouped by source, with a count
+	//
+	// `SELECT annotator_id, source, COUNT(*) FROM verdicts GROUP BY annotator_id, source` — everyone who has ever ruled on a prediction, admin and anonymous alike, with how many rulings each has made. Built for the annotator filter's dropdown on `/admin/annotations` rather than any operator-facing leaderboard, though CONTEXT.md §Q10's own "plain counts, not rank-percentile theatre" would apply if one were ever built from this. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/verdicts/annotators (the `ListVerdictAnnotators` operationId).
+	ListVerdictAnnotators(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVideos Submitted videos, their frame counts, and their prelabel coverage
 	//
@@ -1788,10 +1866,10 @@ type ClientInterface interface {
 
 	// PublicFrame One frame from the hand-curated public sample, for a visitor with no account
 	//
-	// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.
+	// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. An optional `exclude` names an image id to draw around — the frame currently on the caller's own screen — so 'another frame' cannot hand back the one already showing (M18, plan §C); the degenerate case of a pool with exactly one qualifying frame still returns it rather than 404, because excluding the only candidate is not the same claim as there being nothing to show. No Access assertion; rate limited.
 	//
 	// Corresponds with GET /api/public/frame (the `PublicFrame` operationId).
-	PublicFrame(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PublicFrame(ctx context.Context, params *PublicFrameParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SubmitPublicVerdictsWithBody Submit an anonymous visitor's rulings on one frame
 	//
@@ -2029,7 +2107,7 @@ func (c *Client) CreateMissingReport(ctx context.Context, id int, body CreateMis
 
 // UpdatePublicSampleWithBody Flag or unflag an image for the public verification page
 //
-// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Flagging a frame IN is refused with 409 when another public-sample frame from the same video already sits within 30 seconds of it — at 1fps extraction that pair is close enough to read as the same frame shown twice, which is what a visitor actually reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2048,7 +2126,7 @@ func (c *Client) UpdatePublicSampleWithBody(ctx context.Context, id int, content
 
 // UpdatePublicSample Flag or unflag an image for the public verification page
 //
-// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Flagging a frame IN is refused with 409 when another public-sample frame from the same video already sits within 30 seconds of it — at 1fps extraction that pair is close enough to read as the same frame shown twice, which is what a visitor actually reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2222,13 +2300,30 @@ func (c *Client) CreateSnapshot(ctx context.Context, reqEditors ...RequestEditor
 	return c.Client.Do(req)
 }
 
-// ListVerdicts Every verdict, newest first, joined to its frame and class
+// ListVerdicts Every verdict, newest first, joined to its frame and class, filterable six ways
 //
-// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.
+// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row, and now also carries the prediction's original box (`x_min`..`confidence`) alongside the verdict's adjusted one, so a preview can show what the detector proposed next to what an admin ruled. `source`, `verdict`, `class_id`, `video_id`, `annotator_id` and a `from`/`to` time range all narrow independently and combine with AND; any omitted narrows nothing. `total` is the count over the same combination, not cut off by `limit`, so a filtered page and an empty one are distinguishable. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/verdicts (the `ListVerdicts` operationId).
 func (c *Client) ListVerdicts(ctx context.Context, params *ListVerdictsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListVerdictsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListVerdictAnnotators Every annotator who has ruled on something, grouped by source, with a count
+//
+// `SELECT annotator_id, source, COUNT(*) FROM verdicts GROUP BY annotator_id, source` — everyone who has ever ruled on a prediction, admin and anonymous alike, with how many rulings each has made. Built for the annotator filter's dropdown on `/admin/annotations` rather than any operator-facing leaderboard, though CONTEXT.md §Q10's own "plain counts, not rank-percentile theatre" would apply if one were ever built from this. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/verdicts/annotators (the `ListVerdictAnnotators` operationId).
+func (c *Client) ListVerdictAnnotators(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVerdictAnnotatorsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2664,11 +2759,11 @@ func (c *Client) SnapshotSource(ctx context.Context, id int, params *SnapshotSou
 
 // PublicFrame One frame from the hand-curated public sample, for a visitor with no account
 //
-// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.
+// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. An optional `exclude` names an image id to draw around — the frame currently on the caller's own screen — so 'another frame' cannot hand back the one already showing (M18, plan §C); the degenerate case of a pool with exactly one qualifying frame still returns it rather than 404, because excluding the only candidate is not the same claim as there being nothing to show. No Access assertion; rate limited.
 //
 // Corresponds with GET /api/public/frame (the `PublicFrame` operationId).
-func (c *Client) PublicFrame(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPublicFrameRequest(c.Server)
+func (c *Client) PublicFrame(ctx context.Context, params *PublicFrameParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPublicFrameRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3454,10 +3549,109 @@ func NewListVerdictsRequest(server string, params *ListVerdictsParams) (*http.Re
 
 		}
 
+		if params.Verdict != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "verdict", *params.Verdict, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ClassId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "class_id", *params.ClassId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.VideoId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "video_id", *params.VideoId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AnnotatorId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "annotator_id", *params.AnnotatorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.From != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.To != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
 		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListVerdictAnnotatorsRequest constructs an http.Request for the ListVerdictAnnotators method
+func NewListVerdictAnnotatorsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/verdicts/annotators")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -4089,7 +4283,7 @@ func NewSnapshotSourceRequest(server string, id int, params *SnapshotSourceParam
 }
 
 // NewPublicFrameRequest constructs an http.Request for the PublicFrame method
-func NewPublicFrameRequest(server string) (*http.Request, error) {
+func NewPublicFrameRequest(server string, params *PublicFrameParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -4105,6 +4299,33 @@ func NewPublicFrameRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Exclude != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "exclude", *params.Exclude, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -4391,7 +4612,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdatePublicSampleWithBodyWithResponse Flag or unflag an image for the public verification page
 	//
-	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Flagging a frame IN is refused with 409 when another public-sample frame from the same video already sits within 30 seconds of it — at 1fps extraction that pair is close enough to read as the same frame shown twice, which is what a visitor actually reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4400,7 +4621,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdatePublicSampleWithResponse Flag or unflag an image for the public verification page
 	//
-	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+	// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Flagging a frame IN is refused with 409 when another public-sample frame from the same video already sits within 30 seconds of it — at 1fps extraction that pair is close enough to read as the same frame shown twice, which is what a visitor actually reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4488,14 +4709,23 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/admin/snapshots (the `CreateSnapshot` operationId).
 	CreateSnapshotWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*CreateSnapshotResponse, error)
 
-	// ListVerdictsWithResponse Every verdict, newest first, joined to its frame and class
+	// ListVerdictsWithResponse Every verdict, newest first, joined to its frame and class, filterable six ways
 	//
-	// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.
+	// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row, and now also carries the prediction's original box (`x_min`..`confidence`) alongside the verdict's adjusted one, so a preview can show what the detector proposed next to what an admin ruled. `source`, `verdict`, `class_id`, `video_id`, `annotator_id` and a `from`/`to` time range all narrow independently and combine with AND; any omitted narrows nothing. `total` is the count over the same combination, not cut off by `limit`, so a filtered page and an empty one are distinguishable. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/admin/verdicts (the `ListVerdicts` operationId).
 	ListVerdictsWithResponse(ctx context.Context, params *ListVerdictsParams, reqEditors ...RequestEditorFn) (*ListVerdictsResponse, error)
+
+	// ListVerdictAnnotatorsWithResponse Every annotator who has ruled on something, grouped by source, with a count
+	//
+	// `SELECT annotator_id, source, COUNT(*) FROM verdicts GROUP BY annotator_id, source` — everyone who has ever ruled on a prediction, admin and anonymous alike, with how many rulings each has made. Built for the annotator filter's dropdown on `/admin/annotations` rather than any operator-facing leaderboard, though CONTEXT.md §Q10's own "plain counts, not rank-percentile theatre" would apply if one were ever built from this. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/verdicts/annotators (the `ListVerdictAnnotators` operationId).
+	ListVerdictAnnotatorsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVerdictAnnotatorsResponse, error)
 
 	// ListVideosWithResponse Submitted videos, their frame counts, and their prelabel coverage
 	//
@@ -4702,12 +4932,12 @@ type ClientWithResponsesInterface interface {
 
 	// PublicFrameWithResponse One frame from the hand-curated public sample, for a visitor with no account
 	//
-	// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.
+	// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. An optional `exclude` names an image id to draw around — the frame currently on the caller's own screen — so 'another frame' cannot hand back the one already showing (M18, plan §C); the degenerate case of a pool with exactly one qualifying frame still returns it rather than 404, because excluding the only candidate is not the same claim as there being nothing to show. No Access assertion; rate limited.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/public/frame (the `PublicFrame` operationId).
-	PublicFrameWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*PublicFrameResponse, error)
+	PublicFrameWithResponse(ctx context.Context, params *PublicFrameParams, reqEditors ...RequestEditorFn) (*PublicFrameResponse, error)
 
 	// SubmitPublicVerdictsWithBodyWithResponse Submit an anonymous visitor's rulings on one frame
 	//
@@ -5261,6 +5491,8 @@ type UpdatePublicSampleResponse struct {
 	JSON403 *ErrorResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *ErrorResponse
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *ErrorResponse
 }
@@ -5288,6 +5520,11 @@ func (r UpdatePublicSampleResponse) GetJSON403() *ErrorResponse {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r UpdatePublicSampleResponse) GetJSON404() *ErrorResponse {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdatePublicSampleResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
@@ -5918,6 +6155,68 @@ func (r ListVerdictsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListVerdictsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListVerdictAnnotatorsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminAnnotatorList
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListVerdictAnnotatorsResponse) GetJSON200() *AdminAnnotatorList {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListVerdictAnnotatorsResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListVerdictAnnotatorsResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListVerdictAnnotatorsResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListVerdictAnnotatorsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListVerdictAnnotatorsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListVerdictAnnotatorsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListVerdictAnnotatorsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -7074,7 +7373,7 @@ func (c *ClientWithResponses) CreateMissingReportWithResponse(ctx context.Contex
 
 // UpdatePublicSampleWithBodyWithResponse Flag or unflag an image for the public verification page
 //
-// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Flagging a frame IN is refused with 409 when another public-sample frame from the same video already sits within 30 seconds of it — at 1fps extraction that pair is close enough to read as the same frame shown twice, which is what a visitor actually reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7089,7 +7388,7 @@ func (c *ClientWithResponses) UpdatePublicSampleWithBodyWithResponse(ctx context
 
 // UpdatePublicSampleWithResponse Flag or unflag an image for the public verification page
 //
-// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Requires a Cloudflare Access assertion.
+// Sets `images.public_sample`, the hand-curated flag CONTEXT.md §12 requires the public page draw from instead of the bucket. Kept separate from the frozen evaluation pool by construction — this route only ever writes the flag an admin chose, never anything selection-time logic wrote. Flagging a frame IN is refused with 409 when another public-sample frame from the same video already sits within 30 seconds of it — at 1fps extraction that pair is close enough to read as the same frame shown twice, which is what a visitor actually reported. Flagging OUT is never refused. Requires a Cloudflare Access assertion.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7237,9 +7536,9 @@ func (c *ClientWithResponses) CreateSnapshotWithResponse(ctx context.Context, re
 	return ParseCreateSnapshotResponse(rsp)
 }
 
-// ListVerdictsWithResponse Every verdict, newest first, joined to its frame and class
+// ListVerdictsWithResponse Every verdict, newest first, joined to its frame and class, filterable six ways
 //
-// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row. `source` narrows to admin or anonymous rulings; omitted, both tiers come back in one list, each carrying which tier it belongs to. Requires a Cloudflare Access assertion.
+// Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an annotations page renders needs all four without a second request per row, and now also carries the prediction's original box (`x_min`..`confidence`) alongside the verdict's adjusted one, so a preview can show what the detector proposed next to what an admin ruled. `source`, `verdict`, `class_id`, `video_id`, `annotator_id` and a `from`/`to` time range all narrow independently and combine with AND; any omitted narrows nothing. `total` is the count over the same combination, not cut off by `limit`, so a filtered page and an empty one are distinguishable. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -7250,6 +7549,21 @@ func (c *ClientWithResponses) ListVerdictsWithResponse(ctx context.Context, para
 		return nil, err
 	}
 	return ParseListVerdictsResponse(rsp)
+}
+
+// ListVerdictAnnotatorsWithResponse Every annotator who has ruled on something, grouped by source, with a count
+//
+// `SELECT annotator_id, source, COUNT(*) FROM verdicts GROUP BY annotator_id, source` — everyone who has ever ruled on a prediction, admin and anonymous alike, with how many rulings each has made. Built for the annotator filter's dropdown on `/admin/annotations` rather than any operator-facing leaderboard, though CONTEXT.md §Q10's own "plain counts, not rank-percentile theatre" would apply if one were ever built from this. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/verdicts/annotators (the `ListVerdictAnnotators` operationId).
+func (c *ClientWithResponses) ListVerdictAnnotatorsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVerdictAnnotatorsResponse, error) {
+	rsp, err := c.ListVerdictAnnotators(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVerdictAnnotatorsResponse(rsp)
 }
 
 // ListVideosWithResponse Submitted videos, their frame counts, and their prelabel coverage
@@ -7595,13 +7909,13 @@ func (c *ClientWithResponses) SnapshotSourceWithResponse(ctx context.Context, id
 
 // PublicFrameWithResponse One frame from the hand-curated public sample, for a visitor with no account
 //
-// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. No Access assertion; rate limited.
+// A single frame drawn at random from `images.public_sample = 1`, with a presigned R2 URL good for `PRESIGN_TTL_SECONDS` and every box the model proposed on it. Never batched, unlike `/api/admin/labelling/batch` — CONTEXT.md §Q25's public bound is one short-lived signed URL per request. Only images that already carry at least one prediction are eligible, so a frame flagged before pre-labelling ran is never handed to a visitor with nothing to rule on. An optional `exclude` names an image id to draw around — the frame currently on the caller's own screen — so 'another frame' cannot hand back the one already showing (M18, plan §C); the degenerate case of a pool with exactly one qualifying frame still returns it rather than 404, because excluding the only candidate is not the same claim as there being nothing to show. No Access assertion; rate limited.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /api/public/frame (the `PublicFrame` operationId).
-func (c *ClientWithResponses) PublicFrameWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*PublicFrameResponse, error) {
-	rsp, err := c.PublicFrame(ctx, reqEditors...)
+func (c *ClientWithResponses) PublicFrameWithResponse(ctx context.Context, params *PublicFrameParams, reqEditors ...RequestEditorFn) (*PublicFrameResponse, error) {
+	rsp, err := c.PublicFrame(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -8114,6 +8428,13 @@ func ParseUpdatePublicSampleResponse(rsp *http.Response) (*UpdatePublicSampleRes
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -8573,6 +8894,53 @@ func ParseListVerdictsResponse(rsp *http.Response) (*ListVerdictsResponse, error
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListVerdictAnnotatorsResponse parses an HTTP response from a ListVerdictAnnotatorsWithResponse call
+func ParseListVerdictAnnotatorsResponse(rsp *http.Response) (*ListVerdictAnnotatorsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListVerdictAnnotatorsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminAnnotatorList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ErrorResponse

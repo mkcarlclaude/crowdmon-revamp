@@ -74,6 +74,17 @@ export function AdminVideoDetailPage() {
         )}
       </div>
 
+      {/* `updatePublicSampleHandler`'s 409 (M18, plan §C): flagging a frame in
+          is refused when it lands within the spacing floor of one already
+          flagged from this video, and the message names the conflict — shown
+          here rather than swallowed, since the checkbox itself has nowhere
+          to put a sentence this long. */}
+      {setPublicSample.isError && (
+        <p role="alert" className="text-sm text-destructive">
+          {setPublicSample.error.message}
+        </p>
+      )}
+
       {images.isPending && <p className="text-sm">Loading frames…</p>}
       {images.isError && (
         <p role="alert" className="text-sm text-destructive">

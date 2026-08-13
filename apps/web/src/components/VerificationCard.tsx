@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from "react";
+import { BoxOverlay, type BoxVariant, type OverlayBox } from "./BoxOverlay";
 
 /**
  * One frame, its proposed boxes, and a ruling on each (M13.1).
@@ -23,6 +24,13 @@ import { useId, useRef, useState } from "react";
  * black frames are the common case in a sampled timeline, and they carry as
  * many spurious boxes as the detector felt like proposing. Making that cost
  * one click per box would make the common case the expensive one.
+ *
+ * **The box rendering itself lives in `BoxOverlay` (M18, plan §B).** What
+ * stayed here is everything read-only presentation cannot own: drag state,
+ * which box is being adjusted, which row is hovered. What moved is turning a
+ * box into a positioned, labelled rectangle — the same operation a
+ * verdict-preview dialog elsewhere needs, so it is one renderer rather than
+ * two that could quietly drift apart.
  */
 
 export interface ProposedBox {
@@ -234,6 +242,36 @@ export function VerificationCard({
     .map((box) => staged.get(box.id))
     .filter((ruling): ruling is StagedVerdict => ruling !== undefined);
 
+  // What `BoxOverlay` actually renders — every box the interactive state
+  // above has an opinion about, translated into the shared, meaning-free
+  // vocabulary (`variant`, `dimmed`) it draws in. `extraData` carries the two
+  // attributes this component's own tests read (`data-highlighted`,
+  // `data-staged`) through a renderer that has no reason to know either name.
+  const overlayBoxes: OverlayBox[] = frame.predictions.map((box, index) => {
+    const stagedVerdict = staged.get(box.id)?.verdict;
+    const variant: BoxVariant =
+      adjusting === box.id
+        ? "editing"
+        : stagedVerdict === "reject"
+          ? "negative"
+          : staged.has(box.id)
+            ? "positive"
+            : "neutral";
+
+    return {
+      id: box.id,
+      box,
+      label: ordinal(index),
+      variant,
+      dimmed: highlighted !== null && highlighted !== box.id,
+      title: `${ordinal(index)}. ${box.class_name} — confidence ${box.confidence.toFixed(2)}`,
+      extraData: {
+        highlighted: String(highlighted === box.id),
+        staged: stagedVerdict ?? "",
+      },
+    };
+  });
+
   return (
     <section className="flex flex-col gap-3">
       {/* The drag surface carries pointer handlers and no keyboard equivalent,
@@ -242,9 +280,12 @@ export function VerificationCard({
           buttons and are how every verdict except an adjustment is recorded.
           Drawing a rectangle by keyboard is a control worth inventing when
           somebody needs it, not before. */}
-      <div
+      <BoxOverlay
         ref={surface}
-        className="relative select-none overflow-hidden rounded border border-[var(--color-border)]"
+        frameUrl={frame.url}
+        alt={frame.r2_key}
+        boxes={overlayBoxes}
+        onImageError={onImageError}
         onPointerDown={(event) => {
           if (adjusting === null) return;
           const at = positionOf(event);
@@ -272,50 +313,6 @@ export function VerificationCard({
         // live and the next mouse move would resume drawing it.
         onPointerCancel={() => setDragging(false)}
       >
-        <img src={frame.url} alt={frame.r2_key} className="block w-full" onError={onImageError} />
-
-        {frame.predictions.map((box, index) => (
-          <span
-            key={box.id}
-            // The staged ruling is on the rectangle, not only in the row: a
-            // frame is judged by looking at the picture, and an operator
-            // scanning for what they have not decided yet should not have to
-            // read a list to find out.
-            className={`absolute border-2 ${
-              adjusting === box.id
-                ? "border-[var(--color-failed)] border-dashed"
-                : staged.get(box.id)?.verdict === "reject"
-                  ? "border-[var(--color-failed)] opacity-60"
-                  : staged.has(box.id)
-                    ? "border-[var(--color-done)]"
-                    : "border-[var(--color-claimed)]"
-            } ${highlighted !== null && highlighted !== box.id ? "opacity-25" : ""}`}
-            style={{
-              left: `${box.x_min * 100}%`,
-              top: `${box.y_min * 100}%`,
-              width: `${(box.x_max - box.x_min) * 100}%`,
-              height: `${(box.y_max - box.y_min) * 100}%`,
-            }}
-            // On the box rather than in a legend, for `DryRunPanel`'s reason: a
-            // number somewhere else is a number nobody connects to the
-            // rectangle it belongs to.
-            title={`${ordinal(index)}. ${box.class_name} — confidence ${box.confidence.toFixed(2)}`}
-            data-testid={`box-${box.id}`}
-            data-highlighted={highlighted === box.id}
-            data-staged={staged.get(box.id)?.verdict ?? ""}
-          >
-            {/* The badge is the whole fix for "which row is this box?". Five
-                boxes of one class produce five rows reading `Paimon 0.15`, and
-                without a mark on the rectangle itself the only way to tell
-                them apart is to guess. Drawn inside the box rather than beside
-                it so it cannot drift from what it names, and offset outward at
-                the top-left so it does not cover the thing being judged. */}
-            <span className="absolute -top-0.5 -left-0.5 bg-[var(--color-claimed)] px-1 text-[10px] font-mono leading-tight text-[var(--color-bg)]">
-              {ordinal(index)}
-            </span>
-          </span>
-        ))}
-
         {drawn && (
           <span
             data-testid="adjustment"
@@ -328,7 +325,7 @@ export function VerificationCard({
             }}
           />
         )}
-      </div>
+      </BoxOverlay>
 
       {adjusting !== null && (
         <div className="flex flex-wrap items-center gap-2">

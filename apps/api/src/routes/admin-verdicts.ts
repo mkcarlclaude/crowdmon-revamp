@@ -3,6 +3,7 @@ import type { AppEnv } from "../bindings";
 import { chunkForBinding, placeholders } from "../d1";
 import {
   ADMIN_PAGE_LIMIT_DEFAULT,
+  AdminAnnotatorList,
   AdminVerdictList,
   AdminVerdictListQuery,
   CreateMissingReportRequest,
@@ -260,6 +261,11 @@ interface AdminVerdictRow {
   adjusted_y_min: number | null;
   adjusted_x_max: number | null;
   adjusted_y_max: number | null;
+  x_min: number;
+  y_min: number;
+  x_max: number;
+  y_max: number;
+  confidence: number;
   source: "admin" | "anon";
   annotator_id: string;
   created_at: number;
@@ -272,34 +278,57 @@ interface AdminVerdictRow {
 }
 
 /**
- * "What did the pool get ruled on, and by whom" (M16, ROADMAP M16 — reading
- * back what was labelled). Everything `submitVerdictsHandler` above writes,
- * read back joined to the frame and class it belongs to, newest first.
+ * The join every filtered read of `verdicts` below shares.
  *
- * Filters on `source`, never on the caller's own identity: `verdicts` already
- * carries `source` and `annotator_id` on every row (CONTEXT.md §Q10's two-tier
- * split), and "what did I submit" is that same query with `source=admin`
- * plus a client-side glance at `annotator_id` — not a second code path that
- * would have to agree with this one about what a verdict is.
+ * Extracted so the page query and the count query can never drift into
+ * disagreeing about what they are counting: both interpolate the exact same
+ * `${VERDICT_JOIN} ${where}` text, and the only thing that differs between
+ * them is what gets projected. A hand-copied `WHERE` between two statements
+ * is exactly how "142 results" and "37 rows on the page" would quietly stop
+ * describing the same query.
+ */
+const VERDICT_JOIN = `
+    FROM verdicts v
+    JOIN predictions p ON p.id = v.prediction_id
+    JOIN images i      ON i.id = p.image_id
+    JOIN classes c     ON c.id = p.class_id`;
+
+/**
+ * "What did the pool get ruled on, and by whom" (M16, ROADMAP M16 — reading
+ * back what was labelled; M18, plan §A — six filters instead of one, plus a
+ * total). Everything `submitVerdictsHandler` above writes, read back joined
+ * to the frame and class it belongs to, newest first.
+ *
+ * Filters on `source` and five more, never on the caller's own identity:
+ * `verdicts` already carries `source` and `annotator_id` on every row
+ * (CONTEXT.md §Q10's two-tier split), and "what did I submit" is that same
+ * query with `source=admin` plus a client-side glance at `annotator_id` —
+ * not a second code path that would have to agree with this one about what a
+ * verdict is.
  */
 export const listVerdictsRoute = createRoute({
   method: "get",
   path: "/api/admin/verdicts",
   operationId: "listVerdicts",
   tags: ["admin"],
-  summary: "Every verdict, newest first, joined to its frame and class",
+  summary: "Every verdict, newest first, joined to its frame and class, filterable six ways",
   description:
     "Reads `verdicts` back joined to `predictions`, `images` and `classes` — the row an " +
-    "annotations page renders needs all four without a second request per row. `source` " +
-    "narrows to admin or anonymous rulings; omitted, both tiers come back in one list, " +
-    "each carrying which tier it belongs to. Requires a Cloudflare Access assertion.",
+    "annotations page renders needs all four without a second request per row, and now " +
+    "also carries the prediction's original box (`x_min`..`confidence`) alongside the " +
+    "verdict's adjusted one, so a preview can show what the detector proposed next to what " +
+    "an admin ruled. `source`, `verdict`, `class_id`, `video_id`, `annotator_id` and a " +
+    "`from`/`to` time range all narrow independently and combine with AND; any omitted " +
+    "narrows nothing. `total` is the count over the same combination, not cut off by " +
+    "`limit`, so a filtered page and an empty one are distinguishable. Requires a " +
+    "Cloudflare Access assertion.",
   request: { query: AdminVerdictListQuery },
   responses: {
     200: {
-      description: "Verdicts, newest first",
+      description: "One page of verdicts, newest first, and the total matching the filter",
       content: { "application/json": { schema: AdminVerdictList } },
     },
-    400: errorResponse("An out-of-range limit or offset, or an invalid source"),
+    400: errorResponse("An out-of-range limit or offset, or an invalid filter value"),
     401: errorResponse("Missing or invalid Access assertion"),
     403: errorResponse("A verified identity that is not an administrator"),
     503: errorResponse("Admin access is not configured on this deployment"),
@@ -307,33 +336,157 @@ export const listVerdictsRoute = createRoute({
 });
 
 export const listVerdictsHandler: RouteHandler<typeof listVerdictsRoute, AppEnv> = async (c) => {
-  const { limit, offset, source } = c.req.valid("query");
+  const { limit, offset, source, verdict, class_id, video_id, annotator_id, from, to } =
+    c.req.valid("query");
 
-  // Assembled rather than written out twice, the same idiom `listJobsHandler`
-  // uses for its own optional `WHERE`: `source` is bound like every other
-  // parameter, never interpolated, and what varies is only whether the
-  // clause is present.
-  const filter = source ? "WHERE v.source = ?" : "";
-  const bindings = source
-    ? [source, limit ?? ADMIN_PAGE_LIMIT_DEFAULT, offset ?? 0]
-    : [limit ?? ADMIN_PAGE_LIMIT_DEFAULT, offset ?? 0];
+  // A conditions array joined by AND and a parallel bindings array, rather
+  // than the single optional string this route used to build — the same
+  // idiom `listJobsHandler` uses for its own one-filter `WHERE`, extended to
+  // six independent filters that can be present in any combination. The rule
+  // that idiom exists to keep holds exactly as before: every filter value is
+  // bound, never interpolated, and what varies in the SQL text is only
+  // whether a clause is present — with one exception below, where the text
+  // itself has to vary in length rather than presence.
+  const conditions: string[] = [];
+  const bindings: unknown[] = [];
 
+  if (source) {
+    conditions.push("v.source = ?");
+    bindings.push(source);
+  }
+  if (verdict) {
+    // The one clause whose SQL text varies with input length rather than
+    // just its presence: an `IN (...)` needs one placeholder per value. Still
+    // bound, never interpolated — `placeholders` only ever emits `?`
+    // characters — and the placeholder count this can ever reach is capped
+    // by `MAX_VERDICT_FILTER_VALUES`, which is `VerdictKind`'s own
+    // cardinality, not a guess about caller behaviour.
+    conditions.push(`v.verdict IN (${placeholders(verdict)})`);
+    bindings.push(...verdict);
+  }
+  if (class_id !== undefined) {
+    conditions.push("p.class_id = ?");
+    bindings.push(class_id);
+  }
+  if (video_id) {
+    conditions.push("i.video_id = ?");
+    bindings.push(video_id);
+  }
+  if (annotator_id) {
+    conditions.push("v.annotator_id = ?");
+    bindings.push(annotator_id);
+  }
+  if (from !== undefined) {
+    conditions.push("v.created_at >= ?");
+    bindings.push(from);
+  }
+  if (to !== undefined) {
+    conditions.push("v.created_at <= ?");
+    bindings.push(to);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  // Every filter combined tops out at one placeholder per condition plus up
+  // to `MAX_VERDICT_FILTER_VALUES` for `verdict` — nowhere near D1's 100-bound
+  // -parameter ceiling (`d1-bound-param-limit`), unlike `chunkForBinding`'s
+  // callers elsewhere in this file, which chunk because their list length is
+  // however many predictions a caller happened to submit. This list's length
+  // is bounded by the schema, not by the caller, so no chunking is needed —
+  // stated explicitly because D1's local SQLite test harness does not enforce
+  // the ceiling and would let a violation of it pass silently.
+  //
+  // One batch, two statements: the page and its total over the identical
+  // filter, the same idiom `listAdminVideoImagesHandler` uses for the same
+  // reason — D1 has no cheap "count regardless of LIMIT" primitive short of a
+  // second pass over the same predicate. `bindings` is reused for both
+  // statements' filter values; `limit`/`offset` are appended to the page
+  // query alone, since a total is not paged.
+  const [pageResult, countResult] = await c.env.DB.batch<AdminVerdictRow | { total: number }>([
+    c.env.DB.prepare(
+      `SELECT v.id, v.prediction_id, v.verdict,
+              v.adjusted_x_min, v.adjusted_y_min, v.adjusted_x_max, v.adjusted_y_max,
+              p.x_min, p.y_min, p.x_max, p.y_max, p.confidence,
+              v.source, v.annotator_id, v.created_at,
+              i.id AS image_id, i.video_id, i.r2_key, i.timestamp_seconds,
+              c.id AS class_id, c.name AS class_name
+         ${VERDICT_JOIN}
+         ${where}
+        ORDER BY v.id DESC
+        LIMIT ? OFFSET ?`,
+    ).bind(...bindings, limit ?? ADMIN_PAGE_LIMIT_DEFAULT, offset ?? 0),
+    c.env.DB.prepare(`SELECT COUNT(*) AS total ${VERDICT_JOIN} ${where}`).bind(...bindings),
+  ]);
+
+  const verdicts = (pageResult?.results ?? []) as AdminVerdictRow[];
+  const total = ((countResult?.results ?? []) as { total: number }[])[0]?.total ?? 0;
+
+  return c.json({ verdicts, total }, 200);
+};
+
+/** The shape D1 returns for `listVerdictAnnotators`'s grouped read. */
+interface AdminAnnotatorRow {
+  annotator_id: string;
+  source: "admin" | "anon";
+  verdicts: number;
+}
+
+/**
+ * Populates the annotator filter's dropdown on `/admin/annotations` (M18,
+ * plan §A).
+ *
+ * Grouped by `(annotator_id, source)` rather than a flat list of ids: an
+ * admin's Access email and an anonymous session id are drawn from disjoint
+ * spaces in practice, but nothing enforces that at the schema level, so the
+ * pair is what actually names one contributor — the same pairing
+ * `listVerdictsHandler`'s own `source` and `annotator_id` filters keep apart.
+ *
+ * This is also the surface that makes ROADMAP M14.4's "excluding one bad
+ * actor does not mean discarding every anonymous contribution" operable
+ * rather than aspirational: the anon rows here, each with its own verdict
+ * count, are exactly the set a moderation decision would act on one row at a
+ * time, and a dropdown of forty raw `crypto.randomUUID()`s would make that
+ * decision unusable — the web layer renders admin emails as themselves and
+ * anonymous ids truncated (`anon · 3f2c…`) for exactly that reason.
+ */
+export const listVerdictAnnotatorsRoute = createRoute({
+  method: "get",
+  path: "/api/admin/verdicts/annotators",
+  operationId: "listVerdictAnnotators",
+  tags: ["admin"],
+  summary: "Every annotator who has ruled on something, grouped by source, with a count",
+  description:
+    "`SELECT annotator_id, source, COUNT(*) FROM verdicts GROUP BY annotator_id, source` — " +
+    "everyone who has ever ruled on a prediction, admin and anonymous alike, with how many " +
+    "rulings each has made. Built for the annotator filter's dropdown on `/admin/annotations` " +
+    "rather than any operator-facing leaderboard, though CONTEXT.md §Q10's own \"plain " +
+    'counts, not rank-percentile theatre" would apply if one were ever built from this. ' +
+    "Requires a Cloudflare Access assertion.",
+  responses: {
+    200: {
+      description:
+        "Every distinct annotator with a verdict count, most active first within a source",
+      content: { "application/json": { schema: AdminAnnotatorList } },
+    },
+    401: errorResponse("Missing or invalid Access assertion"),
+    403: errorResponse("A verified identity that is not an administrator"),
+    503: errorResponse("Admin access is not configured on this deployment"),
+  },
+});
+
+export const listVerdictAnnotatorsHandler: RouteHandler<
+  typeof listVerdictAnnotatorsRoute,
+  AppEnv
+> = async (c) => {
+  // No `IN (...)`, no caller-supplied list to chunk against D1's bound-
+  // parameter ceiling — this binds nothing at all, which is what keeps it
+  // safe regardless of how many distinct annotators `verdicts` ever grows to.
   const { results } = await c.env.DB.prepare(
-    `SELECT v.id, v.prediction_id, v.verdict,
-            v.adjusted_x_min, v.adjusted_y_min, v.adjusted_x_max, v.adjusted_y_max,
-            v.source, v.annotator_id, v.created_at,
-            i.id AS image_id, i.video_id, i.r2_key, i.timestamp_seconds,
-            c.id AS class_id, c.name AS class_name
-       FROM verdicts v
-       JOIN predictions p ON p.id = v.prediction_id
-       JOIN images i      ON i.id = p.image_id
-       JOIN classes c     ON c.id = p.class_id
-       ${filter}
-      ORDER BY v.id DESC
-      LIMIT ? OFFSET ?`,
-  )
-    .bind(...bindings)
-    .all<AdminVerdictRow>();
+    `SELECT annotator_id, source, COUNT(*) AS verdicts
+       FROM verdicts
+      GROUP BY annotator_id, source
+      ORDER BY source, verdicts DESC`,
+  ).all<AdminAnnotatorRow>();
 
-  return c.json({ verdicts: results }, 200);
+  return c.json({ annotators: results }, 200);
 };

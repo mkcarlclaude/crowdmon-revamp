@@ -1,0 +1,36 @@
+-- An index for the public verification page's frame draw (M18).
+--
+-- `publicFrameHandler` selects `WHERE i.public_sample = 1 AND EXISTS (…)
+-- ORDER BY RANDOM() LIMIT 1`, and until this index existed there was nothing
+-- to serve that predicate: migration 0004 added the column and no index, so
+-- the query scanned every row in `images`. Measured against production on
+-- 2026-08-12: **9,715 rows read to return one**, with five rows actually
+-- flagged. Query efficiency 0.0001.
+--
+-- Two things make that worse than the raw number suggests, and together they
+-- are why this is not being left for later.
+--
+-- It grows without bound and never comes back down. `images` gains a row for
+-- every kept frame of every video ever submitted, so the cost of drawing one
+-- public frame is a function of total ingest history — a quantity that only
+-- rises. The queue-depth gauge has the same shape and at least runs on a
+-- fixed interval this repo controls.
+--
+-- It is the one expensive read that anonymous strangers trigger. Every other
+-- full scan in the system sits behind `requireAccess` and is paid for by one
+-- operator loading a page; this one is on `/verify`, the surface the project
+-- exists to show people. The rate limiter (20 requests per 60s per ip+route,
+-- `wrangler.toml`) bounds how fast a single visitor can spend the read
+-- budget, but it was never meant to be the thing standing between a shared
+-- link and D1's daily ceiling.
+--
+-- Partial rather than a plain index on the column, matching
+-- `idx_jobs_stale` and `idx_jobs_one_download_per_video`. The column is
+-- `INTEGER CHECK (public_sample IN (0, 1))` and nullable, so the vast
+-- majority of rows hold NULL and would be dead weight in a full index —
+-- and no query anywhere asks for `public_sample = 0` or `IS NULL`. The
+-- predicate here has to match the handler's `= 1` literally for SQLite to
+-- use the index at all.
+--
+-- After: five index entries visited instead of 9,715 rows.
+CREATE INDEX idx_images_public_sample ON images (public_sample) WHERE public_sample = 1;

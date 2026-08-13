@@ -43,6 +43,8 @@ import {
 import {
   createMissingReportHandler,
   createMissingReportRoute,
+  listVerdictAnnotatorsHandler,
+  listVerdictAnnotatorsRoute,
   listVerdictsHandler,
   listVerdictsRoute,
   submitVerdictsHandler,
@@ -182,6 +184,7 @@ app.openapi(reportDryRunRoute, reportDryRunHandler);
 app.openapi(submitVerdictsRoute, submitVerdictsHandler);
 app.openapi(createMissingReportRoute, createMissingReportHandler);
 app.openapi(listVerdictsRoute, listVerdictsHandler);
+app.openapi(listVerdictAnnotatorsRoute, listVerdictAnnotatorsHandler);
 app.openapi(listAdminVideoImagesRoute, listAdminVideoImagesHandler);
 app.openapi(adminSessionRoute, adminSessionHandler);
 app.openapi(updatePublicSampleRoute, updatePublicSampleHandler);
