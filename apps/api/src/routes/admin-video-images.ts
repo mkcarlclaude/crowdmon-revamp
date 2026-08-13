@@ -15,13 +15,19 @@ import {
  * A new route, not a reuse of `listVideoImagesHandler`
  * (`apps/api/src/routes/jobs.ts`). That route answers a different question —
  * "what can `ImageSampler` draw from" — and proves it by requiring a
- * `worker_id` holding a claimed `prelabel` or `dryrun` lease
- * (`idx_jobs_one_prelabel_per_video`, migration 0005). A browser holds no
- * such lease and never will; gating this route the same way would mean an
- * admin can only browse a video's frames while a worker happens to be
- * mid-job on it, which is not a real constraint this screen should have. The
- * two routes share a table, not a trust boundary — this one sits under
- * `/api/admin/*` and is gated by `requireAccess` like every other admin read.
+ * `worker_id` holding a claimed `prelabel` or `dryrun` lease for this video.
+ * A browser holds no such lease and never will; gating this route the same
+ * way would mean an admin can only browse a video's frames while a worker
+ * happens to be mid-job on it, which is not a real constraint this screen
+ * should have. The two routes share a table, not a trust boundary — this one
+ * sits under `/api/admin/*` and is gated by `requireAccess` like every other
+ * admin read.
+ *
+ * The `sampled` field this route adds to each frame (M17, plan §B) is what
+ * makes this screen double as the on-demand supplementary prelabel's
+ * selection surface (`admin-prelabel.ts`'s own module comment): an operator
+ * needs to see which frames an earlier pass already claimed before picking
+ * more, not learn it from a 400 after clicking.
  *
  * `verdict_state` exists because a prediction count alone cannot tell "the
  * detector found nothing here" apart from "the detector found three boxes and
@@ -68,6 +74,7 @@ interface AdminVideoImageRow {
   public_sample: number | null;
   predictions: number;
   unruled: number;
+  selection_reason: string | null;
 }
 
 export const listAdminVideoImagesRoute = createRoute({
@@ -111,7 +118,7 @@ export const listAdminVideoImagesHandler: RouteHandler<
   const [totalResult, pageResult] = await c.env.DB.batch<{ total: number } | AdminVideoImageRow>([
     c.env.DB.prepare("SELECT COUNT(*) AS total FROM images WHERE video_id = ?").bind(id),
     c.env.DB.prepare(
-      `SELECT i.id, i.r2_key, i.timestamp_seconds, i.public_sample,
+      `SELECT i.id, i.r2_key, i.timestamp_seconds, i.public_sample, i.selection_reason,
               (SELECT COUNT(*) FROM predictions p WHERE p.image_id = i.id) AS predictions,
               (SELECT COUNT(*) FROM predictions p
                  WHERE p.image_id = i.id
@@ -152,6 +159,7 @@ export const listAdminVideoImagesHandler: RouteHandler<
         public_sample: row.public_sample === 1,
         predictions: row.predictions,
         verdict_state: verdictState(row.predictions, row.unruled),
+        sampled: row.selection_reason !== null,
       })),
       url_mode: mode,
       expires_at: expiresAt,

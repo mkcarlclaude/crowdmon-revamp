@@ -104,9 +104,11 @@ Five job kinds share one `jobs` table and one claim endpoint (kind-agnostic —
 |---|---|---|---|---|
 | `download` | yes | `POST /api/admin/videos` | — | `/fanout` |
 | `chunk` | yes | the download's fan-out | `chunks` | `/images` |
-| `prelabel` | yes | automatically, by the *last* chunk's `complete` | — | `/predictions` |
+| `prelabel` | yes | automatically, by the *last* chunk's `complete` — **or** on demand, `POST /api/admin/videos/{id}/prelabel` (M17, plan §B) | `prelabel_images`, only for an on-demand pass | `/predictions` |
 | `dryrun` | yes | `POST /api/admin/classes/{id}/dryrun` | `dryruns` | `/dryrun` |
 | `snapshot` | **NULL** | `POST /api/admin/snapshots` | `snapshots` | `/snapshot` |
+
+`prelabel` is the one kind that can be enqueued two ways, and migration 0011 is what makes that possible: before it, `idx_jobs_one_prelabel_per_video` allowed at most one `prelabel` job per video, ever. An on-demand pass carries its own frame list in `prelabel_images`, written atomically with the job (`createPrelabelHandler`); the automatic pass writes no `prelabel_images` rows at all, and a claim for it hydrates no `prelabel` field — see §3.4.
 
 ---
 
@@ -270,14 +272,15 @@ sequenceDiagram
 the rows were produced under, stamped on the job *and* on every `images` row
 (`dedup_threshold`).
 
-### 3.3 The last chunk enqueues `prelabel`
+### 3.3 `prelabel` is enqueued automatically, or queued on demand
 
-Not a separate call — it rides inside the chunk's `complete` batch, so it cannot
-be lost to a crash between two round trips:
+**Automatically**, the instant a video's last `chunk` job finishes — not a
+separate call, it rides inside that chunk's `complete` batch, so it cannot be
+lost to a crash between two round trips:
 
 ```sql
-INSERT INTO jobs (kind, video_id, traceparent)
-     SELECT 'prelabel', j.video_id, ?
+INSERT INTO jobs (kind, video_id, traceparent, selection_reason)
+     SELECT 'prelabel', j.video_id, ?, 'random'
        FROM jobs j
       WHERE j.id = ?  AND j.kind = 'chunk' AND j.status = 'done'
         AND NOT EXISTS (SELECT 1 FROM jobs c
@@ -286,9 +289,42 @@ INSERT INTO jobs (kind, video_id, traceparent)
                          WHERE p.video_id = j.video_id AND p.kind='prelabel')
 ```
 
-One prelabel per video, not per chunk: the sample is drawn across the whole
-timeline, which no single 60-second chunk could assemble.
-`idx_jobs_one_prelabel_per_video` is the schema backstop.
+One automatic prelabel per video, not per chunk: the sample is drawn across
+the whole timeline, which no single 60-second chunk could assemble. The
+`NOT EXISTS (… p.kind='prelabel')` guard is what keeps a reaped-and-rerun last
+chunk from enqueuing a second *automatic* pass — before migration 0011 (M17,
+plan §B), `idx_jobs_one_prelabel_per_video` backstopped that guard with a
+database constraint; that index is gone now (see below), so the guard is the
+whole of the guarantee, resting on D1 serialising writers rather than on a
+second, independent check.
+
+**On demand**, an admin refilling a drained verification pool
+(`labellingBatchHandler`'s `UNRULED_BOX` pool, §4.2) queues a *supplementary*
+pass over an explicit set of not-yet-sampled frames:
+
+```
+POST /api/admin/videos/{id}/prelabel
+  {image_ids:[…]}                    -> hand-picked, stamps 'manual'
+  {count, strategy:'random'}         -> server-drawn random draw over the
+                                         not-yet-sampled remainder, stamps 'random'
+```
+
+One batch: `INSERT INTO jobs (kind, video_id, traceparent, selection_reason)`
+alongside one `INSERT INTO prelabel_images (job_id, image_id)` per selected
+image, so the claim handler can never observe a `prelabel` job whose
+selection is half-written. `idx_jobs_one_prelabel_per_video` (migration 0005)
+is what made this route impossible before migration 0011 dropped it — that
+index enforced *at most one* `prelabel` job per video, ever, which a
+supplementary pass is definitionally a second one of. Dropping it does not
+weaken the automatic pass's own exactly-once guarantee (the paragraph above
+is why), and it does not touch migration 0008's `CHECK
+((kind = 'snapshot') = (video_id IS NULL))` — a supplementary job still names
+exactly one video, the same as every prelabel job always has.
+
+`selection_reason` on `jobs` (migration 0011) is what makes the *value*
+`reportPredictionsHandler` stamps onto `images.selection_reason` a fact about
+which job ran, decided here at enqueue time, rather than a literal the report
+handler used to hard-code. See §3.4.
 
 ### 3.4 `prelabel` — sample, detect, report
 
@@ -302,7 +338,7 @@ sequenceDiagram
     participant R2 as R2
 
     W->>API: POST /api/jobs/claim
-    API-->>W: Job{kind:'prelabel', video_id}
+    API-->>W: Job{kind:'prelabel', video_id, prelabel?}
     W->>API: GET /api/classes/active
     API->>D1: SELECT name, appearance_prompt, prompt_version FROM classes WHERE active=1
     API-->>W: [{name, appearance, version}]
@@ -310,11 +346,15 @@ sequenceDiagram
     alt zero active classes
         W-->>API: retryable failure (silence) — reporting zero boxes<br/>would be indistinguishable from "found nothing"
     end
-    W->>API: GET /api/videos/{video_id}/images
-    API->>D1: SELECT r2_key, timestamp_seconds FROM images WHERE video_id=? ORDER BY timestamp_seconds
-    API-->>W: the candidate pool
-    W->>W: sample across the timeline, budget CROWDMON_PRELABEL_SAMPLE_SIZE
-    loop each sampled frame
+    alt claim carried Job.prelabel (an on-demand pass, M17)
+        Note over W,API: the frame list arrived on the claim itself —<br/>no fetch, no sampling, no sample.select span
+    else automatic first pass, or a legacy job with no explicit list
+        W->>API: GET /api/videos/{video_id}/images
+        API->>D1: SELECT r2_key, timestamp_seconds FROM images WHERE video_id=? ORDER BY timestamp_seconds
+        API-->>W: the candidate pool
+        W->>W: sample across the timeline, budget CROWDMON_PRELABEL_SAMPLE_SIZE
+    end
+    loop each sampled or explicitly-listed frame
         W->>DET: POST /detect {key, prompts:[{name, text}]}
         DET->>R2: GET frames/… (its own read-only token)
         DET->>DET: OWL-ViT ONNX, confidence floor 0.1, ≤10 boxes/class
@@ -323,7 +363,8 @@ sequenceDiagram
     end
     W->>API: POST /api/jobs/{id}/predictions {model_id, boxes[], sampled_keys[], worker_id}
     API->>D1: resolve r2_key→image_id and class name→class_id (chunked ≤100 params)
-    API->>D1: one batch: INSERT INTO predictions ×N<br/>+ UPDATE images SET selection_reason for every sampled key
+    API->>D1: SELECT selection_reason FROM jobs WHERE id=?
+    API->>D1: one batch: INSERT INTO predictions ×N<br/>+ UPDATE images SET selection_reason=(job's own value)<br/>WHERE r2_key IN (…) AND selection_reason IS NULL
     API-->>W: 200 | 400 (Terminal) | 404 (lease lost)
     W->>API: POST /api/jobs/{id}/complete {status:'done'}
 ```
@@ -332,6 +373,16 @@ sequenceDiagram
 unconditionally — every frame the detector was asked about, boxed or not. A job
 that dies partway never reaches this call, so it never stamps a sample it did
 not finish looking at.
+
+The stamp's value is no longer a literal (M17, plan §B): before migration
+0011, `reportPredictionsHandler` wrote `selection_reason = 'random'`
+unconditionally, which was safe only because `idx_jobs_one_prelabel_per_video`
+made a second pass over any image unreachable. Now the value comes off the
+job (`'random'` for the automatic pass and a randomised on-demand draw,
+`'manual'` for a hand-picked one — §3.3), and the write is write-once
+(`AND selection_reason IS NULL`) rather than unconditional — the backstop for
+a hand-picked pass naming an image a caller failed to exclude, since
+`createPrelabelHandler` already refuses that at request time.
 
 ### 3.5 `dryrun` — try a wording, write nothing to the dataset
 
@@ -562,6 +613,8 @@ erDiagram
     videos ||--o{ images : "yields frames"
     jobs ||--o| chunks : "one chunk job ↔ one segment"
     jobs ||--o| dryruns : "one dryrun job ↔ one candidate run"
+    jobs ||--o{ prelabel_images : "an on-demand pass names"
+    images ||--o{ prelabel_images : "is named by"
     images ||--o{ predictions : "detector proposed"
     classes ||--o{ predictions : "labelled as"
     classes ||--o{ dryruns : "candidate wording for"
@@ -592,6 +645,7 @@ erDiagram
         TEXT failure_reason
         TEXT config_version "the regime this run produced rows under"
         TEXT traceparent "W3C context, carried across the queue"
+        TEXT selection_reason "prelabel only (M17) - 'random'|'manual'|NULL, what the report should stamp"
         INTEGER created_at
         INTEGER updated_at
     }
@@ -608,6 +662,11 @@ erDiagram
         INTEGER created_at
     }
 
+    prelabel_images {
+        INTEGER job_id PK, FK "ON DELETE CASCADE"
+        INTEGER image_id PK, FK "ON DELETE CASCADE"
+    }
+
     images {
         INTEGER id PK
         TEXT r2_key UK "frames/{video_id}/{sssss.mmm}.jpg"
@@ -616,7 +675,7 @@ erDiagram
         TEXT phash "DCT-64, hex"
         INTEGER dedup_threshold "the regime that kept this frame"
         INTEGER public_sample "0|1|NULL — curated anon-verification set"
-        TEXT selection_reason "why prelabel sampled it; 'random' ⇒ eval split"
+        TEXT selection_reason "why prelabel sampled it - 'random' ⇒ eval split, 'manual' (M17) ⇒ train"
         INTEGER created_at
     }
 
@@ -693,16 +752,32 @@ erDiagram
 the job that built it, and its reconstructability must not depend on a row
 somebody could prune.
 
+`prelabel_images` (migration 0011, M17, plan §B) is the explicit frame list a
+supplementary prelabel job runs against — populated only for an on-demand
+pass, never for the automatic one, which is why it has no `selection_reason`
+column of its own (that value is one fact per *job*, on `jobs`, not one per
+`(job, image)` pair — §3.3). Both foreign keys carry `ON DELETE CASCADE`,
+which D1 actually enforces (migration 0005's finding: no pragma turns
+foreign-key checking off), so a `jobs` or `images` row this table still names
+cannot be deleted out from under it.
+
 ### 6.1 Indexes that carry a rule
 
 | Index | Enforces |
 |---|---|
 | `idx_jobs_one_download_per_video` (unique, partial) | re-submitting a URL is a no-op |
-| `idx_jobs_one_prelabel_per_video` (unique, partial) | a reaped-and-rerun last chunk cannot enqueue a second prelabel |
 | `idx_chunks_identity` (unique) | fan-out is idempotent across a re-run |
 | `idx_images_identity` (unique) | one frame per (video, timestamp) |
 | `idx_jobs_claimable (status, kind, id)` | the claim's `ORDER BY id LIMIT 1` |
 | `idx_jobs_stale (heartbeat_at) WHERE status='claimed'` | the reaper's scan |
+
+`idx_jobs_one_prelabel_per_video` (unique, partial) lived here from migration
+0005 until migration 0011 (M17, plan §B) dropped it — it enforced *at most
+one* `prelabel` job per video, ever, which is exactly the constraint an
+on-demand supplementary pass has to violate on purpose. The automatic pass's
+own exactly-once guarantee no longer has that index as a backstop; it rests
+entirely on `completeJobHandler`'s own `NOT EXISTS` guard now (§3.3), which
+D1 serialising writers is what makes race-safe without it.
 
 ---
 

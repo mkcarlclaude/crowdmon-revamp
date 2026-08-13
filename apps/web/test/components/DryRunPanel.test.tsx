@@ -54,6 +54,10 @@ function frame(over: Partial<Record<string, unknown>> = {}) {
     public_sample: false,
     predictions: 0,
     verdict_state: "no_predictions",
+    // M17, plan §B: whether an earlier prelabel pass already claimed this
+    // frame — required on `AdminVideoImage` since migration 0011, unused by
+    // this picker.
+    sampled: false,
     ...over,
   };
 }

@@ -22,7 +22,15 @@ await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
  *
  * Children first: `chunks` and `images` carry foreign keys into `jobs` and
  * `videos`, and migration 0003's labelling tables carry them into `images`
- * and `classes`.
+ * and `classes`. Migration 0011 (M17, plan §B) added `prelabel_images`,
+ * whose two foreign keys both carry `ON DELETE CASCADE` — unlike
+ * `dryruns.image_id`, deleting `jobs` or `images` while a `prelabel_images`
+ * row still pointed at either would not fail here, it would just quietly
+ * take the row with it. Deleted explicitly anyway, before both of its
+ * parents, rather than left to that cascade: a `beforeEach` that depends on
+ * *which* cascade direction happens to be declared on a table is a `beforeEach`
+ * that breaks the day somebody changes the schema for an unrelated reason,
+ * the same argument that already applies to every other table listed here.
  *
  * The v2 tables are listed here rather than left to whichever file first
  * touches them. `classes.name` is UNIQUE, so the second test in a file to
@@ -45,6 +53,7 @@ beforeEach(async () => {
     // still pointed at one would fail a constraint no test here meant to
     // exercise.
     env.DB.prepare("DELETE FROM dryruns"),
+    env.DB.prepare("DELETE FROM prelabel_images"),
     env.DB.prepare("DELETE FROM images"),
     env.DB.prepare("DELETE FROM chunks"),
     env.DB.prepare("DELETE FROM jobs"),

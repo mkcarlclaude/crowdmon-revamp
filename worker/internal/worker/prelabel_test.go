@@ -110,6 +110,18 @@ func prelabelJob() *api.Job {
 	return &api.Job{Id: 7, Kind: api.JobKindPrelabel, VideoId: strPtr("dQw4w9WgXcQ")}
 }
 
+// prelabelJobWithImages is prelabelJob's explicit-selection twin (M17, plan
+// §B): a supplementary prelabel job whose claim already carries the frame
+// list `createPrelabelHandler` (apps/api/src/routes/admin-prelabel.ts) wrote
+// into `prelabel_images`, exactly as the automatic pass's `prelabelJob()`
+// above carries none.
+func prelabelJobWithImages(images ...api.VideoImage) *api.Job {
+	return &api.Job{
+		Id: 7, Kind: api.JobKindPrelabel, VideoId: strPtr("dQw4w9WgXcQ"),
+		Prelabel: &api.PrelabelWork{Images: images},
+	}
+}
+
 var testPrompts = []worker.ClassPrompt{
 	{Name: "Paimon", Appearance: "a small white-haired flying companion", Version: "2026-08-08-a"},
 }
@@ -266,6 +278,99 @@ func TestPrelabelReportsAnEmptySampleWithoutFailing(t *testing.T) {
 	if reporter.calls != 1 || len(reporter.sent.Boxes) != 0 {
 		t.Errorf("reported %d times with %d boxes, want one empty report",
 			reporter.calls, len(reporter.sent.Boxes))
+	}
+}
+
+// M17, plan §B: a supplementary prelabel job's claim carries its own frame
+// list, and the worker's whole job is to iterate it — no fetch, no sampler
+// call, no selection of its own. This is the regression test for the
+// "Pipeline.prelabel drops the Sampler call... when the claim supplies an
+// image list" requirement: a Sampler that recorded a call here would mean
+// selection happened twice, once server-side and once in the worker, which
+// is exactly the duplication M17 exists to remove.
+func TestPrelabelUsesTheExplicitListWhenTheClaimSuppliesOne(t *testing.T) {
+	sampler := &fakeSampler{images: []worker.SampledImage{
+		// If the worker fell back to sampling despite the claim carrying an
+		// explicit list, the detector would see this key instead of the two
+		// below — the test would then fail on the boxes-per-image assertion
+		// rather than on a sampler.calls check alone, which is the point of
+		// seeding the fallback path with different data than the explicit one.
+		{Key: "frames/dQw4w9WgXcQ/09999.000.jpg", TimestampSeconds: 9999},
+	}}
+	detector := &fakeDetector{
+		modelID: "owlvit-base-patch32.onnx",
+		boxes: map[string][]queue.Box{
+			"frames/dQw4w9WgXcQ/00007.000.jpg": {
+				{ClassName: "Paimon", XMax: 0.5, YMax: 0.5, Confidence: 0.9, PromptVersion: "2026-08-08-a"},
+			},
+		},
+	}
+	reporter := &fakePredictionReporter{}
+
+	job := prelabelJobWithImages(
+		api.VideoImage{R2Key: "frames/dQw4w9WgXcQ/00007.000.jpg", TimestampSeconds: 7},
+		api.VideoImage{R2Key: "frames/dQw4w9WgXcQ/00013.000.jpg", TimestampSeconds: 13},
+	)
+
+	p := worker.Pipeline{
+		Sampler: sampler, Detector: detector, Predictions: reporter, Prompts: promptSource(testPrompts...),
+	}
+
+	if err := p.Work(context.Background(), job); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	if sampler.calls != 0 {
+		t.Errorf("Sampler.Sample called %d times, want 0 — the claim already supplied the list", sampler.calls)
+	}
+	if len(detector.seen) != 2 {
+		t.Fatalf("detector saw %d images, want the two the claim named", len(detector.seen))
+	}
+	wantSeen := []string{"frames/dQw4w9WgXcQ/00007.000.jpg", "frames/dQw4w9WgXcQ/00013.000.jpg"}
+	for i, key := range wantSeen {
+		if detector.seen[i] != key {
+			t.Errorf("detector.seen[%d] = %q, want %q", i, detector.seen[i], key)
+		}
+	}
+	if reporter.calls != 1 {
+		t.Fatalf("reported %d times, want exactly one call", reporter.calls)
+	}
+	if len(reporter.sent.SampledKeys) != 2 {
+		t.Errorf("reported %d sampled keys, want 2", len(reporter.sent.SampledKeys))
+	}
+	if len(reporter.sent.Boxes) != 1 || reporter.sent.Boxes[0].Key != "frames/dQw4w9WgXcQ/00007.000.jpg" {
+		t.Errorf("reported boxes %+v, want one box on the explicitly-listed frame", reporter.sent.Boxes)
+	}
+}
+
+// The other half of the same regression test: no `sample.select` span opens
+// when the claim supplies an explicit list — the same reasoning
+// pipeline.go's own comment gives for why `dryrun`'s single-frame mode opens
+// no `dryrun.select` span. A span named after selection describing an
+// operation that never happened would be worse than a missing span — it
+// would look like evidence of work this pass did not do.
+func TestPrelabelOpensNoSampleSelectSpanWithAnExplicitList(t *testing.T) {
+	spans := recordingProvider(t)
+
+	job := prelabelJobWithImages(
+		api.VideoImage{R2Key: "frames/dQw4w9WgXcQ/00007.000.jpg", TimestampSeconds: 7},
+	)
+
+	p := worker.Pipeline{
+		Sampler:     &fakeSampler{},
+		Detector:    &fakeDetector{},
+		Predictions: &fakePredictionReporter{},
+		Prompts:     promptSource(testPrompts...),
+	}
+
+	if err := p.Work(t.Context(), job); err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+
+	for _, span := range spans.Ended() {
+		if span.Name() == "sample.select" {
+			t.Error("sample.select was opened despite the claim supplying an explicit image list")
+		}
 	}
 }
 

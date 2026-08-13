@@ -90,14 +90,26 @@ type manifest struct {
 // out of train" (ROADMAP.md). The random slice is the frozen evaluation
 // pool (CONTEXT.md §Q16); everything else is train.
 //
-// v2 never writes a selection_reason other than "random" — the uncertain and
-// diverse legs of the weighted mix are v4's (CONTEXT.md §Q16's amendment:
-// "the column ships, the weighting does not") — so every admitted image is
-// "eval" in practice today. That is not a bug in this function: it is the
+// Until M17 (plan §B), v2 never wrote a selection_reason other than
+// "random" — the uncertain and diverse legs of the weighted mix are v4's
+// (CONTEXT.md §Q16's amendment: "the column ships, the weighting does not")
+// — so every admitted image really was "eval" in practice, and this
+// function's `else` branch was reachable only through the nil case a
+// pre-M11.3 row could carry. That was not a bug in this function: it was the
 // honest consequence of v2 training nothing, and the reason this rule exists
 // now rather than when v4 needs it is exactly §Q21's trap — a training
 // script that globbed the directory instead of reading the manifest would
 // not notice the difference until it had silently trained on the eval pool.
+//
+// M17 gives the `else` branch a second, deliberate way to reach it:
+// "manual", an admin's hand-picked supplementary selection
+// (`apps/api/src/routes/admin-prelabel.ts`). This function needed no change
+// for that — it already treated "not random" as "train" — but the images
+// that route flows through it are now the first ones this rule has ever
+// actually routed into `train`, and it is worth being explicit here that
+// this is the feature, not a side effect: a hand-picked frame is a biased
+// sample by construction (CONTEXT.md §Q16), so it must never count toward
+// the unbiased evaluation slice the mAP chart depends on.
 func splitFor(reason *string) string {
 	if reason != nil && *reason == "random" {
 		return "eval"
