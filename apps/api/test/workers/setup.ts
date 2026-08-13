@@ -36,12 +36,17 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM missing_reports"),
     env.DB.prepare("DELETE FROM verdicts"),
     env.DB.prepare("DELETE FROM predictions"),
+    // Before `images`, and before `jobs` and `classes` for `dryruns.job_id`'s
+    // and `dryruns.class_id`'s own reasons below — migration 0010 (M17, plan
+    // §A) added `dryruns.image_id REFERENCES images(id)` with no `ON DELETE
+    // CASCADE`. That reference is real, not advisory: migration 0005's own
+    // finding is that D1 enforces foreign keys unconditionally, with no
+    // pragma that turns it off, so `DELETE FROM images` while a `dryruns` row
+    // still pointed at one would fail a constraint no test here meant to
+    // exercise.
+    env.DB.prepare("DELETE FROM dryruns"),
     env.DB.prepare("DELETE FROM images"),
     env.DB.prepare("DELETE FROM chunks"),
-    // Before `jobs` and `classes`, both of which it references (migration
-    // 0007). Its `job_id` cascade would handle the first on its own; the
-    // second would not.
-    env.DB.prepare("DELETE FROM dryruns"),
     env.DB.prepare("DELETE FROM jobs"),
     env.DB.prepare("DELETE FROM videos"),
     env.DB.prepare("DELETE FROM classes"),

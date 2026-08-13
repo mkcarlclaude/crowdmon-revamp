@@ -157,25 +157,50 @@ export function useVideos() {
   });
 }
 
-export const dryRunsKey = (classId: number) => ["dryruns", classId] as const;
+/**
+ * `imageId` omitted is the unfiltered key, a strict prefix of every filtered
+ * one — which is what lets `useCreateDryRun`'s invalidation stay a single
+ * `invalidateQueries({ queryKey: dryRunsKey(classId) })` after M17 (plan §A)
+ * added the filter: TanStack Query matches a query key by prefix, so
+ * invalidating the two-element key also invalidates every three-element key
+ * built from it, filtered or not, without this file needing to track which
+ * `imageId`s are currently mounted anywhere.
+ */
+export const dryRunsKey = (classId: number, imageId?: number) =>
+  imageId === undefined
+    ? (["dryruns", classId] as const)
+    : (["dryruns", classId, imageId] as const);
 
 /**
- * One class's recent dry-runs.
+ * One class's recent dry-runs — every one, or (M17, plan §A) one frame's own
+ * attempts when `imageId` is given.
+ *
+ * The filter exists for `DryRunPanel`'s comparison strip: once an admin has
+ * picked a frame and is iterating wordings against it, `DRYRUN_HISTORY`
+ * newest-first rows unfiltered could mix in a different frame's attempts (or
+ * the wide mode's), which is not what a "did this wording get better" strip
+ * is for.
  *
  * Polls only while something is actually running. A dry-run is minutes of the
  * box's two cores, so the screen has to move on its own when the result lands
  * — but a class whose newest run finished has nothing left to poll for, and
  * the interval turns itself off rather than reading D1 forever behind an open
- * tab.
+ * tab. `query.state.data?.dryruns[0]` is this query's own newest row (already
+ * filtered server-side when `imageId` is given), so the interval still tracks
+ * whichever run this particular query is actually waiting on.
  *
  * `classId` is required, and there is no `enabled` guard: every caller renders
  * inside a class card that already has a row id. A caller that does not have
  * one yet should not be rendering this.
  */
-export function useDryRuns(classId: number) {
+export function useDryRuns(classId: number, imageId?: number) {
   return useQuery({
-    queryKey: dryRunsKey(classId),
-    queryFn: () => apiFetch(`/api/admin/classes/${classId}/dryruns`, DryRunList),
+    queryKey: dryRunsKey(classId, imageId),
+    queryFn: () =>
+      apiFetch(
+        `/api/admin/classes/${classId}/dryruns${imageId === undefined ? "" : `?image_id=${imageId}`}`,
+        DryRunList,
+      ),
     refetchInterval: (query) => {
       const newest = query.state.data?.dryruns[0];
       if (!newest) return false;
@@ -436,6 +461,12 @@ export const adminVideoImagesKey = (videoId: string, limit: number, offset: numb
  * (`idx_jobs_one_prelabel_per_video`) no browser holds, which is exactly why
  * this route exists separately (see the route's own comment in
  * `admin-video-images.ts`).
+ *
+ * `enabled: Boolean(videoId)` (M17, plan §A): `DryRunPanel`'s frame picker
+ * calls this with whatever the video `<select>` currently holds, which is
+ * `""` before an admin has chosen one — a state `VideoDetail`'s own call
+ * never has, since its `videoId` comes off the route. Firing the request
+ * anyway would ask `/api/admin/videos//images` for nothing.
  */
 export function useAdminVideoImages(
   videoId: string,
@@ -448,6 +479,7 @@ export function useAdminVideoImages(
         `/api/admin/videos/${encodeURIComponent(videoId)}/images?limit=${limit}&offset=${offset}`,
         AdminVideoImages,
       ),
+    enabled: Boolean(videoId),
   });
 }
 
