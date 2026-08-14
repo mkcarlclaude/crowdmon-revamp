@@ -104,7 +104,9 @@ const NAV_ITEMS = [
   { to: "/admin/videos", label: "Videos" },
   // "Detection" was removed here in M19 (plan §B2): its coverage table
   // folded into `/admin/videos` above, and `/admin/detection` now just
-  // redirects there (`routes.tsx`).
+  // redirects there (`routes.tsx`). "Queue" (plan §C1) sits between Videos
+  // and Verify — it is what `/admin/videos`'s own `JobList` used to be.
+  { to: "/admin/queue", label: "Queue" },
   { to: "/admin/verify", label: "Verify" },
   { to: "/admin/annotations", label: "Annotations" },
   { to: "/admin/classes", label: "Classes" },

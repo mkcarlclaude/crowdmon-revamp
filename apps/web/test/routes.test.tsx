@@ -91,4 +91,13 @@ describe("routing", () => {
 
     expect(await screen.findByText(/submit a video/i)).toBeInTheDocument();
   });
+
+  // M19, plan §C1: a flat queue page, replacing the grouped `JobList` this
+  // milestone deletes from `/admin/videos`.
+  it("mounts the queue page at /admin/queue", async () => {
+    stubAuthenticated();
+    renderApp("/admin/queue");
+
+    expect(await screen.findByRole("button", { name: "All" })).toBeInTheDocument();
+  });
 });

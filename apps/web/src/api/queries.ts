@@ -16,6 +16,7 @@ import {
   DryRun,
   DryRunList,
   JobList,
+  type JobStatus,
   LabellingBatch,
   LabellingStats,
   MissingReport,
@@ -52,20 +53,40 @@ export function useAdminSession() {
   });
 }
 
-export const jobsKey = ["jobs"] as const;
+/**
+ * The prefix every jobs query key shares, for invalidation only — TanStack
+ * matches a query key by prefix, so `invalidateQueries({ queryKey:
+ * jobsKeyPrefix })` catches every status chip's own key below it without
+ * this file having to track which ones are currently mounted anywhere. Never
+ * pass this to `useQuery` itself; use `jobsKey(status)`.
+ */
+export const jobsKeyPrefix = ["jobs"] as const;
+
+/** One status filter's own key, `"all"` standing in for "no filter" so `undefined` still has a stable slot. */
+export const jobsKey = (status?: z.infer<typeof JobStatus>) =>
+  [...jobsKeyPrefix, status ?? "all"] as const;
 
 /**
- * The job list, refreshed on an interval (M5.3).
+ * The job list, refreshed on an interval (M5.3; M19, plan §C2 adds the
+ * optional status filter).
  *
  * Five seconds: the Go worker heartbeats every 30s and its poll floor is 30s,
  * so anything faster shows the same row repeatedly while adding D1 reads for
  * every open tab. `refetchIntervalInBackground` is left off — a hidden tab
  * polling a database is cost with nobody watching.
+ *
+ * Every existing caller passes nothing and keeps today's unfiltered
+ * behaviour. Switching `status` changes the query key, so the first render
+ * after a chip click is a fresh fetch rather than a filtered read of
+ * whatever the previous chip already had cached — acceptable at this queue's
+ * size, and deliberately not smoothed over with `placeholderData`: a stale
+ * list rendered under a new filter is a list that looks wrong for one tick,
+ * which is worse than a brief "Loading…" naming what it is.
  */
-export function useJobs() {
+export function useJobs(status?: z.infer<typeof JobStatus>) {
   return useQuery({
-    queryKey: jobsKey,
-    queryFn: () => apiFetch("/api/admin/jobs", JobList),
+    queryKey: jobsKey(status),
+    queryFn: () => apiFetch(`/api/admin/jobs${status ? `?status=${status}` : ""}`, JobList),
     refetchInterval: 5_000,
   });
 }
@@ -82,7 +103,7 @@ export function useSubmitVideo() {
       }),
     // The point of the form is watching the job appear. Waiting up to five
     // seconds for the next poll would read as the submission having failed.
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: jobsKey }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: jobsKeyPrefix }),
   });
 }
 
@@ -343,7 +364,7 @@ export function useCreateDryRun(classId: number) {
       // Both, and for different reasons: the dry-run list is what this screen
       // renders, and the queue is where the job it just enqueued shows up.
       queryClient.invalidateQueries({ queryKey: dryRunsKey(classId) });
-      queryClient.invalidateQueries({ queryKey: jobsKey });
+      queryClient.invalidateQueries({ queryKey: jobsKeyPrefix });
     },
   });
 }
@@ -440,7 +461,7 @@ export function useCreateSnapshot() {
         headers: { "content-type": "application/json" },
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: jobsKey });
+      queryClient.invalidateQueries({ queryKey: jobsKeyPrefix });
       queryClient.invalidateQueries({ queryKey: snapshotsKey });
     },
   });

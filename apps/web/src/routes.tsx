@@ -4,6 +4,7 @@ import { AdminAnnotationsPage } from "./pages/admin/Annotations";
 import { AdminClassesPage } from "./pages/admin/Classes";
 import { AdminDashboardPage } from "./pages/admin/Dashboard";
 import { AdminLoginPage } from "./pages/admin/Login";
+import { AdminQueuePage } from "./pages/admin/Queue";
 import { AdminSnapshotsPage } from "./pages/admin/Snapshots";
 import { AdminVerifyPage } from "./pages/admin/Verify";
 import { AdminVideoDetailPage } from "./pages/admin/VideoDetail";
@@ -46,6 +47,9 @@ export function App() {
         <Route path="dashboard" element={<AdminDashboardPage />} />
         <Route path="videos" element={<AdminVideosPage />} />
         <Route path="videos/:id" element={<AdminVideoDetailPage />} />
+        {/* M19, plan §C1: every job of every kind, flat — replaces the
+            grouped `JobList` that used to live on `/admin/videos`. */}
+        <Route path="queue" element={<AdminQueuePage />} />
         <Route path="verify" element={<AdminVerifyPage />} />
         <Route path="annotations" element={<AdminAnnotationsPage />} />
         {/* M19, plan §B2: the coverage table folded into `/admin/videos`.
