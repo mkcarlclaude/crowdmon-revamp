@@ -233,15 +233,23 @@ export const listVideoImagesRoute = createRoute({
     "job id, unlike every other worker-facing route in this file: `Sample`'s signature " +
     "is handed only a video id (it is called once per video, not once per job — the " +
     "same reason `prelabel` is one job per video rather than one per chunk), so the " +
-    "lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead " +
-    "of a job's primary key. That partial unique index already guarantees at most one " +
-    "held prelabel job per video, which is exactly the lease this read needs to prove — " +
-    "the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, " +
-    "just proved through a different column. A `dryrun` job (M12.2) draws from the same " +
-    "pool and is accepted here too — see the handler's comment for why the weaker " +
-    "uniqueness of that kind costs this read nothing. No Access assertion and no credential " +
-    "beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` " +
-    "(`jobStatsRoute`'s own comment explains why that boundary is where it is).",
+    "lease check below reads `jobs` for a claimed row of the right kind rather than a " +
+    "job's primary key. Before migration 0011 (M17, plan §B), that read was provably " +
+    "*exact* — `idx_jobs_one_prelabel_per_video` (migration 0005) guaranteed at most " +
+    "one held prelabel job per video, so finding a row proved this worker held *the* " +
+    "one. That index is gone now, dropped so an admin can queue a genuinely second " +
+    "prelabel job for the same video (`createPrelabelHandler`), so this read proves the " +
+    "same thing `dryrun`'s own case always proved: this worker holds *a* claimed " +
+    "sampling job for this video, not provably the only one there could be. That is " +
+    "still the whole guarantee this endpoint needs — the response is the video's entire " +
+    "image pool, identical for every job that asks, so a second concurrently-claimed " +
+    "prelabel or dry-run job on the same video would get the identical answer this one " +
+    "does. In practice this endpoint is now only ever reached by the automatic first " +
+    "pass anyway: a supplementary job's claim carries its selection inline " +
+    "(`Job.prelabel`), so its worker never calls this route at all. No Access assertion " +
+    "and no credential beyond `worker_id`: the same trust tier as the rest of " +
+    "`/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where " +
+    "it is).",
   request: { params: VideoIdParam, query: ListVideoImagesQuery },
   responses: {
     200: {
@@ -412,6 +420,33 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async
           }>()
       : null;
 
+  // A supplementary prelabel job's explicit frame list (M17, plan §B), read
+  // the same way and for the same reason as `dryrun` above: `RETURNING`
+  // cannot join, and the job is already this worker's by the time this
+  // runs. `.all()` rather than `.first()` — unlike `chunk` and `dryrun`,
+  // which each hydrate one row per job, a `prelabel` job's work definition
+  // is a *list*, exactly `listVideoImagesHandler`'s own response shape (the
+  // reason it reuses `VideoImage`, `schemas.ts`'s own comment).
+  //
+  // Zero rows is not an error and not a reason to retire this job — it is
+  // the automatic first pass (M11.1), which writes no `prelabel_images` rows
+  // at all. `prelabelImages.results` being empty is exactly what turns
+  // `prelabel` absent below, and that absence is what tells the worker to
+  // fall back to `GET /api/videos/{video_id}/images` plus its own
+  // `Sampler`, unchanged from before this milestone.
+  const prelabelImages =
+    job.kind === "prelabel"
+      ? await c.env.DB.prepare(
+          `SELECT i.r2_key, i.timestamp_seconds
+             FROM prelabel_images pi
+             JOIN images i ON i.id = pi.image_id
+            WHERE pi.job_id = ?
+            ORDER BY i.timestamp_seconds`,
+        )
+          .bind(job.id)
+          .all<{ r2_key: string; timestamp_seconds: number }>()
+      : null;
+
   // A job whose work definition is incomplete cannot be run, and handing it
   // out anyway only moves the discovery to the worker, an hour later, after a
   // download.
@@ -483,6 +518,19 @@ export const claimJobHandler: RouteHandler<typeof claimJobRoute, AppEnv> = async
               ...(dryrun.r2_key !== null ? { r2_key: dryrun.r2_key } : {}),
             },
           }
+        : {}),
+      // Present only when this job carries an explicit selection (M17, plan
+      // §B) — `prelabelImages.results.length > 0`, not merely
+      // `prelabelImages !== null`: an automatic first pass is `kind ===
+      // 'prelabel'` too, so its `prelabelImages` is a real (empty) result
+      // set rather than `null`, and including a `prelabel: { images: [] }`
+      // on the wire for it would tell the worker "selection happened
+      // server-side, and it selected nothing" — a false statement about a
+      // job that never had server-side selection at all. Omitting the field
+      // entirely is what `Job.prelabel`'s own contract comment documents as
+      // the fall-back-to-Sampler signal.
+      ...(prelabelImages && prelabelImages.results.length > 0
+        ? { prelabel: { images: prelabelImages.results } }
         : {}),
     },
     200,
@@ -763,9 +811,20 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
   // Same lease check as every other write on a held job (heartbeat, complete,
   // fanout, report-images): a request that only knew a job id could write
   // prediction rows against somebody else's job.
-  const job = await c.env.DB.prepare(`SELECT kind, video_id FROM jobs WHERE ${HELD_BY}`)
+  //
+  // `selection_reason` travels with the lease read (M17, plan §B, migration
+  // 0011): this is what the stamp below writes, decided by the API at
+  // enqueue time and never by the worker — `createPrelabelHandler` for a
+  // supplementary pass, `completeJobHandler`'s auto-enqueue for the
+  // automatic first pass. NULL for a job written before this migration, or
+  // by a test that seeds one directly with SQL (several in this suite do);
+  // the stamp below falls back to `'random'` for exactly that case, which is
+  // the only value any prelabel job ever wrote before this column existed.
+  const job = await c.env.DB.prepare(
+    `SELECT kind, video_id, selection_reason FROM jobs WHERE ${HELD_BY}`,
+  )
     .bind(id, worker_id)
-    .first<{ kind: JobKindValue; video_id: string | null }>();
+    .first<{ kind: JobKindValue; video_id: string | null; selection_reason: string | null }>();
 
   if (!job) return notHeldByCaller(c);
 
@@ -859,11 +918,10 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
 
   // One batch: every row and every stamp lands together or none does.
   //
-  // `sampled_images`' stamp — `images.selection_reason = 'random'` (M11.3;
-  // `'random'` is the only value v2 ever writes, CONTEXT.md §Q16) — is
-  // written here, in the same batch as the boxes, and deliberately not back
-  // in `Sample`'s own read or in a call of its own issued the moment the
-  // sample was drawn. Three things are true at once: sampling happens before
+  // `sampled_images`' stamp — `images.selection_reason` (M11.3) — is written
+  // here, in the same batch as the boxes, and deliberately not back in
+  // `Sample`'s own read or in a call of its own issued the moment the sample
+  // was drawn. Three things are true at once: sampling happens before
   // detection, so at selection time this handler cannot yet know the job
   // will finish; a prelabel job can fail (a missing object, a lost lease, a
   // detector timeout) after sampling but before this call ever arrives; and
@@ -874,11 +932,36 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
   // produced anything — and worse, if `Sample` were ever non-deterministic, a
   // reap-and-rerun could stamp two different partial samples on top of each
   // other. Stamping here instead means the stamp exists exactly when the
-  // dataset is honest about it: a row reads `selection_reason = 'random'`
-  // only once a real, complete prelabel run looked at it, the same way
+  // dataset is honest about it: a row reads `selection_reason` only once a
+  // real, complete prelabel run looked at it, the same way
   // `images.dedup_threshold` is stamped when `reportImages` runs — after
   // extraction and dedup finished — and not the instant ffmpeg wrote a frame
   // to disk.
+  //
+  // The *value* written is `job.selection_reason ?? 'random'` (M17, plan
+  // §B), not the literal `'random'` this UPDATE hard-coded before migration
+  // 0011: which reason to stamp is a fact about the job that ran, decided by
+  // the API at enqueue time (`createPrelabelHandler`'s hand-picked-vs-random
+  // branch, or `completeJobHandler`'s auto-enqueue), never guessed at here.
+  // The `?? 'random'` fallback covers every prelabel job written before this
+  // column existed, and any job a test seeds directly with SQL rather than
+  // through those two call sites — `'random'` is the only value any prelabel
+  // job ever wrote before M17, so a NULL column reads as exactly that.
+  //
+  // `AND selection_reason IS NULL` makes the stamp write-once — the fix for
+  // the hazard the plan's "Contradictions" §3 names. Before migration 0011,
+  // this UPDATE was unconditional, which was only safe because
+  // `idx_jobs_one_prelabel_per_video` made a second pass over any image
+  // unreachable. Once that index is gone, an unconditional UPDATE here would
+  // let a later hand-picked pass silently rewrite an already-`random` image
+  // to `manual` — moving a permanently-frozen evaluation-pool image into the
+  // train split, which is precisely what `PRD.md` §9's falsification table
+  // names for the *split manifest* clause of the done-claim. The guard is a
+  // backstop, not the only defence: `createPrelabelHandler` already refuses
+  // to include an already-sampled image in a hand-picked set, so this
+  // `WHERE` clause exists for whatever bypasses that check (a bug in a
+  // future caller, a test exercising this handler directly) rather than for
+  // the request path this milestone actually ships.
   //
   // Insert-only for `predictions`, and deliberately without `reportImages`'
   // `ON CONFLICT`: a prelabel job reaped mid-report and re-run writes its
@@ -895,10 +978,13 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
   // (nearest box? latest `model_id`? every row kept and left for a query to
   // filter?) with no reader yet to say which one is right.
   //
-  // The stamp UPDATE, by contrast, is naturally idempotent: it always sets
-  // the same literal, `'random'`, so a re-run restamping the same
-  // deterministically-redrawn keys is a no-op in every way that matters,
-  // unlike an insert that would duplicate.
+  // The stamp UPDATE, by contrast, is idempotent on a re-run by construction
+  // now: `AND selection_reason IS NULL` means the second attempt at
+  // restamping the same deterministically-redrawn keys simply matches zero
+  // rows rather than writing anything, unlike an insert that would
+  // duplicate.
+  const stampValue = job.selection_reason ?? "random";
+
   const statements = [
     ...predictions.map((prediction) =>
       c.env.DB.prepare(
@@ -917,11 +1003,11 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
         model_id,
       ),
     ),
-    ...chunkForBinding(sampled_images, 1).map((keys) =>
+    ...chunkForBinding(sampled_images, 2).map((keys) =>
       c.env.DB.prepare(
-        `UPDATE images SET selection_reason = 'random'
-          WHERE video_id = ? AND r2_key IN (${placeholders(keys)})`,
-      ).bind(videoId, ...keys),
+        `UPDATE images SET selection_reason = ?
+          WHERE video_id = ? AND r2_key IN (${placeholders(keys)}) AND selection_reason IS NULL`,
+      ).bind(stampValue, videoId, ...keys),
     ),
   ];
 
@@ -941,16 +1027,20 @@ export const listVideoImagesHandler: RouteHandler<typeof listVideoImagesRoute, A
   // only `prelabel` would fail every dry-run ever queued — the worker holds a
   // `dryrun` lease, gets a 404 here, and reports it as a lost lease.
   //
-  // idx_jobs_one_prelabel_per_video (migration 0005) makes this an exact lease
-  // check for a prelabel job: at most one can ever be 'claimed' for a video,
-  // so finding a row is as strong a guarantee as HELD_BY gives every
-  // job-id-scoped route here, even though no primary key enters this query.
-  // A video may have several dry-runs, so for that kind the row proves
-  // something slightly weaker — this worker holds *a* claimed sampling job for
-  // this video, not a specific one. That is the whole guarantee this endpoint
-  // needs either way: the response is the video's entire image pool, identical
+  // Before migration 0011 (M17, plan §B), `idx_jobs_one_prelabel_per_video`
+  // made this an *exact* lease check for a prelabel job: at most one could
+  // ever be 'claimed' for a video, so finding a row was as strong a
+  // guarantee as HELD_BY gives every job-id-scoped route here, even with no
+  // primary key entering this query. That index is gone now — dropped so an
+  // admin can queue a genuinely second prelabel job for a video that already
+  // has one — so a prelabel job proves what a dry-run always did: this
+  // worker holds *a* claimed sampling job for this video, not provably the
+  // only one there could be. That is still the whole guarantee this
+  // endpoint needs: the response is the video's entire image pool, identical
   // for every job that asks, so there is nothing here that a more precise
-  // identity would gate differently.
+  // identity would gate differently. In practice a supplementary prelabel
+  // job never reaches this handler at all — its claim carries its selection
+  // inline (`Job.prelabel`), so its worker has no reason to call this route.
   const held = await c.env.DB.prepare(
     `SELECT 1 FROM jobs
       WHERE video_id = ? AND kind IN ('prelabel', 'dryrun')
@@ -1119,22 +1209,45 @@ export const completeJobHandler: RouteHandler<typeof completeJobRoute, AppEnv> =
     //     from enqueuing twice under the reap-and-rerun case M11.1 flags: a
     //     chunk that was already the video's last one, then reaped and
     //     completed again, would otherwise see the same "all done" state on
-    //     its second completion and try to insert a second prelabel job.
-    //     `idx_jobs_one_prelabel_per_video` (migration 0005) is the schema
-    //     backstop if this guard were ever wrong — the design constraint is
-    //     that the handler must not be trusted alone — but a genuine
-    //     collision there would fail the whole batch, rolling back the
-    //     chunk's own completion along with it, so this guard is what is
-    //     meant to keep that backstop from ever actually having to fire
-    //     rather than a redundant restatement of it. A worker that lost this
-    //     race sees its completion answered exactly as if it had won: the
-    //     duplicate enqueue attempt is silently a no-op, not an error routed
-    //     back to a caller who did nothing wrong — reporting a chunk done is
-    //     not the worker's fault just because another chunk's completion
-    //     happened to close out the video first.
+    //     its second completion and try to insert a second *automatic*
+    //     prelabel job. `idx_jobs_one_prelabel_per_video` (migration 0005)
+    //     used to be a schema backstop for exactly this guard — but M17
+    //     (plan §B) drops that index in migration 0011, precisely so an
+    //     admin can queue genuinely additional, *supplementary* prelabel
+    //     jobs for a video that already has one. That trade only works
+    //     because this guard was never protecting the supplementary case in
+    //     the first place: `createPrelabelHandler` (`admin-prelabel.ts`)
+    //     never touches this statement, and this `NOT EXISTS` still names
+    //     "any prelabel job for this video", not "any *automatic* one" — so
+    //     it continues to do exactly what it always did, stop the automatic
+    //     path from ever enqueuing a second automatic pass, whether or not a
+    //     supplementary pass has run in the meantime. What changed is only
+    //     that a genuine race on this specific guard now fails open (a
+    //     silent no-op, same as today) rather than also being caught by a
+    //     unique-index constraint failure — a weaker second line of defence,
+    //     not a different first one. D1 serialises writers, so two
+    //     concurrent completions racing to close out the same video's last
+    //     chunk still cannot both observe `NOT EXISTS` as true at once: the
+    //     loser's `SELECT` runs inside its own transaction, after the
+    //     winner's has already committed a `prelabel` row this guard sees. A
+    //     worker that lost this race sees its completion answered exactly as
+    //     if it had won: the duplicate enqueue attempt is silently a no-op,
+    //     not an error routed back to a caller who did nothing wrong —
+    //     reporting a chunk done is not the worker's fault just because
+    //     another chunk's completion happened to close out the video first.
+    //   - `selection_reason` is stamped `'random'` unconditionally here
+    //     (M17, plan §B): the automatic first pass is, and stays, an
+    //     unbiased draw across the whole timeline — CONTEXT.md §Q16's rule
+    //     is unchanged by this milestone, only the mechanism that used to
+    //     assume it (an unconditional literal in `reportPredictionsHandler`)
+    //     moved. Explicit here rather than left to that handler's own `??
+    //     'random'` fallback for a NULL column: every prelabel job this
+    //     handler creates from this point forward should say what it is
+    //     honestly on its own row, and the fallback exists for jobs written
+    //     before this column did, not as the steady-state path for new ones.
     c.env.DB.prepare(
-      `INSERT INTO jobs (kind, video_id, traceparent)
-            SELECT 'prelabel', j.video_id, ?
+      `INSERT INTO jobs (kind, video_id, traceparent, selection_reason)
+            SELECT 'prelabel', j.video_id, ?, 'random'
               FROM jobs j
              WHERE j.id = ?
                AND j.kind = 'chunk'

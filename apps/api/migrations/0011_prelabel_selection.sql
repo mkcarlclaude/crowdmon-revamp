@@ -1,0 +1,103 @@
+-- On-demand supplementary prelabel (M17, plan §B): lets an admin queue a
+-- second (or third, or Nth) prelabel pass over a video, to refill the
+-- verification pool once the automatic first pass has drained it.
+--
+-- Three statements, none of them a table rebuild
+-- ------------------------------------------------
+-- Unlike migrations 0005/0007/0008, nothing here widens a CHECK constraint or
+-- changes column nullability, so none of the child-before-parent drop-and-
+-- rename dance those migrations document applies. `prelabel_images` is new
+-- and additive; `jobs.selection_reason` is a plain `ALTER TABLE ... ADD
+-- COLUMN`, exactly as migration 0002 added `traceparent` and migration 0010
+-- added `dryruns.image_id` — both nullable columns on an existing table, both
+-- requiring no rebuild.
+--
+-- Why the unique index has to go
+-- -------------------------------
+-- `idx_jobs_one_prelabel_per_video` (migration 0005) is *the* mechanism that
+-- makes "prelabel runs exactly once per video" true — not a side effect of
+-- some other rule, the whole rule. On-demand supplementary passes are the
+-- opposite of that by design: an admin refilling a drained verification pool
+-- needs to be able to queue a second, third, or Nth prelabel job for the same
+-- video, and a partial unique index that forbids exactly that has to be
+-- dropped before anything else here can work. `completeJobHandler`'s own
+-- guard (jobs.ts) — the `NOT EXISTS` checks in its auto-enqueue INSERT — is
+-- what keeps the *automatic* first pass still exactly-once; this index was
+-- never load-bearing for that guarantee (the guard predates the index using
+-- it, and reads it only as "a schema backstop", per migration 0005's own
+-- comment). Losing the backstop is deliberate: the feature this migration
+-- exists to add is what the backstop was preventing.
+DROP INDEX idx_jobs_one_prelabel_per_video;
+
+-- `prelabel_images`: the explicit, admin-or-server-chosen frame list a
+-- supplementary prelabel job runs against — `chunks`' own relationship to a
+-- chunk job, one level over. A join table rather than a column on `images`
+-- (contrast `selection_reason`, which records the *outcome* of a pass once it
+-- finishes) because the set has to exist and be queryable the instant the job
+-- is created, before any worker has claimed it or run a single detection —
+-- that is what the claim handler hydrates a `prelabel` job's work definition
+-- from (jobs.ts's claim handler, "Claim hydration" in the plan).
+--
+-- No `selection_reason` column here, deliberately: that value is a property
+-- of the *job* (every image in one job's list was chosen the same way — all
+-- hand-picked, or all drawn at random), not of the individual (job, image)
+-- pair, so it belongs on `jobs` once per job rather than repeated on every
+-- row of this table. See `jobs.selection_reason` below.
+--
+-- Both foreign keys carry `ON DELETE CASCADE`. D1 enforces foreign keys
+-- unconditionally, with no pragma that turns enforcement off (migration
+-- 0005's finding, re-verified for migration 0010's `dryruns.image_id`) — so
+-- this is a real guarantee, not documentation: a `jobs` or `images` row this
+-- table still references cannot be deleted out from under it, and nothing in
+-- this codebase deletes either in production anyway (migration 0003's own
+-- comment on `predictions.image_id`'s dormant cascade). The `ON DELETE
+-- CASCADE` clauses exist for the one place a row disappears on purpose:
+-- `test/workers/setup.ts`'s per-test cleanup, which still lists this table
+-- explicitly rather than relying on the cascade alone — see that file's own
+-- comment for why an explicit `DELETE` stays even where a cascade would
+-- technically cover it.
+CREATE TABLE prelabel_images (
+  job_id   INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+  PRIMARY KEY (job_id, image_id)
+);
+
+-- `jobs.selection_reason`: which reason this prelabel job's report should
+-- stamp onto every image it sampled — decided by the API at enqueue time
+-- (`createPrelabelHandler`, `completeJobHandler`'s auto-enqueue), never by
+-- the worker. This is the fix for the hazard the plan's "Contradictions"
+-- §3 names: `reportPredictionsHandler` used to write the literal `'random'`
+-- unconditionally, which was only safe because the now-dropped unique index
+-- guaranteed an image could never be sampled by more than one pass. Once a
+-- second pass over a video is possible, the *value* to stamp has to travel
+-- with the job that is about to do the stamping, not be hard-coded at the
+-- write site — a hand-picked pass must stamp `'manual'`, not `'random'`, or
+-- it silently moves a permanently-frozen evaluation-pool image into the
+-- train split (CONTEXT.md §Q16; PRD.md §9's falsification table names this
+-- exact failure for the *split manifest* clause of the done-claim).
+--
+-- Nullable, and NULL is a real value with a real meaning, `dryruns.image_id`'s
+-- own idiom (migration 0010): every job kind but `prelabel` never sets it, and
+-- so reads NULL forever, honestly. A `prelabel` job written before this
+-- migration — or by a test that seeds one directly with SQL, as several in
+-- this suite do — also reads NULL, and `reportPredictionsHandler` treats that
+-- exactly as it always has: stamps `'random'`, the only value v2 ever wrote
+-- before this migration existed. That fallback is what keeps this migration
+-- additive rather than a breaking change to every prelabel job already in
+-- flight the moment it applies.
+--
+-- No CHECK constraint restricting the two values, unlike `jobs.status` or
+-- `jobs.kind`. This column is unlike `images.selection_reason` (migration
+-- 0001's own comment: deliberately free text, so a future selector needs no
+-- migration to introduce) in that it *is* read for branching logic — the
+-- report handler's stamp depends on it — so a typo here is not merely a
+-- display bug. A CHECK was weighed and left out anyway: the set of values
+-- this column may hold is not a schema fact so much as an application
+-- invariant enforced by the one and only writer (`createPrelabelHandler`
+-- and `completeJobHandler`'s auto-enqueue, both under this repo's control),
+-- and closing it in SQL would mean the day a third selection strategy is
+-- added (§Q16's `uncertain`/`diverse` legs, still v4-scoped), the CHECK has
+-- to be edited in the same migration that adds it — exactly the coupling
+-- migration 0001 rejected for `images.selection_reason` and for the same
+-- reason.
+ALTER TABLE jobs ADD COLUMN selection_reason TEXT;

@@ -28,10 +28,11 @@ describe("GET /api/jobs/stats", () => {
     await seedVideo("aaaaaaaaaaa");
     await seedVideo("bbbbbbbbbbb");
     await seedVideo("ccccccccccc");
-    // One download (and, since migration 0005, one prelabel) per video —
-    // idx_jobs_one_download_per_video and idx_jobs_one_prelabel_per_video —
-    // so each status below needs its own video row; chunk jobs carry no such
-    // limit.
+    // One download per video — idx_jobs_one_download_per_video — so each
+    // status below needs its own video row for that kind; chunk and
+    // prelabel jobs carry no such limit (prelabel's own one-per-video index
+    // was dropped in migration 0011, M17, plan §B, precisely so it no longer
+    // does), this test just keeps one of each per video for simplicity.
     await env.DB.prepare(
       `INSERT INTO jobs (kind, video_id, status) VALUES
         ('download', 'aaaaaaaaaaa', 'pending'),

@@ -55,13 +55,24 @@ async function seedClaimedChunkJobs(
 }
 
 function prelabelJobs(videoId: string) {
-  return env.DB.prepare("SELECT id, traceparent FROM jobs WHERE video_id = ? AND kind = 'prelabel'")
+  return env.DB.prepare(
+    "SELECT id, traceparent, selection_reason FROM jobs WHERE video_id = ? AND kind = 'prelabel'",
+  )
     .bind(videoId)
-    .all<{ id: number; traceparent: string | null }>();
+    .all<{ id: number; traceparent: string | null; selection_reason: string | null }>();
 }
 
 describe("completing a chunk job's effect on the video's prelabel job", () => {
-  it("enqueues one prelabel job when the last chunk completes", async () => {
+  // The regression test the M17 plan calls for by name: "The automatic first
+  // pass still happens with no admin action after the last chunk completes.
+  // This is the regression test for v2's done-claim; it should have existed
+  // already." It did — this test predates M17 — and it now also pins the
+  // `selection_reason` this milestone added: the automatic pass must keep
+  // stamping `'random'`, the value `reportPredictionsHandler`'s write-once
+  // stamp will read straight off this job's own row once a prelabel worker
+  // reports back (M17, plan §B; see `predictions.test.ts`'s own tests on that
+  // handler).
+  it("enqueues one prelabel job when the last chunk completes, stamped 'random'", async () => {
     await seedVideo("aaaaaaaaaaa");
     const [c0, c1] = await seedClaimedChunkJobs("aaaaaaaaaaa", 2);
 
@@ -75,6 +86,7 @@ describe("completing a chunk job's effect on the video's prelabel job", () => {
 
     const rows = (await prelabelJobs("aaaaaaaaaaa")).results;
     expect(rows).toHaveLength(1);
+    expect(rows[0]?.selection_reason).toBe("random");
   });
 
   it("does not enqueue while any chunk is still pending or claimed", async () => {

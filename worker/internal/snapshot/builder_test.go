@@ -186,6 +186,96 @@ func TestBuildCopiesImagesAndWritesTheManifest(t *testing.T) {
 	}
 }
 
+// TestBuildRoutesManualSelectionToTrainAndRandomToEval is the Go half of the
+// M17 plan's required end-to-end test (plan §"Required tests": "a
+// hand-picked pass writes manual, and a snapshot built afterwards puts those
+// images in the train split while random images stay in eval — end to end
+// through splitFor"). The TypeScript half
+// (apps/api/test/workers/admin-prelabel.test.ts) proves
+// `createPrelabelHandler` and `reportPredictionsHandler` actually write
+// `manual` onto `images.selection_reason` for a hand-picked pass; this test
+// proves the other end of the pipe — once that value reaches
+// `queue.SnapshotSource` (via `GET /api/jobs/{id}/snapshot-source`, which
+// echoes the column verbatim), `splitFor` routes it to `train`, distinctly
+// from a `random` image in the same build, which stays in `eval`.
+//
+// Both `TestBuildCopiesImagesAndWritesTheManifest` above and this test
+// exercise `splitFor`'s "not random -> train" branch, but only this one
+// spells out that the non-random reason is a hand-picked selection rather
+// than the reachable-but-inert nil case that test also carries — the
+// distinction CONTEXT.md §Q16's non-negotiable rule is actually about.
+func TestBuildRoutesManualSelectionToTrainAndRandomToEval(t *testing.T) {
+	fake := &fakeS3{}
+	b := snapshot.Builder{Client: fake, Bucket: "crowdmon-frames"}
+
+	source := queue.SnapshotSource{
+		Images: []queue.SnapshotImage{
+			{
+				// The automatic first pass's own reason (M11.1): an unbiased
+				// draw across the whole timeline, so it stays out of train
+				// forever.
+				Key:              "frames/dQw4w9WgXcQ/00000.000.jpg",
+				VideoID:          "dQw4w9WgXcQ",
+				TimestampSeconds: 0,
+				SelectionReason:  strPtr("random"),
+				Labels:           []queue.SnapshotLabel{{ClassName: "Paimon", XMax: 0.5, YMax: 0.5}},
+			},
+			{
+				// An admin's hand-picked supplementary selection (M17, plan
+				// §B): a biased sample by construction, so it is the first
+				// kind of image this rule was ever meant to route into
+				// train.
+				Key:              "frames/dQw4w9WgXcQ/00042.000.jpg",
+				VideoID:          "dQw4w9WgXcQ",
+				TimestampSeconds: 42,
+				SelectionReason:  strPtr("manual"),
+				Labels:           []queue.SnapshotLabel{{ClassName: "Paimon", XMax: 0.4, YMax: 0.4}},
+			},
+		},
+	}
+
+	artifact, err := b.Build(t.Context(), "snapshots/job-200", source)
+	if err != nil {
+		t.Fatalf("Build() returned an unexpected error: %v", err)
+	}
+	if artifact.ImageCount != 2 {
+		t.Fatalf("ImageCount = %d, want 2", artifact.ImageCount)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+
+	if len(fake.puts) != 1 {
+		t.Fatalf("PutObject called %d times, want exactly one manifest write", len(fake.puts))
+	}
+
+	var decoded struct {
+		Images []struct {
+			R2Key string `json:"r2_key"`
+			Split string `json:"split"`
+		} `json:"images"`
+	}
+	body, err := readAll(fake.puts[0].Body)
+	if err != nil {
+		t.Fatalf("reading the manifest body: %v", err)
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decoding the manifest: %v", err)
+	}
+
+	splitByKey := map[string]string{}
+	for _, image := range decoded.Images {
+		splitByKey[image.R2Key] = image.Split
+	}
+
+	if got := splitByKey["frames/dQw4w9WgXcQ/00000.000.jpg"]; got != "eval" {
+		t.Errorf("random image split = %q, want eval — the permanent evaluation pool (CONTEXT.md §Q16)", got)
+	}
+	if got := splitByKey["frames/dQw4w9WgXcQ/00042.000.jpg"]; got != "train" {
+		t.Errorf("manual image split = %q, want train — a hand-picked frame is a biased sample by construction", got)
+	}
+}
+
 // The first copy failure has to cancel the rest and name the key it happened
 // on, matching frames.Uploader.Upload's own guarantee — a partial copy is
 // safe to retry only because the caller can tell what broke.

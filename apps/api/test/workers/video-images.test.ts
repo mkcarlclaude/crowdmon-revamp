@@ -9,11 +9,16 @@ import { seedVideo } from "./seed";
  * drawing its bounded, timeline-spread subset.
  *
  * Scoped by video id, not job id — `Sample`'s signature carries only a video
- * id, so the lease check here reads `idx_jobs_one_prelabel_per_video`
- * (migration 0005) instead of a job's primary key. Every test below is really
- * testing that substitution: a row exists exactly when a prelabel or
- * dry-run job (M12.2) for this video is claimed by this worker, and not
- * otherwise.
+ * id, so the lease check here reads `jobs` for a claimed row of the right
+ * kind instead of a job's primary key. Before migration 0011 (M17, plan §B)
+ * dropped `idx_jobs_one_prelabel_per_video`, that read was provably exact for
+ * a prelabel job (at most one could ever be held per video); it now proves
+ * the same, slightly weaker thing `dryrun`'s own case always did — this
+ * worker holds *a* claimed sampling job for this video — which is still all
+ * the guarantee this route needs (`listVideoImagesHandler`'s own comment).
+ * Every test below is really testing that substitution: a row exists exactly
+ * when a prelabel or dry-run job (M12.2) for this video is claimed by this
+ * worker, and not otherwise.
  */
 
 /** A prelabel job for `videoId`, claimed by `workerId`, with no `chunks` row needed. */

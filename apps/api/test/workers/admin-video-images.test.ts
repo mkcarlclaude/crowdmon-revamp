@@ -131,6 +131,27 @@ describe("GET /api/admin/videos/{id}/images", () => {
     expect(body.images[0]).toMatchObject({ verdict_state: "unverified" });
   });
 
+  // M17, plan §B: `createPrelabelHandler`'s own "already sampled" refusal
+  // reads exactly this predicate (`images.selection_reason IS NOT NULL`),
+  // and this route exposes it as a boolean so the multi-select grid can
+  // grey a frame out before an operator picks it, rather than let them
+  // learn from a 400 after the fact.
+  it("reports sampled true once selection_reason is set, regardless of which reason", async () => {
+    const { videoId } = await seedPool();
+    await env.DB.prepare("UPDATE images SET selection_reason = 'random' WHERE video_id = ?")
+      .bind(videoId)
+      .run();
+    await seedImage(videoId, 2); // a second, never-sampled frame
+
+    const res = await listImages(videoId);
+    const body = (await res.json()) as {
+      images: Array<{ timestamp_seconds: number; sampled: boolean }>;
+    };
+
+    expect(body.images.find((i) => i.timestamp_seconds === 1)?.sampled).toBe(true);
+    expect(body.images.find((i) => i.timestamp_seconds === 2)?.sampled).toBe(false);
+  });
+
   it("carries the public_sample flag", async () => {
     const videoId = "dQw4w9WgXcQ";
     await seedVideo(videoId);
