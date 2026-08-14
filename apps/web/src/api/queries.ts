@@ -5,6 +5,7 @@ import {
   AdminImage,
   AdminSession,
   AdminVerdictList,
+  AdminVideoDetail,
   AdminVideoImages,
   AdminVideoList,
   type CreateClassRequest,
@@ -480,6 +481,28 @@ export function useAdminVideoImages(
         AdminVideoImages,
       ),
     enabled: Boolean(videoId),
+  });
+}
+
+/** One video's own key, so two different videos' headers get their own cache entry. */
+export const adminVideoDetailKey = (videoId: string) => ["admin", "video-detail", videoId] as const;
+
+/**
+ * `/admin/videos/:id`'s header (M19, plan §A): the video's own YouTube-derived
+ * metadata plus its per-video aggregates — everything `AdminVideoDetailPage`
+ * renders above `useAdminVideoImages`'s frame grid.
+ *
+ * No `refetchInterval`, `useVideos`'s own reason: this header is not being
+ * consumed the way `useLabellingBatch`'s pool is, and `image_count`,
+ * `frames_verified` and the rest do not need to be live to the second. No
+ * `enabled` guard either, unlike `useAdminVideoImages` — `videoId` here always
+ * comes off the route param (`VideoDetail`'s own `useParams`), which is never
+ * the empty-string "nothing chosen yet" state `DryRunPanel`'s picker can be in.
+ */
+export function useAdminVideoDetail(videoId: string) {
+  return useQuery({
+    queryKey: adminVideoDetailKey(videoId),
+    queryFn: () => apiFetch(`/api/admin/videos/${encodeURIComponent(videoId)}`, AdminVideoDetail),
   });
 }
 

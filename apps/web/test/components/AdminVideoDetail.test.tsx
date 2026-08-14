@@ -57,11 +57,162 @@ function page(over: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+/** `GET /api/admin/videos/{id}`'s response (M19, plan §A). */
+function detail(over: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "dQw4w9WgXcQ",
+    url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    title: "Archon quest",
+    duration_seconds: 1200,
+    width: 1920,
+    height: 1080,
+    created_at: 1_754_099_000,
+    image_count: 2685,
+    frames_sampled: 200,
+    public_samples: 3,
+    predictions: 340,
+    frames_with_predictions: 190,
+    frames_verified: 150,
+    frames_unverified: 40,
+    model_id: "owlvit-base-patch32.onnx",
+    prelabelled_at: 1_754_099_500,
+    jobs: {
+      download: "done",
+      chunks_total: 20,
+      chunks_done: 20,
+      chunks_failed: 0,
+      prelabel: "done",
+    },
+    ...over,
+  };
+}
+
+/**
+ * Routes `/api/admin/videos/{id}` to `detail()` and everything else (the
+ * frame grid) to `page()` — the two queries this page fires in parallel, and
+ * a single blanket mock would answer both with whichever shape came first.
+ */
+function stubVideo(
+  detailOver: Partial<Record<string, unknown>> = {},
+  pageOver: Partial<Record<string, unknown>> = {},
+) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/images")) return Promise.resolve(json(page(pageOver)));
+      return Promise.resolve(json(detail(detailOver)));
+    }),
+  );
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AdminVideoDetailPage", () => {
+  it("renders the header: title, id, verified/unverified frames and submitted-at", async () => {
+    stubVideo();
+
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Archon quest" })).toBeInTheDocument();
+    expect(screen.getByText("dQw4w9WgXcQ")).toBeInTheDocument();
+    expect(screen.getByText("150 / 40")).toBeInTheDocument();
+  });
+
+  it("renders a null duration and resolution as — rather than 0", async () => {
+    // A video mid-download has no duration or resolution yet — that is a
+    // different fact from zero, and the plan is explicit that this header
+    // must never blur the two (M19, plan §A3).
+    stubVideo({ duration_seconds: null, width: null, height: null });
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Archon quest" });
+    expect(screen.getAllByText("—")).not.toHaveLength(0);
+  });
+
+  it("falls back to the video id as the heading when no title has landed yet", async () => {
+    stubVideo({ title: null });
+
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "dQw4w9WgXcQ" })).toBeInTheDocument();
+  });
+
+  it("hides extraction progress once every chunk is done and none failed", async () => {
+    stubVideo({
+      jobs: {
+        download: "done",
+        chunks_total: 20,
+        chunks_done: 20,
+        chunks_failed: 0,
+        prelabel: "done",
+      },
+    });
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Archon quest" });
+    expect(screen.queryByText(/chunks done/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the download job's status before any chunk has been created", async () => {
+    stubVideo({
+      duration_seconds: null,
+      width: null,
+      height: null,
+      jobs: {
+        download: "claimed",
+        chunks_total: 0,
+        chunks_done: 0,
+        chunks_failed: 0,
+        prelabel: null,
+      },
+    });
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Archon quest" });
+    expect(screen.getByText("claimed")).toBeInTheDocument();
+  });
+
+  it("shows chunk progress and a failed count once fan-out has run", async () => {
+    stubVideo({
+      jobs: {
+        download: "done",
+        chunks_total: 20,
+        chunks_done: 17,
+        chunks_failed: 2,
+        prelabel: null,
+      },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText(/17\/20 chunks done/)).toBeInTheDocument();
+    expect(screen.getByText(/2 failed/)).toBeInTheDocument();
+  });
+
+  it("404s the header without blocking the frame grid's own honest empty-page answer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/images")) return Promise.resolve(json(page()));
+        return Promise.resolve(json({ error: "no video with id dQw4w9WgXcQ" }, 404));
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("no video with id dQw4w9WgXcQ");
+    // The grid below still renders — the header's 404 is not swallowed, but it
+    // is also not fatal to the rest of the page.
+    expect(await screen.findByText("1s")).toBeInTheDocument();
+  });
+
   it("renders each frame's timestamp, prediction count and verdict state", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(page())));
+    stubVideo();
 
     renderPage();
 
@@ -71,7 +222,7 @@ describe("AdminVideoDetailPage", () => {
   });
 
   it("renders the URL the API minted rather than building a proxy path", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(page())));
+    stubVideo();
 
     renderPage();
 
@@ -86,10 +237,7 @@ describe("AdminVideoDetailPage", () => {
   });
 
   it("says so when the video has no extracted frames", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(json(page({ video_id: "empty000000", total: 0, images: [] }))),
-    );
+    stubVideo({ id: "empty000000" }, { video_id: "empty000000", total: 0, images: [] });
 
     renderPage("empty000000");
 
@@ -102,7 +250,10 @@ describe("AdminVideoDetailPage", () => {
       if (url.startsWith("/api/admin/images/1/public-sample")) {
         return Promise.resolve(json({ id: 1, public_sample: true }));
       }
-      return Promise.resolve(json(page({ images: [image({ public_sample: false })] })));
+      if (url.includes("/images")) {
+        return Promise.resolve(json(page({ images: [image({ public_sample: false })] })));
+      }
+      return Promise.resolve(json(detail()));
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -118,18 +269,12 @@ describe("AdminVideoDetailPage", () => {
   });
 
   it("shows a page range once the video has more frames than one page", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        json(
-          page({
-            total: 30,
-            images: Array.from({ length: 24 }, (_, i) =>
-              image({ id: i + 1, timestamp_seconds: i }),
-            ),
-          }),
-        ),
-      ),
+    stubVideo(
+      {},
+      {
+        total: 30,
+        images: Array.from({ length: 24 }, (_, i) => image({ id: i + 1, timestamp_seconds: i })),
+      },
     );
 
     renderPage();
