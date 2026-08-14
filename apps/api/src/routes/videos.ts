@@ -95,8 +95,9 @@ export const listVideosRoute = createRoute({
   tags: ["admin"],
   summary: "Submitted videos, their frame counts, and their prelabel coverage",
   description:
-    "What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as " +
-    "coverage per video. `image_count` rather than a boolean, because a video still being " +
+    "What the dry-run form picks from (M12.2) and what `/admin/videos` (M16; M19 plan §B " +
+    "folded the table in from the since-deleted `/admin/detection`) tables as coverage " +
+    "per video. `image_count` rather than a boolean, because a video still being " +
     "extracted has some frames and will have more, and how many there are decides how " +
     "meaningful a sample off it is — the same reasoning `frames_sampled` extends to " +
     "M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access " +

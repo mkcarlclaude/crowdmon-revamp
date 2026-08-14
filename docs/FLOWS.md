@@ -351,7 +351,7 @@ sequenceDiagram
     participant W as Go worker
     participant DET as Detector
 
-    A->>SPA: /admin/detection — edit a candidate prompt, "try it"
+    A->>SPA: /admin/videos — edit a candidate prompt, "try it"
     SPA->>API: POST /api/admin/classes/{id}/dryrun {video_id, appearance_prompt}
     API->>D1: INSERT jobs('dryrun', video_id) + INSERT dryruns(job_id, class_id,<br/>appearance_prompt, sample_size, requested_by=adminEmail)
     API-->>SPA: {job_id}

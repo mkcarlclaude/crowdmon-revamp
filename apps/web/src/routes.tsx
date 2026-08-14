@@ -3,7 +3,6 @@ import { AdminLayout } from "./components/AdminLayout";
 import { AdminAnnotationsPage } from "./pages/admin/Annotations";
 import { AdminClassesPage } from "./pages/admin/Classes";
 import { AdminDashboardPage } from "./pages/admin/Dashboard";
-import { AdminDetectionPage } from "./pages/admin/Detection";
 import { AdminLoginPage } from "./pages/admin/Login";
 import { AdminSnapshotsPage } from "./pages/admin/Snapshots";
 import { AdminVerifyPage } from "./pages/admin/Verify";
@@ -49,7 +48,10 @@ export function App() {
         <Route path="videos/:id" element={<AdminVideoDetailPage />} />
         <Route path="verify" element={<AdminVerifyPage />} />
         <Route path="annotations" element={<AdminAnnotationsPage />} />
-        <Route path="detection" element={<AdminDetectionPage />} />
+        {/* M19, plan §B2: the coverage table folded into `/admin/videos`.
+            A redirect rather than a 404 — this repo's own docs and issue
+            #140 link `/admin/detection` directly. */}
+        <Route path="detection" element={<Navigate to="/admin/videos" replace />} />
         <Route path="classes" element={<AdminClassesPage />} />
         <Route path="snapshots" element={<AdminSnapshotsPage />} />
       </Route>

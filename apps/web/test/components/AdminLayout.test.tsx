@@ -62,15 +62,7 @@ describe("AdminLayout", () => {
     // Every destination the plan's information architecture names, not just
     // the one that happened to match — a sidebar missing a link is a bug the
     // dashboard test above cannot see, because it only renders one route.
-    for (const label of [
-      "Dashboard",
-      "Videos",
-      "Verify",
-      "Annotations",
-      "Detection",
-      "Classes",
-      "Snapshots",
-    ]) {
+    for (const label of ["Dashboard", "Videos", "Verify", "Annotations", "Classes", "Snapshots"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
     expect(screen.getByTestId("admin-email")).toHaveTextContent("admin@example.com");

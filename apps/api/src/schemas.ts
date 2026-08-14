@@ -1257,9 +1257,10 @@ export const SnapshotJob = z
 
 /**
  * One video, for two screens that turned out to want almost the same row:
- * the dry-run form's picker (M12.2) and `/admin/detection`'s coverage table
- * (M16, ROADMAP M16 "scope line"). Extended rather than given `/admin/detection`
- * a route of its own — `listVideosHandler` already computes one row per video
+ * the dry-run form's picker (M12.2) and `/admin/videos`'s coverage table
+ * (M16, ROADMAP M16 "scope line"; M19 plan §B folded that table in from the
+ * since-deleted `/admin/detection`). Extended rather than given that table a
+ * route of its own — `listVideosHandler` already computes one row per video
  * on every call, and M16's own plan is explicit that this milestone adds
  * exactly three *new* routes; three more fields on an existing one is not a
  * fourth.

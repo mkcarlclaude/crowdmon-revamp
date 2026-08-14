@@ -102,9 +102,11 @@ export function AdminLayout() {
 const NAV_ITEMS = [
   { to: "/admin/dashboard", label: "Dashboard" },
   { to: "/admin/videos", label: "Videos" },
+  // "Detection" was removed here in M19 (plan §B2): its coverage table
+  // folded into `/admin/videos` above, and `/admin/detection` now just
+  // redirects there (`routes.tsx`).
   { to: "/admin/verify", label: "Verify" },
   { to: "/admin/annotations", label: "Annotations" },
-  { to: "/admin/detection", label: "Detection" },
   { to: "/admin/classes", label: "Classes" },
   { to: "/admin/snapshots", label: "Snapshots" },
 ] as const;
