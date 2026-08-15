@@ -1204,3 +1204,67 @@ did, plus a verdict history and a per-video frame grid.
 - [ ] No re-run button. What one would cost is recorded instead: a migration, an admin
       enqueue route, a worker change to sample only unsampled frames, and a provenance
       rule for the mixed-regime dataset a re-run would otherwise produce silently
+
+*Amended by M19.2: the coverage table folded into `/admin/videos`, and `/admin/detection`
+now redirects there. The read-only-on-purpose reasoning above is unchanged and moved with
+it — only the route name in it is stale.*
+
+## M17, M18 — shipped without a section here
+
+M17.A (single-frame dry-run, [#148](https://github.com/mkcarlclaude/crowdmon-revamp/pull/148))
+and M18 (annotation filters, verdict preview, public frame variety,
+[#145](https://github.com/mkcarlclaude/crowdmon-revamp/pull/145)) landed against their
+plans in `docs/superpowers/plans/` rather than against a checklist here. Recorded so the
+gap between M16 and M19 reads as a bookkeeping omission rather than as milestones that
+were skipped.
+
+M17 §B — on-demand supplementary prelabel — landed the same way while M19 was in review
+([#149](https://github.com/mkcarlclaude/crowdmon-revamp/pull/149)): an admin enqueue
+route, a worker that samples an explicit list, and two actions on `/admin/videos/:id`
+(hand-picked frames, or a randomised draw over un-sampled ones). The automatic first pass
+is untouched, so PRD §9's *"with no human trigger"* clause and its recorded acceptance
+evidence still hold — that was the constraint the M17 plan was built around.
+
+## M19 — Video summary, one video list, and a queue that names the kind
+
+*Goal: `/admin` tells the truth about a single video on that video's own page, and about
+the queue on a page of its own.*
+*Depends on: M16.*
+*Done when:* a video's page opens with its own YouTube metadata and its own counts above
+the frame grid; `/admin/videos` is the list of videos; and `/admin/queue` shows every job
+of every kind, each labelled with the kind it is.
+
+No migration, no worker release. Everything shown is already in D1 or already on the
+wire — what was missing was somewhere to read it. Plan:
+`docs/superpowers/plans/2026-08-14-video-summary-and-queue-page.md`.
+
+### [M19.1 — Video summary above the frame grid](https://github.com/mkcarlclaude/crowdmon-revamp/issues/150)
+- [ ] `GET /api/admin/videos/{id}` — the `videos` row's own `title`, `duration_seconds`,
+      `width`, `height` and `url`, none of which any endpoint exposes today, plus frames
+      extracted/sampled/public, predictions, verified vs unverified frames, model and
+      last prelabel, and a chunk-progress summary
+- [ ] 404 on an unknown id, unlike `listAdminVideoImages` — an empty *page of frames* is
+      a true answer about a video that exists; a summary of a video never submitted is
+      every field being a null pretending to be a fact
+- [ ] The prediction rollup drives off `predictions` joined to `images`, never a
+      correlated subquery per frame — the read-amplification shape `listVideosHandler`'s
+      own comment documents at length
+- [ ] `source = 'admin'` in the verdict join condition, so an anon verdict does not make
+      a frame count as ruled — the same definition the grid below the header displays
+
+### [M19.2 — The video list, and `/admin/detection` folded into it](https://github.com/mkcarlclaude/crowdmon-revamp/issues/151)
+- [ ] `/admin/videos`: submit form, then the coverage table `/admin/detection` had —
+      `useVideos()` already returns every field, so no API change
+- [ ] `Detection.tsx` deleted; `/admin/detection` redirects rather than 404s; its M16.6
+      scope line moves verbatim into `Videos.tsx`
+- [ ] `SessionExpiredBanner` moves to `/admin/queue`, where the polling now is: a page
+      whose only query never refetches cannot detect a session that expires mid-visit
+
+### [M19.3 — A queue page that names the job kind](https://github.com/mkcarlclaude/crowdmon-revamp/issues/152)
+- [ ] `/admin/queue`: one flat table, newest first, every kind labelled — including
+      `snapshot`, which the grouped list drops entirely for having no video, and
+      `prelabel`/`dryrun`, which it renders as nameless rows
+- [ ] Status filter chips through the `?status=` `JobListQuery` already accepts; no
+      summary counts, which off a 50-row page would count the page rather than the queue
+- [ ] `JobList` deleted. Its group-by-video tree answered "how far along is this video",
+      which M19.1 moves to the page that video owns

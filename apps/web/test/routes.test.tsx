@@ -18,16 +18,38 @@ function renderApp(initialEntry: string) {
   );
 }
 
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 /** An unauthenticated `GET /api/admin/session` — the 401 `requireAccess` answers with. */
 function stubNoSession() {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ error: "missing Access assertion" }), {
-        status: 401,
-        headers: { "content-type": "application/json" },
-      }),
-    ),
+    vi.fn().mockResolvedValue(json({ error: "missing Access assertion" }, 401)),
+  );
+}
+
+/**
+ * A working session, plus empty responses for whatever page the redirect or
+ * route under test lands on — `/admin/videos` reads `useVideos()`,
+ * `/admin/queue` reads `useJobs()`, and both are harmless to stub with
+ * nothing when the assertion only cares which page rendered.
+ */
+function stubAuthenticated() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("/api/admin/session"))
+        return Promise.resolve(json({ email: "admin@example.com" }));
+      if (url.startsWith("/api/admin/videos")) return Promise.resolve(json({ videos: [] }));
+      if (url.startsWith("/api/admin/jobs")) return Promise.resolve(json({ now: 0, jobs: [] }));
+      return Promise.resolve(json({ error: "not found" }, 404));
+    }),
   );
 }
 
@@ -58,5 +80,24 @@ describe("routing", () => {
     renderApp("/admin/dashboard");
 
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  // M19, plan §B2: the coverage table folded into `/admin/videos`, and
+  // `/admin/detection` — linked from this repo's own docs and issue #140 —
+  // redirects there rather than 404ing.
+  it("redirects an authenticated browser at /admin/detection to /admin/videos", async () => {
+    stubAuthenticated();
+    renderApp("/admin/detection");
+
+    expect(await screen.findByText(/submit a video/i)).toBeInTheDocument();
+  });
+
+  // M19, plan §C1: a flat queue page, replacing the grouped `JobList` this
+  // milestone deletes from `/admin/videos`.
+  it("mounts the queue page at /admin/queue", async () => {
+    stubAuthenticated();
+    renderApp("/admin/queue");
+
+    expect(await screen.findByRole("button", { name: "All" })).toBeInTheDocument();
   });
 });

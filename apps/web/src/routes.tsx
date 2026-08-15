@@ -3,8 +3,8 @@ import { AdminLayout } from "./components/AdminLayout";
 import { AdminAnnotationsPage } from "./pages/admin/Annotations";
 import { AdminClassesPage } from "./pages/admin/Classes";
 import { AdminDashboardPage } from "./pages/admin/Dashboard";
-import { AdminDetectionPage } from "./pages/admin/Detection";
 import { AdminLoginPage } from "./pages/admin/Login";
+import { AdminQueuePage } from "./pages/admin/Queue";
 import { AdminSnapshotsPage } from "./pages/admin/Snapshots";
 import { AdminVerifyPage } from "./pages/admin/Verify";
 import { AdminVideoDetailPage } from "./pages/admin/VideoDetail";
@@ -47,9 +47,15 @@ export function App() {
         <Route path="dashboard" element={<AdminDashboardPage />} />
         <Route path="videos" element={<AdminVideosPage />} />
         <Route path="videos/:id" element={<AdminVideoDetailPage />} />
+        {/* M19, plan §C1: every job of every kind, flat — replaces the
+            grouped `JobList` that used to live on `/admin/videos`. */}
+        <Route path="queue" element={<AdminQueuePage />} />
         <Route path="verify" element={<AdminVerifyPage />} />
         <Route path="annotations" element={<AdminAnnotationsPage />} />
-        <Route path="detection" element={<AdminDetectionPage />} />
+        {/* M19, plan §B2: the coverage table folded into `/admin/videos`.
+            A redirect rather than a 404 — this repo's own docs and issue
+            #140 link `/admin/detection` directly. */}
+        <Route path="detection" element={<Navigate to="/admin/videos" replace />} />
         <Route path="classes" element={<AdminClassesPage />} />
         <Route path="snapshots" element={<AdminSnapshotsPage />} />
       </Route>

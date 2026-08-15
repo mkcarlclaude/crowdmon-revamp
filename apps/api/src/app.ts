@@ -51,6 +51,7 @@ import {
   submitVerdictsHandler,
   submitVerdictsRoute,
 } from "./routes/admin-verdicts";
+import { adminVideoDetailHandler, adminVideoDetailRoute } from "./routes/admin-video-detail";
 import {
   listAdminVideoImagesHandler,
   listAdminVideoImagesRoute,
@@ -187,6 +188,7 @@ app.openapi(createMissingReportRoute, createMissingReportHandler);
 app.openapi(listVerdictsRoute, listVerdictsHandler);
 app.openapi(listVerdictAnnotatorsRoute, listVerdictAnnotatorsHandler);
 app.openapi(listAdminVideoImagesRoute, listAdminVideoImagesHandler);
+app.openapi(adminVideoDetailRoute, adminVideoDetailHandler);
 app.openapi(createPrelabelRoute, createPrelabelHandler);
 app.openapi(adminSessionRoute, adminSessionHandler);
 app.openapi(updatePublicSampleRoute, updatePublicSampleHandler);

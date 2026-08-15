@@ -891,8 +891,9 @@ requests at a sidebar with nothing behind it; a stranger who skips straight to
 is to say exactly as far as `requireAccess` lets them.
 
 **The detector re-run was scoped out of M16, and the cost is worth naming rather than
-leaving implicit.** `/admin/detection` shows prelabel coverage per video — how many
-frames exist, how many were sampled, under which model, when — and stops there
+leaving implicit.** `/admin/videos` (M19 folded the coverage table in from
+`/admin/detection`, which now redirects there) shows prelabel coverage per video — how
+many frames exist, how many were sampled, under which model, when — and stops there
 deliberately. Re-running the detector over more of a video's frames to seed the
 verification pool needs four things this milestone does not have: a migration, because
 `idx_jobs_one_prelabel_per_video` (migrations 0005, 0007, 0008) permits exactly one

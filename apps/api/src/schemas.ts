@@ -1379,9 +1379,10 @@ export const SnapshotJob = z
 
 /**
  * One video, for two screens that turned out to want almost the same row:
- * the dry-run form's picker (M12.2) and `/admin/detection`'s coverage table
- * (M16, ROADMAP M16 "scope line"). Extended rather than given `/admin/detection`
- * a route of its own — `listVideosHandler` already computes one row per video
+ * the dry-run form's picker (M12.2) and `/admin/videos`'s coverage table
+ * (M16, ROADMAP M16 "scope line"; M19 plan §B folded that table in from the
+ * since-deleted `/admin/detection`). Extended rather than given that table a
+ * route of its own — `listVideosHandler` already computes one row per video
  * on every call, and M16's own plan is explicit that this milestone adds
  * exactly three *new* routes; three more fields on an existing one is not a
  * fourth.
@@ -2267,3 +2268,76 @@ export const AdminVideoImages = z
     expires_at: z.int().openapi({ example: 1_754_099_900 }),
   })
   .openapi("AdminVideoImages");
+
+/**
+ * `jobs` for one video, folded into a summary rather than handed back as rows
+ * (M19, plan §A1) — the rows are `/admin/queue`'s (plan §C), and a second full
+ * job list on this header would be a second place to keep "how far along is
+ * this video" consistent with the one that page renders. What the summary
+ * answers is exactly the question the header's progress line asks: is
+ * extraction finished, which is `chunks_done` against `chunks_total`.
+ *
+ * `download` and `prelabel` are each at most one job — `idx_jobs_one_download_
+ * per_video` (migration 0001) and `idx_jobs_one_prelabel_per_video`
+ * (migration 0005) are unique indexes, so there is never a second row of
+ * either kind to reconcile. `chunks_total`/`chunks_done`/`chunks_failed` are
+ * not: fan-out (CONTEXT.md §Q13) creates one `chunk` job per 60-second
+ * segment.
+ */
+const AdminVideoJobsSummary = z
+  .object({
+    download: JobStatus.nullable().openapi({ example: "done" }),
+    chunks_total: z.int().nonnegative().openapi({ example: 20 }),
+    chunks_done: z.int().nonnegative().openapi({ example: 20 }),
+    chunks_failed: z.int().nonnegative().openapi({ example: 0 }),
+    prelabel: JobStatus.nullable().openapi({ example: "done" }),
+  })
+  .openapi("AdminVideoJobsSummary");
+
+/**
+ * `GET /api/admin/videos/{id}` (M19, plan §A): the `videos` row's own
+ * YouTube-derived metadata, plus the per-video aggregates, for the header
+ * `/admin/videos/:id` grows above the frame grid `AdminVideoImages` already
+ * carries.
+ *
+ * Not an extension of `AdminVideo`: that shape is computed once per row for
+ * up to `VIDEO_PICKER_LIMIT` videos on every list-page mount, and every field
+ * here beyond what `AdminVideo` already carries — `predictions` joined to
+ * `images`, `verdicts`, a `jobs` scan — is per-video-only work no list of
+ * fifty videos should pay for just to render a picker.
+ *
+ * `title`, `duration_seconds`, `width` and `height` are `.nullable()`, not
+ * `.optional()`: the download job's fan-out report (`FanOutRequest`,
+ * migration 0001) is what writes them, so a video still mid-download has none
+ * of them yet, and that is a different fact from a duration of zero — the
+ * page renders null as `—`, never `0`.
+ *
+ * `frames_verified` is not its own aggregate — it is `frames_with_predictions
+ * - frames_unverified`, computed in the handler; see that handler's own
+ * comment on the query it is computed from.
+ */
+export const AdminVideoDetail = z
+  .object({
+    id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    url: z.url().openapi({ example: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }),
+    title: z.string().nullable().openapi({ example: "Genshin Impact — Archon quest" }),
+    duration_seconds: z.int().positive().nullable().openapi({ example: 1200 }),
+    width: z.int().positive().nullable().openapi({ example: 1920 }),
+    height: z.int().positive().nullable().openapi({ example: 1080 }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+    image_count: z.int().nonnegative().openapi({ example: 2685 }),
+    frames_sampled: z.int().nonnegative().openapi({ example: 200 }),
+    public_samples: z.int().nonnegative().openapi({ example: 3 }),
+    predictions: z.int().nonnegative().openapi({ example: 340 }),
+    frames_with_predictions: z.int().nonnegative().openapi({ example: 190 }),
+    frames_verified: z.int().nonnegative().openapi({ example: 150 }),
+    frames_unverified: z.int().nonnegative().openapi({ example: 40 }),
+    // Null until at least one prediction exists for the video, the same
+    // distinction `AdminVideo.model_id` draws (that field's own comment).
+    model_id: z.string().nullable().openapi({ example: "owlvit-base-patch32.onnx" }),
+    prelabelled_at: z.int().nullable().openapi({ example: 1_754_099_500 }),
+    jobs: AdminVideoJobsSummary,
+  })
+  .openapi("AdminVideoDetail");
+
+export type AdminVideoDetailRow = z.infer<typeof AdminVideoDetail>;

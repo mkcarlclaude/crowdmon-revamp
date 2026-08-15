@@ -65,9 +65,9 @@ describe("AdminLayout", () => {
     for (const label of [
       "Dashboard",
       "Videos",
+      "Queue",
       "Verify",
       "Annotations",
-      "Detection",
       "Classes",
       "Snapshots",
     ]) {

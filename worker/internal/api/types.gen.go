@@ -91,6 +91,54 @@ func (e AdminVideoImagesUrlMode) Valid() bool {
 	}
 }
 
+// Defines values for AdminVideoJobsSummaryDownload.
+const (
+	AdminVideoJobsSummaryDownloadClaimed AdminVideoJobsSummaryDownload = "claimed"
+	AdminVideoJobsSummaryDownloadDone    AdminVideoJobsSummaryDownload = "done"
+	AdminVideoJobsSummaryDownloadFailed  AdminVideoJobsSummaryDownload = "failed"
+	AdminVideoJobsSummaryDownloadPending AdminVideoJobsSummaryDownload = "pending"
+)
+
+// Valid indicates whether the value is a known member of the AdminVideoJobsSummaryDownload enum.
+func (e AdminVideoJobsSummaryDownload) Valid() bool {
+	switch e {
+	case AdminVideoJobsSummaryDownloadClaimed:
+		return true
+	case AdminVideoJobsSummaryDownloadDone:
+		return true
+	case AdminVideoJobsSummaryDownloadFailed:
+		return true
+	case AdminVideoJobsSummaryDownloadPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminVideoJobsSummaryPrelabel.
+const (
+	AdminVideoJobsSummaryPrelabelClaimed AdminVideoJobsSummaryPrelabel = "claimed"
+	AdminVideoJobsSummaryPrelabelDone    AdminVideoJobsSummaryPrelabel = "done"
+	AdminVideoJobsSummaryPrelabelFailed  AdminVideoJobsSummaryPrelabel = "failed"
+	AdminVideoJobsSummaryPrelabelPending AdminVideoJobsSummaryPrelabel = "pending"
+)
+
+// Valid indicates whether the value is a known member of the AdminVideoJobsSummaryPrelabel enum.
+func (e AdminVideoJobsSummaryPrelabel) Valid() bool {
+	switch e {
+	case AdminVideoJobsSummaryPrelabelClaimed:
+		return true
+	case AdminVideoJobsSummaryPrelabelDone:
+		return true
+	case AdminVideoJobsSummaryPrelabelFailed:
+		return true
+	case AdminVideoJobsSummaryPrelabelPending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CompleteRequestStatus.
 const (
 	CompleteRequestStatusDone   CompleteRequestStatus = "done"
@@ -513,6 +561,58 @@ type AdminVideo struct {
 	Title *string `json:"title"`
 }
 
+// AdminVideoDetail defines model for AdminVideoDetail.
+type AdminVideoDetail struct {
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// DurationSeconds Example: 1200
+	DurationSeconds *int `json:"duration_seconds"`
+
+	// FramesSampled Example: 200
+	FramesSampled int `json:"frames_sampled"`
+
+	// FramesUnverified Example: 40
+	FramesUnverified int `json:"frames_unverified"`
+
+	// FramesVerified Example: 150
+	FramesVerified int `json:"frames_verified"`
+
+	// FramesWithPredictions Example: 190
+	FramesWithPredictions int `json:"frames_with_predictions"`
+
+	// Height Example: 1080
+	Height *int `json:"height"`
+
+	// Id Example: dQw4w9WgXcQ
+	Id string `json:"id"`
+
+	// ImageCount Example: 2685
+	ImageCount int                   `json:"image_count"`
+	Jobs       AdminVideoJobsSummary `json:"jobs"`
+
+	// ModelId Example: owlvit-base-patch32.onnx
+	ModelId *string `json:"model_id"`
+
+	// Predictions Example: 340
+	Predictions int `json:"predictions"`
+
+	// PrelabelledAt Example: 1754099500
+	PrelabelledAt *int `json:"prelabelled_at"`
+
+	// PublicSamples Example: 3
+	PublicSamples int `json:"public_samples"`
+
+	// Title Example: Genshin Impact — Archon quest
+	Title *string `json:"title"`
+
+	// Url Example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+	Url string `json:"url"`
+
+	// Width Example: 1920
+	Width *int `json:"width"`
+}
+
 // AdminVideoImage defines model for AdminVideoImage.
 type AdminVideoImage struct {
 	// Id Example: 7
@@ -561,6 +661,26 @@ type AdminVideoImages struct {
 
 // AdminVideoImagesUrlMode Example: signed
 type AdminVideoImagesUrlMode string
+
+// AdminVideoJobsSummary defines model for AdminVideoJobsSummary.
+type AdminVideoJobsSummary struct {
+	// ChunksDone Example: 20
+	ChunksDone int `json:"chunks_done"`
+
+	// ChunksFailed Example: 0
+	ChunksFailed int `json:"chunks_failed"`
+
+	// ChunksTotal Example: 20
+	ChunksTotal int                            `json:"chunks_total"`
+	Download    *AdminVideoJobsSummaryDownload `json:"download"`
+	Prelabel    *AdminVideoJobsSummaryPrelabel `json:"prelabel"`
+}
+
+// AdminVideoJobsSummaryDownload defines model for AdminVideoJobsSummary.Download.
+type AdminVideoJobsSummaryDownload string
+
+// AdminVideoJobsSummaryPrelabel defines model for AdminVideoJobsSummary.Prelabel.
+type AdminVideoJobsSummaryPrelabel string
 
 // AdminVideoList defines model for AdminVideoList.
 type AdminVideoList struct {
@@ -1763,7 +1883,7 @@ type ClientInterface interface {
 
 	// ListVideos Submitted videos, their frame counts, and their prelabel coverage
 	//
-	// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
+	// What the dry-run form picks from (M12.2) and what `/admin/videos` (M16; M19 plan §B folded the table in from the since-deleted `/admin/detection`) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
 	ListVideos(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1785,6 +1905,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 	SubmitVideo(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAdminVideoDetail One video's own metadata and its per-video aggregates
+	//
+	// The `videos` row plus frame, prediction, verdict and extraction-progress counts for one video — what `/admin/videos/:id`'s header renders above the frame grid `listAdminVideoImages` already serves. 404 for a video id that was never submitted, unlike that route's own empty-page answer for one with no frames yet. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/videos/{id} (the `GetAdminVideoDetail` operationId).
+	GetAdminVideoDetail(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAdminVideoImages One video's frames, with prediction counts and verdict state
 	//
@@ -2444,7 +2571,7 @@ func (c *Client) ListVerdictAnnotators(ctx context.Context, reqEditors ...Reques
 
 // ListVideos Submitted videos, their frame counts, and their prelabel coverage
 //
-// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
+// What the dry-run form picks from (M12.2) and what `/admin/videos` (M16; M19 plan §B folded the table in from the since-deleted `/admin/detection`) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/videos (the `ListVideos` operationId).
 func (c *Client) ListVideos(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2487,6 +2614,23 @@ func (c *Client) SubmitVideoWithBody(ctx context.Context, contentType string, bo
 // Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 func (c *Client) SubmitVideo(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSubmitVideoRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAdminVideoDetail One video's own metadata and its per-video aggregates
+//
+// The `videos` row plus frame, prediction, verdict and extraction-progress counts for one video — what `/admin/videos/:id`'s header renders above the frame grid `listAdminVideoImages` already serves. 404 for a video id that was never submitted, unlike that route's own empty-page answer for one with no frames yet. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/videos/{id} (the `GetAdminVideoDetail` operationId).
+func (c *Client) GetAdminVideoDetail(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdminVideoDetailRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -3902,6 +4046,40 @@ func NewSubmitVideoRequestWithBody(server string, contentType string, body io.Re
 	return req, nil
 }
 
+// NewGetAdminVideoDetailRequest constructs an http.Request for the GetAdminVideoDetail method
+func NewGetAdminVideoDetailRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/videos/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListAdminVideoImagesRequest constructs an http.Request for the ListAdminVideoImages method
 func NewListAdminVideoImagesRequest(server string, id string, params *ListAdminVideoImagesParams) (*http.Request, error) {
 	var err error
@@ -4949,7 +5127,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListVideosWithResponse Submitted videos, their frame counts, and their prelabel coverage
 	//
-	// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
+	// What the dry-run form picks from (M12.2) and what `/admin/videos` (M16; M19 plan §B folded the table in from the since-deleted `/admin/detection`) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -4973,6 +5151,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/admin/videos (the `SubmitVideo` operationId).
 	SubmitVideoWithResponse(ctx context.Context, body SubmitVideoJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitVideoResponse, error)
+
+	// GetAdminVideoDetailWithResponse One video's own metadata and its per-video aggregates
+	//
+	// The `videos` row plus frame, prediction, verdict and extraction-progress counts for one video — what `/admin/videos/:id`'s header renders above the frame grid `listAdminVideoImages` already serves. 404 for a video id that was never submitted, unlike that route's own empty-page answer for one with no frames yet. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/videos/{id} (the `GetAdminVideoDetail` operationId).
+	GetAdminVideoDetailWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAdminVideoDetailResponse, error)
 
 	// ListAdminVideoImagesWithResponse One video's frames, with prediction counts and verdict state
 	//
@@ -6599,6 +6786,75 @@ func (r SubmitVideoResponse) ContentType() string {
 	return ""
 }
 
+type GetAdminVideoDetailResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminVideoDetail
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAdminVideoDetailResponse) GetJSON200() *AdminVideoDetail {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAdminVideoDetailResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAdminVideoDetailResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetAdminVideoDetailResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAdminVideoDetailResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAdminVideoDetailResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAdminVideoDetailResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAdminVideoDetailResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAdminVideoDetailResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListAdminVideoImagesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7882,7 +8138,7 @@ func (c *ClientWithResponses) ListVerdictAnnotatorsWithResponse(ctx context.Cont
 
 // ListVideosWithResponse Submitted videos, their frame counts, and their prelabel coverage
 //
-// What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
+// What the dry-run form picks from (M12.2) and what `/admin/videos` (M16; M19 plan §B folded the table in from the since-deleted `/admin/detection`) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -7923,6 +8179,21 @@ func (c *ClientWithResponses) SubmitVideoWithResponse(ctx context.Context, body 
 		return nil, err
 	}
 	return ParseSubmitVideoResponse(rsp)
+}
+
+// GetAdminVideoDetailWithResponse One video's own metadata and its per-video aggregates
+//
+// The `videos` row plus frame, prediction, verdict and extraction-progress counts for one video — what `/admin/videos/:id`'s header renders above the frame grid `listAdminVideoImages` already serves. 404 for a video id that was never submitted, unlike that route's own empty-page answer for one with no frames yet. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/videos/{id} (the `GetAdminVideoDetail` operationId).
+func (c *ClientWithResponses) GetAdminVideoDetailWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAdminVideoDetailResponse, error) {
+	rsp, err := c.GetAdminVideoDetail(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAdminVideoDetailResponse(rsp)
 }
 
 // ListAdminVideoImagesWithResponse One video's frames, with prediction counts and verdict state
@@ -9407,6 +9678,60 @@ func ParseSubmitVideoResponse(rsp *http.Response) (*SubmitVideoResponse, error) 
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAdminVideoDetailResponse parses an HTTP response from a GetAdminVideoDetailWithResponse call
+func ParseGetAdminVideoDetailResponse(rsp *http.Response) (*GetAdminVideoDetailResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAdminVideoDetailResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminVideoDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest ErrorResponse

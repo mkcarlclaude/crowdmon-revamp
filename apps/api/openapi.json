@@ -1676,6 +1676,166 @@
           "sampled"
         ]
       },
+      "AdminVideoDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "example": "Genshin Impact — Archon quest"
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1200
+          },
+          "width": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1920
+          },
+          "height": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1080
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          },
+          "image_count": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 2685
+          },
+          "frames_sampled": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 200
+          },
+          "public_samples": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 3
+          },
+          "predictions": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 340
+          },
+          "frames_with_predictions": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 190
+          },
+          "frames_verified": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 150
+          },
+          "frames_unverified": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 40
+          },
+          "model_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "owlvit-base-patch32.onnx"
+          },
+          "prelabelled_at": {
+            "type": "integer",
+            "nullable": true,
+            "example": 1754099500
+          },
+          "jobs": {
+            "$ref": "#/components/schemas/AdminVideoJobsSummary"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "title",
+          "duration_seconds",
+          "width",
+          "height",
+          "created_at",
+          "image_count",
+          "frames_sampled",
+          "public_samples",
+          "predictions",
+          "frames_with_predictions",
+          "frames_verified",
+          "frames_unverified",
+          "model_id",
+          "prelabelled_at",
+          "jobs"
+        ]
+      },
+      "AdminVideoJobsSummary": {
+        "type": "object",
+        "properties": {
+          "download": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobStatus"
+              },
+              {
+                "nullable": true,
+                "example": "done"
+              }
+            ]
+          },
+          "chunks_total": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 20
+          },
+          "chunks_done": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 20
+          },
+          "chunks_failed": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
+          },
+          "prelabel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobStatus"
+              },
+              {
+                "nullable": true,
+                "example": "done"
+              }
+            ]
+          }
+        },
+        "required": [
+          "download",
+          "chunks_total",
+          "chunks_done",
+          "chunks_failed",
+          "prelabel"
+        ]
+      },
       "PrelabelJob": {
         "type": "object",
         "properties": {
@@ -2507,7 +2667,7 @@
           "admin"
         ],
         "summary": "Submitted videos, their frame counts, and their prelabel coverage",
-        "description": "What the dry-run form picks from (M12.2) and what `/admin/detection` (M16) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.",
+        "description": "What the dry-run form picks from (M12.2) and what `/admin/videos` (M16; M19 plan §B folded the table in from the since-deleted `/admin/detection`) tables as coverage per video. `image_count` rather than a boolean, because a video still being extracted has some frames and will have more, and how many there are decides how meaningful a sample off it is — the same reasoning `frames_sampled` extends to M11.3's actual sample rather than the whole pool. Requires a Cloudflare Access assertion.",
         "responses": {
           "200": {
             "description": "Videos, newest first",
@@ -4158,6 +4318,80 @@
           },
           "403": {
             "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/videos/{id}": {
+      "get": {
+        "operationId": "getAdminVideoDetail",
+        "tags": [
+          "admin"
+        ],
+        "summary": "One video's own metadata and its per-video aggregates",
+        "description": "The `videos` row plus frame, prediction, verdict and extraction-progress counts for one video — what `/admin/videos/:id`'s header renders above the frame grid `listAdminVideoImages` already serves. 404 for a video id that was never submitted, unlike that route's own empty-page answer for one with no frames yet. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dQw4w9WgXcQ"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "This video's metadata and aggregates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminVideoDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No video with this id",
             "content": {
               "application/json": {
                 "schema": {

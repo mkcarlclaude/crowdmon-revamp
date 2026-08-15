@@ -6,7 +6,8 @@
  * one, and §Q19 already forbids the obvious filling: system data belongs to
  * Grafana (`GrafanaLink`, in the sidebar footer), business data that is
  * genuinely a per-page concern lives on `/admin/annotations` and
- * `/admin/detection`, and a dashboard that duplicated either would be a
+ * `/admin/videos` (M19 folded the old `/admin/detection` in), and a
+ * dashboard that duplicated either would be a
  * second, drifting copy of a number this app does not need two of. This page
  * exists so `/admin` redirects somewhere real rather than nowhere; it does
  * not exist to be filled in later without a reason better than "it looked
