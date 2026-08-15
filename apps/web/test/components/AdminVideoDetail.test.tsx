@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -41,6 +41,10 @@ function image(over: Partial<Record<string, unknown>> = {}) {
     public_sample: false,
     predictions: 2,
     verdict_state: "unverified",
+    // M17, plan §B: whether an earlier prelabel pass already claimed this
+    // frame (`images.selection_reason IS NOT NULL`) — the multi-select
+    // grid's own reason for disabling its checkbox.
+    sampled: false,
     ...over,
   };
 }
@@ -87,10 +91,39 @@ function detail(over: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+/** `POST /api/admin/videos/{id}/prelabel`'s response shape (M17, plan §B). */
+function prelabelJob(over: Partial<Record<string, unknown>> = {}) {
+  return {
+    job_id: 42,
+    video_id: "dQw4w9WgXcQ",
+    selection_reason: "manual",
+    images: 1,
+    ...over,
+  };
+}
+
+/** `GET /api/admin/labelling/stats`'s response shape, trimmed to what this page reads. */
+function labellingStats(remaining: number) {
+  return {
+    pool: {
+      images_with_predictions: remaining + 3,
+      images_verified: 3,
+      images_remaining: remaining,
+      missing_reports: 0,
+    },
+    classes: [],
+  };
+}
+
 /**
  * Routes `/api/admin/videos/{id}` to `detail()` and everything else (the
- * frame grid) to `page()` — the two queries this page fires in parallel, and
- * a single blanket mock would answer both with whichever shape came first.
+ * frame grid) to `page()` — the queries this page fires in parallel, and a
+ * single blanket mock would answer them all with whichever shape came first.
+ *
+ * The stats and jobs branches are not this helper's subject: they exist so a
+ * header test does not fail on M17 (plan §B)'s pool counter answering with a
+ * video-detail body. A test whose subject *is* the prelabel controls stubs
+ * `fetch` itself, below.
  */
 function stubVideo(
   detailOver: Partial<Record<string, unknown>> = {},
@@ -101,6 +134,10 @@ function stubVideo(
     vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("/images")) return Promise.resolve(json(page(pageOver)));
+      if (url.startsWith("/api/admin/labelling/stats")) {
+        return Promise.resolve(json(labellingStats(7)));
+      }
+      if (url.startsWith("/api/admin/jobs")) return Promise.resolve(json({ now: 0, jobs: [] }));
       return Promise.resolve(json(detail(detailOver)));
     }),
   );
@@ -259,7 +296,10 @@ describe("AdminVideoDetailPage", () => {
 
     renderPage();
 
-    const checkbox = await screen.findByRole("checkbox");
+    // Two checkboxes per frame since M17 (plan §B) added the prelabel
+    // multi-select one — named explicitly rather than `findByRole("checkbox")`
+    // alone, which now matches both.
+    const checkbox = await screen.findByRole("checkbox", { name: "public" });
     await userEvent.click(checkbox);
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -282,5 +322,119 @@ describe("AdminVideoDetailPage", () => {
     expect(await screen.findByText("1–24 of 30")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).not.toBeDisabled();
+  });
+
+  // On-demand supplementary prelabel (M17, plan §B): the two actions this
+  // grid gained, and the property that matters most about them — a
+  // hand-picked selection sends `image_ids`, never `count`/`strategy`, so
+  // it can never be mistaken on the wire for the unbiased draw.
+  describe("on-demand prelabel", () => {
+    it("disables 'prelabel selected' until a frame is checked, then sends its id as a hand-picked set", async () => {
+      const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "/api/admin/videos/dQw4w9WgXcQ/prelabel") {
+          return Promise.resolve(json(prelabelJob()));
+        }
+        if (url.startsWith("/api/admin/labelling/stats")) {
+          return Promise.resolve(json(labellingStats(7)));
+        }
+        if (url.startsWith("/api/admin/jobs")) return Promise.resolve(json({ now: 0, jobs: [] }));
+        return Promise.resolve(json(page()));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderPage();
+
+      const selectCheckbox = await screen.findByRole("checkbox", {
+        name: "select frame at 1s for prelabelling",
+      });
+      expect(screen.getByRole("button", { name: "Prelabel selected" })).toBeDisabled();
+
+      await userEvent.click(selectCheckbox);
+      const prelabelButton = screen.getByRole("button", { name: "Prelabel 1 selected" });
+      expect(prelabelButton).not.toBeDisabled();
+
+      await userEvent.click(prelabelButton);
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/admin/videos/dQw4w9WgXcQ/prelabel",
+          expect.objectContaining({
+            method: "POST",
+            body: JSON.stringify({ image_ids: [1] }),
+          }),
+        ),
+      );
+    });
+
+    it("disables the select checkbox, and labels as such, for a frame an earlier pass already sampled", async () => {
+      // Routed rather than `mockResolvedValue`, since M19 (plan §A) gave this
+      // page a second query: a blanket mock answers `/api/admin/videos/{id}`
+      // with a frame page, and the header's own parse failure is then the
+      // only thing this test sees.
+      stubVideo({}, { images: [image({ sampled: true })] });
+
+      renderPage();
+
+      const selectCheckbox = await screen.findByRole("checkbox", {
+        name: "select frame at 1s for prelabelling",
+      });
+      expect(selectCheckbox).toBeDisabled();
+      expect(screen.getByText("already sampled")).toBeInTheDocument();
+    });
+
+    it("queues a random draw with the typed count, distinct from the hand-picked request shape", async () => {
+      const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "/api/admin/videos/dQw4w9WgXcQ/prelabel") {
+          return Promise.resolve(json(prelabelJob({ selection_reason: "random", images: 5 })));
+        }
+        return Promise.resolve(json(page()));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderPage();
+
+      const countInput = await screen.findByRole("spinbutton", {
+        name: "how many un-sampled frames to randomise",
+      });
+      // `fireEvent.change` rather than `userEvent.clear` + `type`: the input
+      // clamps an empty value to 1 on every keystroke (so the field can
+      // never sit at "nothing typed yet" and silently send `count: NaN`),
+      // and that same clamp fires mid-sequence on a keystroke-by-keystroke
+      // `type`, turning a cleared field mid-edit into "1" a moment before
+      // "5" is appended after it. One change event sets the whole value at
+      // once, the way a real "5" keystroke into an empty, unclamped field
+      // would look from the DOM's side.
+      fireEvent.change(countInput, { target: { value: "5" } });
+
+      await userEvent.click(screen.getByRole("button", { name: "Randomise un-sampled" }));
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/admin/videos/dQw4w9WgXcQ/prelabel",
+          expect.objectContaining({
+            method: "POST",
+            body: JSON.stringify({ count: 5, strategy: "random" }),
+          }),
+        ),
+      );
+    });
+
+    it("shows the verification pool's remaining count from labelling stats", async () => {
+      const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.startsWith("/api/admin/labelling/stats")) {
+          return Promise.resolve(json(labellingStats(7)));
+        }
+        return Promise.resolve(json(page()));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderPage();
+
+      expect(await screen.findByText(/frames waiting for a ruling/)).toBeInTheDocument();
+      expect(screen.getByText("7")).toBeInTheDocument();
+    });
   });
 });

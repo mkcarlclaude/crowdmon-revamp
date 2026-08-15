@@ -722,6 +722,19 @@ func (p Pipeline) report(
 // objects rather than a source video on local disk, so it can run on any box
 // that can reach the bucket. That is a property of the job kind and not an
 // accident of the implementation, which is why nothing here calls p.Store.
+//
+// Two input paths since M17 (plan §B), in `dryrun`'s own idiom below:
+// `job.Prelabel` set means the API already picked the frame list — either an
+// admin hand-picked it or the API drew a random not-yet-sampled batch — and
+// this worker's job is only to iterate it, exactly as `job.Dryrun.R2Key`
+// means the single-frame dry-run's key arrived pre-resolved. `job.Prelabel`
+// unset means the automatic first pass (M11.1), unchanged: `p.Sampler` draws
+// its own bounded, timeline-spread subset, exactly as before this milestone.
+// The two paths are kept visibly separate rather than folded into one
+// pre-populated-or-drawn list, for `dryrun`'s own reason: these are
+// different activities (a selection the API already made vs. one this
+// worker still has to make), and a unified path would blur that distinction
+// in the one place it is supposed to be legible.
 func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 	ctx, span := tracer().Start(ctx, "job.prelabel", trace.WithAttributes(
 		attribute.Int("crowdmon.job.id", job.Id),
@@ -762,9 +775,27 @@ func (p Pipeline) prelabel(ctx context.Context, job *api.Job) error {
 			"no active class prompts: prelabel job %d has nothing to detect", job.Id))
 	}
 
-	sampled, err := p.sample(ctx, *job.VideoId)
-	if err != nil {
-		return recordErr(span, fmt.Errorf("sampling frames for %s: %w", *job.VideoId, err))
+	var sampled []SampledImage
+	if job.Prelabel != nil {
+		// Explicit list from the API (M17, plan §B): selection already
+		// happened server-side, before this job was ever claimable, so there
+		// is nothing here to select — no p.Sampler call and no `sample.select`
+		// span, `dryrun`'s own single-frame branch's reasoning: a span named
+		// after selection would describe an operation that did not happen.
+		sampled = make([]SampledImage, len(job.Prelabel.Images))
+		for i, image := range job.Prelabel.Images {
+			sampled[i] = SampledImage{
+				Key:              image.R2Key,
+				TimestampSeconds: float64(image.TimestampSeconds),
+			}
+		}
+		span.SetAttributes(attribute.Bool("crowdmon.prelabel.explicit_selection", true))
+	} else {
+		var err error
+		sampled, err = p.sample(ctx, *job.VideoId)
+		if err != nil {
+			return recordErr(span, fmt.Errorf("sampling frames for %s: %w", *job.VideoId, err))
+		}
 	}
 
 	span.SetAttributes(

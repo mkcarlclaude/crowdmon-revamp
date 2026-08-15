@@ -763,9 +763,12 @@ type SnapshotImage struct {
 	// SelectionReason is nil for an image with no stamp (unreachable in v2:
 	// an image only qualifies by carrying a prediction, and every predicted
 	// image has been through reportPredictionsHandler's stamp — see
-	// SnapshotSourceImage's own comment in schemas.ts) or "random", the only
-	// value v2 ever writes. worker.SnapshotBuilder reads it to decide the
-	// split (M15.2): "random" is held out of train.
+	// SnapshotSourceImage's own comment in schemas.ts), "random" (the
+	// automatic first pass, and a supplementary randomised draw — M17, plan
+	// §B), or "manual" (an admin's hand-picked supplementary selection,
+	// M17). worker.SnapshotBuilder reads it to decide the split (M15.2):
+	// "random" is held out of train, everything else — "manual" included —
+	// lands in it.
 	SelectionReason *string
 	Labels          []SnapshotLabel
 }

@@ -109,6 +109,21 @@ func (e CompleteRequestStatus) Valid() bool {
 	}
 }
 
+// Defines values for CreatePrelabelRequestStrategy.
+const (
+	CreatePrelabelRequestStrategyRandom CreatePrelabelRequestStrategy = "random"
+)
+
+// Valid indicates whether the value is a known member of the CreatePrelabelRequestStrategy enum.
+func (e CreatePrelabelRequestStrategy) Valid() bool {
+	switch e {
+	case CreatePrelabelRequestStrategyRandom:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseService.
 const (
 	CrowdmonApi HealthResponseService = "crowdmon-api"
@@ -202,6 +217,24 @@ func (e LabellingBatchUrlMode) Valid() bool {
 	case LabellingBatchUrlModeProxy:
 		return true
 	case LabellingBatchUrlModeSigned:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PrelabelJobSelectionReason.
+const (
+	PrelabelJobSelectionReasonManual PrelabelJobSelectionReason = "manual"
+	PrelabelJobSelectionReasonRandom PrelabelJobSelectionReason = "random"
+)
+
+// Valid indicates whether the value is a known member of the PrelabelJobSelectionReason enum.
+func (e PrelabelJobSelectionReason) Valid() bool {
+	switch e {
+	case PrelabelJobSelectionReasonManual:
+		return true
+	case PrelabelJobSelectionReasonRandom:
 		return true
 	default:
 		return false
@@ -494,6 +527,9 @@ type AdminVideoImage struct {
 	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
 	R2Key string `json:"r2_key"`
 
+	// Sampled Example: false
+	Sampled bool `json:"sampled"`
+
 	// TimestampSeconds Example: 42
 	TimestampSeconds float32 `json:"timestamp_seconds"`
 
@@ -636,6 +672,19 @@ type CreateMissingReportRequest struct {
 	// ClassId Example: 3
 	ClassId *int `json:"class_id,omitempty"`
 }
+
+// CreatePrelabelRequest defines model for CreatePrelabelRequest.
+type CreatePrelabelRequest struct {
+	// Count Example: 50
+	Count *int `json:"count,omitempty"`
+
+	// ImageIds Example: [7,12,19]
+	ImageIds *[]int                         `json:"image_ids,omitempty"`
+	Strategy *CreatePrelabelRequestStrategy `json:"strategy,omitempty"`
+}
+
+// CreatePrelabelRequestStrategy defines model for CreatePrelabelRequest.Strategy.
+type CreatePrelabelRequestStrategy string
 
 // CreatePublicVerdictsRequest defines model for CreatePublicVerdictsRequest.
 type CreatePublicVerdictsRequest struct {
@@ -818,8 +867,9 @@ type Job struct {
 	Dryrun   *DryRunWork `json:"dryrun,omitempty"`
 
 	// Id Example: 1
-	Id   int     `json:"id"`
-	Kind JobKind `json:"kind"`
+	Id       int           `json:"id"`
+	Kind     JobKind       `json:"kind"`
+	Prelabel *PrelabelWork `json:"prelabel,omitempty"`
 
 	// QueueWaitSeconds Example: 42
 	QueueWaitSeconds int `json:"queue_wait_seconds"`
@@ -997,6 +1047,29 @@ type PrelabelClass struct {
 
 	// PromptVersion Example: 2026-08-08-a
 	PromptVersion string `json:"prompt_version"`
+}
+
+// PrelabelJob defines model for PrelabelJob.
+type PrelabelJob struct {
+	// Images Example: 24
+	Images int `json:"images"`
+
+	// JobId Example: 87
+	JobId int `json:"job_id"`
+
+	// SelectionReason Example: manual
+	SelectionReason PrelabelJobSelectionReason `json:"selection_reason"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
+// PrelabelJobSelectionReason Example: manual
+type PrelabelJobSelectionReason string
+
+// PrelabelWork defines model for PrelabelWork.
+type PrelabelWork struct {
+	Images []VideoImage `json:"images"`
 }
 
 // ProposedBox defines model for ProposedBox.
@@ -1392,6 +1465,9 @@ type SubmitVerdictsJSONRequestBody = CreateVerdictsRequest
 // SubmitVideoJSONRequestBody defines body for SubmitVideo for application/json ContentType.
 type SubmitVideoJSONRequestBody = SubmitVideoRequest
 
+// CreatePrelabelJSONRequestBody defines body for CreatePrelabel for application/json ContentType.
+type CreatePrelabelJSONRequestBody = CreatePrelabelRequest
+
 // ClaimJobJSONRequestBody defines body for ClaimJob for application/json ContentType.
 type ClaimJobJSONRequestBody = ClaimRequest
 
@@ -1717,6 +1793,24 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
 	ListAdminVideoImages(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreatePrelabelWithBody Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+	//
+	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
+	CreatePrelabelWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePrelabel Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+	//
+	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
+	CreatePrelabel(ctx context.Context, id string, body CreatePrelabelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListActiveClasses The classes a prelabel job's detector currently runs against
 	//
 	// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
@@ -1905,7 +1999,7 @@ type ClientInterface interface {
 
 	// ListVideoImages The candidate pool a prelabel job's sampler draws from
 	//
-	// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. A `dryrun` job (M12.2) draws from the same pool and is accepted here too — see the handler's comment for why the weaker uniqueness of that kind costs this read nothing. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
+	// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `jobs` for a claimed row of the right kind rather than a job's primary key. Before migration 0011 (M17, plan §B), that read was provably *exact* — `idx_jobs_one_prelabel_per_video` (migration 0005) guaranteed at most one held prelabel job per video, so finding a row proved this worker held *the* one. That index is gone now, dropped so an admin can queue a genuinely second prelabel job for the same video (`createPrelabelHandler`), so this read proves the same thing `dryrun`'s own case always proved: this worker holds *a* claimed sampling job for this video, not provably the only one there could be. That is still the whole guarantee this endpoint needs — the response is the video's entire image pool, identical for every job that asks, so a second concurrently-claimed prelabel or dry-run job on the same video would get the identical answer this one does. In practice this endpoint is now only ever reached by the automatic first pass anyway: a supplementary job's claim carries its selection inline (`Job.prelabel`), so its worker never calls this route at all. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
 	//
 	// Corresponds with GET /api/videos/{video_id}/images (the `ListVideoImages` operationId).
 	ListVideoImages(ctx context.Context, videoId string, params *ListVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2420,6 +2514,44 @@ func (c *Client) ListAdminVideoImages(ctx context.Context, id string, params *Li
 	return c.Client.Do(req)
 }
 
+// CreatePrelabelWithBody Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+//
+// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
+func (c *Client) CreatePrelabelWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePrelabelRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePrelabel Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+//
+// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
+func (c *Client) CreatePrelabel(ctx context.Context, id string, body CreatePrelabelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePrelabelRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListActiveClasses The classes a prelabel job's detector currently runs against
 //
 // M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
@@ -2828,7 +2960,7 @@ func (c *Client) SubmitPublicVerdicts(ctx context.Context, id int, body SubmitPu
 
 // ListVideoImages The candidate pool a prelabel job's sampler draws from
 //
-// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. A `dryrun` job (M12.2) draws from the same pool and is accepted here too — see the handler's comment for why the weaker uniqueness of that kind costs this read nothing. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
+// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `jobs` for a claimed row of the right kind rather than a job's primary key. Before migration 0011 (M17, plan §B), that read was provably *exact* — `idx_jobs_one_prelabel_per_video` (migration 0005) guaranteed at most one held prelabel job per video, so finding a row proved this worker held *the* one. That index is gone now, dropped so an admin can queue a genuinely second prelabel job for the same video (`createPrelabelHandler`), so this read proves the same thing `dryrun`'s own case always proved: this worker holds *a* claimed sampling job for this video, not provably the only one there could be. That is still the whole guarantee this endpoint needs — the response is the video's entire image pool, identical for every job that asks, so a second concurrently-claimed prelabel or dry-run job on the same video would get the identical answer this one does. In practice this endpoint is now only ever reached by the automatic first pass anyway: a supplementary job's claim carries its selection inline (`Job.prelabel`), so its worker never calls this route at all. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
 //
 // Corresponds with GET /api/videos/{video_id}/images (the `ListVideoImages` operationId).
 func (c *Client) ListVideoImages(ctx context.Context, videoId string, params *ListVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3843,6 +3975,53 @@ func NewListAdminVideoImagesRequest(server string, id string, params *ListAdminV
 	return req, nil
 }
 
+// NewCreatePrelabelRequest calls the generic CreatePrelabel builder with application/json body
+func NewCreatePrelabelRequest(server string, id string, body CreatePrelabelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePrelabelRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreatePrelabelRequestWithBody constructs an http.Request for the CreatePrelabel method, with any body, and a specified content type
+func NewCreatePrelabelRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/videos/%s/prelabel", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListActiveClassesRequest constructs an http.Request for the ListActiveClasses method
 func NewListActiveClassesRequest(server string) (*http.Request, error) {
 	var err error
@@ -4804,6 +4983,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
 	ListAdminVideoImagesWithResponse(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*ListAdminVideoImagesResponse, error)
 
+	// CreatePrelabelWithBodyWithResponse Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+	//
+	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
+	CreatePrelabelWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePrelabelResponse, error)
+
+	// CreatePrelabelWithResponse Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+	//
+	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
+	CreatePrelabelWithResponse(ctx context.Context, id string, body CreatePrelabelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePrelabelResponse, error)
+
 	// ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
 	//
 	// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
@@ -5000,7 +5197,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListVideoImagesWithResponse The candidate pool a prelabel job's sampler draws from
 	//
-	// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. A `dryrun` job (M12.2) draws from the same pool and is accepted here too — see the handler's comment for why the weaker uniqueness of that kind costs this read nothing. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
+	// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `jobs` for a claimed row of the right kind rather than a job's primary key. Before migration 0011 (M17, plan §B), that read was provably *exact* — `idx_jobs_one_prelabel_per_video` (migration 0005) guaranteed at most one held prelabel job per video, so finding a row proved this worker held *the* one. That index is gone now, dropped so an admin can queue a genuinely second prelabel job for the same video (`createPrelabelHandler`), so this read proves the same thing `dryrun`'s own case always proved: this worker holds *a* claimed sampling job for this video, not provably the only one there could be. That is still the whole guarantee this endpoint needs — the response is the video's entire image pool, identical for every job that asks, so a second concurrently-claimed prelabel or dry-run job on the same video would get the identical answer this one does. In practice this endpoint is now only ever reached by the automatic first pass anyway: a supplementary job's claim carries its selection inline (`Job.prelabel`), so its worker never calls this route at all. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6471,6 +6668,82 @@ func (r ListAdminVideoImagesResponse) ContentType() string {
 	return ""
 }
 
+type CreatePrelabelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *PrelabelJob
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreatePrelabelResponse) GetJSON201() *PrelabelJob {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreatePrelabelResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreatePrelabelResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreatePrelabelResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreatePrelabelResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreatePrelabelResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePrelabelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePrelabelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePrelabelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePrelabelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListActiveClassesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7667,6 +7940,36 @@ func (c *ClientWithResponses) ListAdminVideoImagesWithResponse(ctx context.Conte
 	return ParseListAdminVideoImagesResponse(rsp)
 }
 
+// CreatePrelabelWithBodyWithResponse Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+//
+// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
+func (c *ClientWithResponses) CreatePrelabelWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePrelabelResponse, error) {
+	rsp, err := c.CreatePrelabelWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePrelabelResponse(rsp)
+}
+
+// CreatePrelabelWithResponse Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+//
+// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
+func (c *ClientWithResponses) CreatePrelabelWithResponse(ctx context.Context, id string, body CreatePrelabelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePrelabelResponse, error) {
+	rsp, err := c.CreatePrelabel(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePrelabelResponse(rsp)
+}
+
 // ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
 //
 // M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
@@ -7995,7 +8298,7 @@ func (c *ClientWithResponses) SubmitPublicVerdictsWithResponse(ctx context.Conte
 
 // ListVideoImagesWithResponse The candidate pool a prelabel job's sampler draws from
 //
-// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. A `dryrun` job (M12.2) draws from the same pool and is accepted here too — see the handler's comment for why the weaker uniqueness of that kind costs this read nothing. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
+// M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `jobs` for a claimed row of the right kind rather than a job's primary key. Before migration 0011 (M17, plan §B), that read was provably *exact* — `idx_jobs_one_prelabel_per_video` (migration 0005) guaranteed at most one held prelabel job per video, so finding a row proved this worker held *the* one. That index is gone now, dropped so an admin can queue a genuinely second prelabel job for the same video (`createPrelabelHandler`), so this read proves the same thing `dryrun`'s own case always proved: this worker holds *a* claimed sampling job for this video, not provably the only one there could be. That is still the whole guarantee this endpoint needs — the response is the video's entire image pool, identical for every job that asks, so a second concurrently-claimed prelabel or dry-run job on the same video would get the identical answer this one does. In practice this endpoint is now only ever reached by the automatic first pass anyway: a supplementary job's claim carries its selection inline (`Job.prelabel`), so its worker never calls this route at all. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -9158,6 +9461,67 @@ func ParseListAdminVideoImagesResponse(rsp *http.Response) (*ListAdminVideoImage
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePrelabelResponse parses an HTTP response from a CreatePrelabelWithResponse call
+func ParseCreatePrelabelResponse(rsp *http.Response) (*CreatePrelabelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePrelabelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PrelabelJob
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest ErrorResponse

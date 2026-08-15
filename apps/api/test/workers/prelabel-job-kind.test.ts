@@ -63,7 +63,16 @@ describe("migration 0005: jobs.kind admits 'prelabel'", () => {
     ).rejects.toThrow(/UNIQUE constraint failed/);
   });
 
-  it("collides a second prelabel job for the same video — the new idx_jobs_one_prelabel_per_video", async () => {
+  // Migration 0005 added `idx_jobs_one_prelabel_per_video` here, and this
+  // test once pinned the collision it enforced — reproduced verbatim in
+  // migration 0011's own commit history. M17 (plan §B) is the reason it no
+  // longer applies: an admin queuing a supplementary prelabel pass over a
+  // video that already has one is the *feature*, not a bug the schema should
+  // still be preventing, so migration 0011 drops that index outright (see
+  // its own comment for why the auto-enqueue's exactly-once guarantee does
+  // not depend on it). This test now pins the opposite: a second prelabel
+  // job for the same video is an ordinary insert, not a constraint failure.
+  it("allows a second prelabel job for the same video — idx_jobs_one_prelabel_per_video was dropped in migration 0011", async () => {
     await seedVideo("ddddddddddd");
 
     await env.DB.prepare("INSERT INTO jobs (kind, video_id) VALUES ('prelabel', ?)")
@@ -74,15 +83,11 @@ describe("migration 0005: jobs.kind admits 'prelabel'", () => {
       env.DB.prepare("INSERT INTO jobs (kind, video_id) VALUES ('prelabel', ?)")
         .bind("ddddddddddd")
         .run(),
-    ).rejects.toThrow(/UNIQUE constraint failed/);
+    ).resolves.toMatchObject({ success: true });
 
-    // A download and a chunk job for the same video are unaffected — the
-    // index is partial on kind = 'prelabel', not a blanket one-job-per-video
-    // rule.
-    await env.DB.prepare("INSERT INTO jobs (kind, video_id) VALUES ('download', ?)")
-      .bind("ddddddddddd")
-      .run();
-    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM jobs WHERE video_id = ?")
+    const count = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM jobs WHERE video_id = ? AND kind = 'prelabel'",
+    )
       .bind("ddddddddddd")
       .first<{ n: number }>();
     expect(count?.n).toBe(2);

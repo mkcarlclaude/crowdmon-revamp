@@ -1216,7 +1216,14 @@ and M18 (annotation filters, verdict preview, public frame variety,
 [#145](https://github.com/mkcarlclaude/crowdmon-revamp/pull/145)) landed against their
 plans in `docs/superpowers/plans/` rather than against a checklist here. Recorded so the
 gap between M16 and M19 reads as a bookkeeping omission rather than as milestones that
-were skipped. M17 §B — on-demand prelabel — is planned and not built.
+were skipped.
+
+M17 §B — on-demand supplementary prelabel — landed the same way while M19 was in review
+([#149](https://github.com/mkcarlclaude/crowdmon-revamp/pull/149)): an admin enqueue
+route, a worker that samples an explicit list, and two actions on `/admin/videos/:id`
+(hand-picked frames, or a randomised draw over un-sampled ones). The automatic first pass
+is untouched, so PRD §9's *"with no human trigger"* clause and its recorded acceptance
+evidence still hold — that was the constraint the M17 plan was built around.
 
 ## M19 — Video summary, one video list, and a queue that names the kind
 

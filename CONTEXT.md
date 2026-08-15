@@ -525,6 +525,20 @@ unbiased sample, and the comparison this section exists to protect becomes unava
 for good. Confidence is persisted from the first prediction row for the same reason — it
 is what a later band selector needs and cannot reconstruct.
 
+**Amended again in M17 (plan §B): a fourth value, `manual`, outside this section's stated
+`uncertain | random | diverse` vocabulary.** On-demand supplementary prelabel lets an admin
+hand-pick specific frames to refill a drained verification pool — a biased sample by
+construction, since a human chose them for a reason. Stamping that `random` would be
+exactly the failure this section calls non-negotiable: it would pollute the permanent,
+frozen evaluation pool with a selection that was never unbiased, and (per this section's
+own sentence) the pollution could never be retro-declared away. `manual` is not a
+weighted-mix leg like `uncertain`/`diverse` — it carries no weighting and no plan to ever
+have one — so it is best read as a second axis (*how* a frame entered the pool: server
+policy vs. a human's own judgement) rather than a fourth rung on the same 70/20/10 ladder.
+`splitFor()` (`worker/internal/snapshot/builder.go`) needed no code change for it: the
+rule was already "`random` → eval, everything else → train," and `manual` is simply the
+first value other than `random` that rule has ever actually had to route.
+
 ### Model registry (Q17)
 
 Models land at versioned R2 paths (`models/v{n}/`). A `model_versions` table records
@@ -899,6 +913,21 @@ queued before every worker polling the queue understands it does not wait quietl
 fails loud. M16 ships the read half so the page that eventually grows that button
 already tells the truth without one.
 
+**Amended, M17 (plan §B): the button shipped, and the third prerequisite above inverted
+rather than landing as anticipated.** All four things this paragraph named turned out to
+be needed — a migration (0011), an admin enqueue route (`createPrelabelHandler`), and an
+explicit answer to the provenance rule (`jobs.selection_reason`, write-once) — except the
+third. Rather than teaching `ImageSampler` to draw only frames not already sampled, M17
+moves selection out of the Go worker entirely: the API decides which frames a supplementary
+pass runs against (hand-picked or a random draw over `WHERE selection_reason IS NULL`) and
+hands the worker an explicit list on the claim, the same shape `chunk`'s window and
+(M17, plan §A) a single-frame dry-run's `r2_key` already arrive in. Two selection
+mechanisms — one in Go for a re-sample, one in the API for a hand-pick — was the thing to
+avoid, and "frames not already sampled" is a `WHERE` clause that belongs next to the data
+it filters, not a second copy of that predicate re-implemented against R2 keys in Go. The
+practical effect: `ImageSampler` still exists and still runs the automatic first pass
+unchanged, but a re-run against an already-labelled video never calls it at all.
+
 ---
 
 ## 8. Rejected options
@@ -988,6 +1017,21 @@ Recorded so they are not re-litigated.
    day comes, the fix is a `Sampler` that inspects the span name — always-sample
    `job.prelabel`'s tree, ratio-sample the rest — not one ratio applied uniformly to
    everything this process exports.
+
+   **Amendment, M17 (plan §B): the low-rate premise no longer holds by construction.**
+   The argument above rests on "one prelabel job per video, bounded to M11.3's sample
+   budget" — true only while `idx_jobs_one_prelabel_per_video` made a second pass
+   unreachable. On-demand supplementary prelabel (migration 0011) drops that index on
+   purpose, so a video can now have as many `prelabel` jobs as an admin queues refills for.
+   The posture itself is not changed by this — `job.prelabel` is exactly as high-value per
+   occurrence as it always was, an on-demand pass is still evidence behind the same kind of
+   decision the automatic one is — but the rate is now something an *operator* controls
+   rather than something the schema bounded, and this section's own "threshold for
+   revisiting" (job throughput against Tempo's 7-day retention) is the thing to watch as
+   that knob gets used. Nothing to do yet: a home box running one worker cannot generate
+   enough concurrent `prelabel` jobs to approach that threshold on its own, and this note
+   exists so the day it looks close, the premise that changed is on record rather than
+   rediscovered.
 5. ~~**Deadman check.**~~ **Not an open item — an accepted risk, decided 2026-08-08.**
    Nothing tells you the collector died, and nothing will. Issue #48 closed as not
    planned; M9.3 was dropped from v1 rather than deferred.

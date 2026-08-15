@@ -28,22 +28,25 @@ import {
  * `model_id` and `prelabelled_at` for exactly this reason — one request feeds
  * both the dry-run picker and this table.
  *
- * **The M16.6 scope line, carried over verbatim from the deleted
- * `Detection.tsx` rather than dropped with the file it lived in** — why
- * there is no re-run button here: a re-run needs a migration (the job row
- * carries no sample parameter today), an admin enqueue route, a Go worker
- * change that samples only frames not already sampled, and an answer to
- * CONTEXT.md §Q19's provenance rule — thresholds get stamped onto the rows
- * they produced, or this table becomes an unrecorded mixture of regimes the
- * moment two sampling runs disagree. That is a milestone with a worker
- * release in it, not a button. This page exists so the page that eventually
- * grows one already tells the truth without it — an admin can see exactly
+ * **The M16.6 scope line, carried over from the deleted `Detection.tsx`
+ * rather than dropped with the file it lived in** — why there was no re-run
+ * button on that page: a re-run needs a migration, an admin enqueue route, a
+ * Go worker change that samples only frames not already sampled, and an
+ * answer to CONTEXT.md §Q19's provenance rule — thresholds get stamped onto
+ * the rows they produced, or this table becomes an unrecorded mixture of
+ * regimes the moment two sampling runs disagree. That was a milestone with a
+ * worker release in it, not a button.
+ *
+ * **That milestone shipped while M19 was in review** (M17 plan §B, merged as
+ * `bb13198`), so the sentence that used to end "an admin can see exactly
  * which videos are under-sampled today, they just cannot fix it from here
- * yet. (M17's on-demand prelabel plan, `2026-08-12-on-demand-prelabel-and-
- * single-frame-dryrun.md` §B, is the milestone that eventually does grow
- * that button, and assumes this coverage table is where it hangs — its own
- * §B references pointed at `/admin/detection`; read them as `/admin/videos`
- * now.)
+ * yet" is now only half true: they still cannot fix it *from here*, but the
+ * button exists one click away, on `/admin/videos/:id`. It landed there
+ * rather than on this table because a supplementary pass needs a frame
+ * selection — hand-picked ids or a randomised draw over un-sampled frames —
+ * and this row carries a count, not frames. This table stays the read-only
+ * coverage view it was built as; what it is now for is *deciding which video
+ * to open*.
  */
 export function AdminVideosPage() {
   return (

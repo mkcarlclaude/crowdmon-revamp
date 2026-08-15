@@ -291,6 +291,9 @@
           },
           "dryrun": {
             "$ref": "#/components/schemas/DryRunWork"
+          },
+          "prelabel": {
+            "$ref": "#/components/schemas/PrelabelWork"
           }
         },
         "required": [
@@ -358,6 +361,40 @@
           "class_name",
           "appearance_prompt",
           "sample_size"
+        ]
+      },
+      "PrelabelWork": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VideoImage"
+            },
+            "maxItems": 1000
+          }
+        },
+        "required": [
+          "images"
+        ]
+      },
+      "VideoImage": {
+        "type": "object",
+        "properties": {
+          "r2_key": {
+            "type": "string",
+            "minLength": 1,
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "example": 42
+          }
+        },
+        "required": [
+          "r2_key",
+          "timestamp_seconds"
         ]
       },
       "ClaimRequest": {
@@ -697,25 +734,6 @@
         "required": [
           "video_id",
           "images"
-        ]
-      },
-      "VideoImage": {
-        "type": "object",
-        "properties": {
-          "r2_key": {
-            "type": "string",
-            "minLength": 1,
-            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
-          },
-          "timestamp_seconds": {
-            "type": "number",
-            "minimum": 0,
-            "example": 42
-          }
-        },
-        "required": [
-          "r2_key",
-          "timestamp_seconds"
         ]
       },
       "JobStats": {
@@ -1641,6 +1659,10 @@
               "verified"
             ],
             "example": "unverified"
+          },
+          "sampled": {
+            "type": "boolean",
+            "example": false
           }
         },
         "required": [
@@ -1650,7 +1672,8 @@
           "timestamp_seconds",
           "public_sample",
           "predictions",
-          "verdict_state"
+          "verdict_state",
+          "sampled"
         ]
       },
       "AdminVideoDetail": {
@@ -1812,6 +1835,73 @@
           "chunks_failed",
           "prelabel"
         ]
+      },
+      "PrelabelJob": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 87
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "selection_reason": {
+            "type": "string",
+            "enum": [
+              "random",
+              "manual"
+            ],
+            "example": "manual"
+          },
+          "images": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 24
+          }
+        },
+        "required": [
+          "job_id",
+          "video_id",
+          "selection_reason",
+          "images"
+        ]
+      },
+      "CreatePrelabelRequest": {
+        "type": "object",
+        "properties": {
+          "image_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "exclusiveMinimum": true
+            },
+            "minItems": 1,
+            "maxItems": 1000,
+            "example": [
+              7,
+              12,
+              19
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 1000,
+            "example": 50
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "random"
+            ]
+          }
+        }
       },
       "AdminSession": {
         "type": "object",
@@ -3108,7 +3198,7 @@
           "jobs"
         ],
         "summary": "The candidate pool a prelabel job's sampler draws from",
-        "description": "M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `idx_jobs_one_prelabel_per_video` (migration 0005) instead of a job's primary key. That partial unique index already guarantees at most one held prelabel job per video, which is exactly the lease this read needs to prove — the same strength of guarantee `HELD_BY` gives every job-id-scoped route here, just proved through a different column. A `dryrun` job (M12.2) draws from the same pool and is accepted here too — see the handler's comment for why the weaker uniqueness of that kind costs this read nothing. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).",
+        "description": "M11.3: every row `reportImages` has written for this video, oldest timestamp first — the whole pool `ImageSampler.Sample` (worker/internal/worker/pipeline.go) draws its bounded, timeline-spread subset from. Scoped by video id rather than by job id, unlike every other worker-facing route in this file: `Sample`'s signature is handed only a video id (it is called once per video, not once per job — the same reason `prelabel` is one job per video rather than one per chunk), so the lease check below reads `jobs` for a claimed row of the right kind rather than a job's primary key. Before migration 0011 (M17, plan §B), that read was provably *exact* — `idx_jobs_one_prelabel_per_video` (migration 0005) guaranteed at most one held prelabel job per video, so finding a row proved this worker held *the* one. That index is gone now, dropped so an admin can queue a genuinely second prelabel job for the same video (`createPrelabelHandler`), so this read proves the same thing `dryrun`'s own case always proved: this worker holds *a* claimed sampling job for this video, not provably the only one there could be. That is still the whole guarantee this endpoint needs — the response is the video's entire image pool, identical for every job that asks, so a second concurrently-claimed prelabel or dry-run job on the same video would get the identical answer this one does. In practice this endpoint is now only ever reached by the automatic first pass anyway: a supplementary job's claim carries its selection inline (`Job.prelabel`), so its worker never calls this route at all. No Access assertion and no credential beyond `worker_id`: the same trust tier as the rest of `/api/jobs/*` (`jobStatsRoute`'s own comment explains why that boundary is where it is).",
         "parameters": [
           {
             "schema": {
@@ -4302,6 +4392,100 @@
           },
           "404": {
             "description": "No video with this id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/videos/{id}/prelabel": {
+      "post": {
+        "operationId": "createPrelabel",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Queue a supplementary prelabel pass over a hand-picked or randomised frame set",
+        "description": "Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "dQw4w9WgXcQ"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePrelabelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The supplementary prelabel job, queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrelabelJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, an image already carrying a selection_reason, or a random draw with nothing left to sample",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No video with this id, or a hand-picked image id this video does not have",
             "content": {
               "application/json": {
                 "schema": {

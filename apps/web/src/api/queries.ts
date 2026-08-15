@@ -11,6 +11,7 @@ import {
   type CreateClassRequest,
   type CreateDryRunRequest,
   type CreateMissingReportRequest,
+  type CreatePrelabelRequest,
   type CreatePublicVerdictsRequest,
   type CreateVerdictsRequest,
   DryRun,
@@ -20,6 +21,7 @@ import {
   LabellingBatch,
   LabellingStats,
   MissingReport,
+  PrelabelJob,
   PublicFrame,
   SnapshotJob,
   SnapshotList,
@@ -479,10 +481,9 @@ export const adminVideoImagesKey = (videoId: string, limit: number, offset: numb
  *
  * A new route (`GET /api/admin/videos/{id}/images`), not the worker-facing
  * `/api/videos/{video_id}/images` `useVideos`'s sibling hooks never touch —
- * that endpoint requires a held `prelabel`/`dryrun` lease
- * (`idx_jobs_one_prelabel_per_video`) no browser holds, which is exactly why
- * this route exists separately (see the route's own comment in
- * `admin-video-images.ts`).
+ * that endpoint requires a held `prelabel`/`dryrun` lease no browser holds,
+ * which is exactly why this route exists separately (see the route's own
+ * comment in `admin-video-images.ts`).
  *
  * `enabled: Boolean(videoId)` (M17, plan §A): `DryRunPanel`'s frame picker
  * calls this with whatever the video `<select>` currently holds, which is
@@ -524,6 +525,42 @@ export function useAdminVideoDetail(videoId: string) {
   return useQuery({
     queryKey: adminVideoDetailKey(videoId),
     queryFn: () => apiFetch(`/api/admin/videos/${encodeURIComponent(videoId)}`, AdminVideoDetail),
+  });
+}
+
+/**
+ * Queues an on-demand supplementary prelabel pass over one video (M17, plan
+ * §B) — `VideoDetail`'s two actions, "prelabel selected" (`image_ids`) and
+ * "randomise N un-sampled" (`{count, strategy:'random'}`), share this one
+ * mutation because they share everything downstream of the request body:
+ * `CreatePrelabelRequest`'s own `superRefine` is what tells the two modes
+ * apart, not two different hooks here.
+ *
+ * Invalidates `jobsKeyPrefix`, `useCreateDryRun`'s own idiom — the queue is
+ * where the job this just created shows up. The *prefix*, not one status's
+ * own key: M19 (plan §C2) split the jobs key by status chip, and invalidating
+ * `jobsKey()` alone would refresh whichever chip happens to be "all" while
+ * leaving a `/admin/queue` filtered to `pending` showing a queue without the
+ * job just queued. Deliberately does *not* invalidate
+ * `labellingStatsKey` or `adminVideoImagesKeyPrefix`: the pool count and each
+ * frame's `sampled` flag both read `images.selection_reason`, which is
+ * stamped once a worker actually reports back
+ * (`reportPredictionsHandler`'s own comment on why that stamp lands with the
+ * report rather than at selection time) — refetching either query the
+ * instant this call returns would show the same numbers it showed before,
+ * for a job that has not run yet.
+ */
+export function useCreatePrelabel(videoId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: z.infer<typeof CreatePrelabelRequest>) =>
+      apiFetch(`/api/admin/videos/${encodeURIComponent(videoId)}/prelabel`, PrelabelJob, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: jobsKeyPrefix }),
   });
 }
 

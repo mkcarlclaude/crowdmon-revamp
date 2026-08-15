@@ -33,6 +33,7 @@ import {
   labellingStatsRoute,
 } from "./routes/admin-labelling";
 import { adminLoginHandler, adminLoginRoute } from "./routes/admin-login";
+import { createPrelabelHandler, createPrelabelRoute } from "./routes/admin-prelabel";
 import { adminSessionHandler, adminSessionRoute } from "./routes/admin-session";
 import {
   createSnapshotHandler,
@@ -188,6 +189,7 @@ app.openapi(listVerdictsRoute, listVerdictsHandler);
 app.openapi(listVerdictAnnotatorsRoute, listVerdictAnnotatorsHandler);
 app.openapi(listAdminVideoImagesRoute, listAdminVideoImagesHandler);
 app.openapi(adminVideoDetailRoute, adminVideoDetailHandler);
+app.openapi(createPrelabelRoute, createPrelabelHandler);
 app.openapi(adminSessionRoute, adminSessionHandler);
 app.openapi(updatePublicSampleRoute, updatePublicSampleHandler);
 app.openapi(publicFrameRoute, publicFrameHandler);

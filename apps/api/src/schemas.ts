@@ -109,6 +109,51 @@ export const ClaimRequest = z.object({ worker_id: workerId }).openapi("ClaimRequ
 export const HeartbeatRequest = z.object({ worker_id: workerId }).openapi("HeartbeatRequest");
 
 /**
+ * One row of `images` as `listVideoImages` reads it back — just enough for
+ * `ImageSampler` (worker/internal/worker/pipeline.go, M11.3) to draw its
+ * bounded, timeline-spread subset from: the `r2_key` `Detect` will fetch and
+ * the timestamp the spread is computed over.
+ *
+ * Deliberately not `ImageFrame`: that schema is the chunk worker's *write* —
+ * carries `phash`, and its own docblock describes it as "a frame the chunk
+ * worker reports" — and reusing it here would describe this response as a
+ * frame being written when it is the opposite direction, a frame being read
+ * back for a different job kind entirely.
+ *
+ * Moved above `Job` (M17, plan §B) so `Job.prelabel` below can reuse it
+ * directly rather than duplicate its two fields: a supplementary prelabel
+ * job's claim response and `listVideoImagesRoute`'s response are answering
+ * the same question — "which frames, and when" — for two different readers
+ * of the same table, and one shape for both is what keeps them from drifting
+ * apart the way `apps/api/src/routes/jobs.ts`'s header warns a hand-written
+ * `storage_url`/`url` split once did.
+ */
+const VideoImage = z
+  .object({
+    r2_key: z.string().min(1).openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    timestamp_seconds: z.number().nonnegative().openapi({ example: 42 }),
+  })
+  .openapi("VideoImage");
+
+/**
+ * The bound on `ReportPredictionsRequest.sampled_images` and, since M17 (plan
+ * §B), on `Job.prelabel.images` below — the same ceiling for the same reason:
+ * neither array multiplies by class count the way `predictions` does, so
+ * neither shares `MAX_PREDICTIONS_PER_JOB`'s reasoning. 5x the 200-image
+ * default is generous enough that no sane reconfiguration of
+ * `CROWDMON_PRELABEL_SAMPLE_SIZE`, nor a hand-picked or randomised
+ * supplementary batch an admin actually wants to queue in one request, trips
+ * it, while still rejecting outright a caller whose count is a typo rather
+ * than silently accepting and processing whatever it sends.
+ *
+ * Declared here, ahead of `Job`, rather than beside `MAX_PREDICTIONS_PER_JOB`
+ * further down (where it lived before M17): a `const` used inside an earlier
+ * top-level schema has to be declared before that schema runs, and `Job` is
+ * now one of its two callers.
+ */
+export const MAX_SAMPLED_IMAGES_PER_JOB = 200 * 5;
+
+/**
  * A claimed unit of work, carrying everything the worker needs to run it
  * without a second round trip.
  */
@@ -194,6 +239,29 @@ export const Job = z
       })
       .optional()
       .openapi("DryRunWork"),
+    // Present only for a `prelabel` job whose selection happened server-side
+    // (M17, plan §B) — a supplementary pass an admin queued, either a
+    // hand-picked set or a random draw over the not-yet-sampled remainder.
+    // `chunk` and `dryrun`'s idiom above: one queue, one job type on the
+    // wire, oapi-codegen renders this as a nil-able pointer the worker
+    // branches on.
+    //
+    // Absent for the automatic first pass (M11.1), which writes no
+    // `prelabel_images` rows at all — that job still means exactly what it
+    // always has, and a worker seeing no `prelabel` field falls back to
+    // `GET /api/videos/{video_id}/images` plus its own `Sampler`, unchanged
+    // since before this milestone. This is load-bearing, not a convenience,
+    // for the same reason `dryrun.r2_key` is: a worker that had to decide
+    // for itself whether a job was "supplementary" would be a second place
+    // that decision could be made, and the whole point of this field is that
+    // selection — hand-picked or randomised — happened once, server-side,
+    // before the job was ever claimable.
+    prelabel: z
+      .object({
+        images: z.array(VideoImage).max(MAX_SAMPLED_IMAGES_PER_JOB),
+      })
+      .optional()
+      .openapi("PrelabelWork"),
   })
   .openapi("Job");
 
@@ -514,19 +582,6 @@ export const JobStats = z
 export const MAX_PREDICTIONS_PER_JOB = 200 * 6 * 2;
 
 /**
- * The bound on `ReportPredictionsRequest.sampled_images`.
- *
- * One entry per image the sampler drew, regardless of whether the detector
- * found anything on it — unlike `predictions`, this array never multiplies by
- * class count, so it does not share `MAX_PREDICTIONS_PER_JOB`'s reasoning.
- * 5x the 200-image default is generous enough that no sane reconfiguration of
- * `CROWDMON_PRELABEL_SAMPLE_SIZE` trips it, while still rejecting outright a
- * worker whose configured budget is a typo rather than silently accepting and
- * processing whatever it sends.
- */
-export const MAX_SAMPLED_IMAGES_PER_JOB = 200 * 5;
-
-/**
  * The `{video_id}` path parameter, for `listVideoImagesRoute` — the one
  * worker-facing route in this file scoped by video rather than by job id
  * (see that route's own comment for why). `videos.id` is a bare TEXT primary
@@ -549,25 +604,6 @@ export const VideoIdParam = z.object({
 export const ListVideoImagesQuery = z.object({
   worker_id: workerId.openapi({ param: { name: "worker_id", in: "query" } }),
 });
-
-/**
- * One row of `images` as `listVideoImages` reads it back — just enough for
- * `ImageSampler` (worker/internal/worker/pipeline.go, M11.3) to draw its
- * bounded, timeline-spread subset from: the `r2_key` `Detect` will fetch and
- * the timestamp the spread is computed over.
- *
- * Deliberately not `ImageFrame`: that schema is the chunk worker's *write* —
- * carries `phash`, and its own docblock describes it as "a frame the chunk
- * worker reports" — and reusing it here would describe this response as a
- * frame being written when it is the opposite direction, a frame being read
- * back for a different job kind entirely.
- */
-const VideoImage = z
-  .object({
-    r2_key: z.string().min(1).openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
-    timestamp_seconds: z.number().nonnegative().openapi({ example: 42 }),
-  })
-  .openapi("VideoImage");
 
 /**
  * Named `VideoImages`, not after the operation: oapi-codegen owns the
@@ -1071,6 +1107,92 @@ export const ListDryRunsQuery = z.object({
     .optional()
     .openapi({ param: { name: "image_id", in: "query" }, type: "integer", example: 42 }),
 });
+
+/**
+ * What queuing an on-demand supplementary prelabel pass takes (M17, plan
+ * §B) — `POST /api/admin/videos/{id}/prelabel`.
+ *
+ * Two modes, `CreateDryRunRequest`'s idiom above: exactly one of `image_ids`
+ * (hand-pick specific frames) or `{count, strategy: "random"}` (let the
+ * server draw `count` frames at random from the video's not-yet-sampled
+ * remainder), enforced by the `superRefine` below rather than a
+ * discriminated union — the two modes share nothing else worth naming twice,
+ * and a discriminant tag would be one more thing a caller has to think
+ * about for no benefit to either runtime.
+ *
+ * `strategy` is a literal `"random"` rather than a boolean, on purpose, even
+ * though v2 has exactly one drawing strategy. §Q16's weighted mix
+ * (`uncertain`/`diverse`) is v4-scoped, not deleted, and a boolean here would
+ * have to become a string the day that lands — the same reason `strategy` is
+ * spelled out rather than inferred from "not `image_ids`".
+ *
+ * `image_ids` chooses `manual`; `{count, strategy: "random"}` chooses
+ * `random`. That distinction is CONTEXT.md §Q16's non-negotiable rule made
+ * concrete at the one place it can be gotten wrong: a hand-picked frame is a
+ * biased sample by construction, and stamping it `random` would silently
+ * pollute the permanent, frozen evaluation pool the mAP chart depends on
+ * being unbiased (see the plan's "Contradictions" §2). A random draw over the
+ * *remainder* is still an unbiased draw over whatever is left to draw from,
+ * so it keeps `random`'s meaning rather than needing a third value.
+ */
+export const CreatePrelabelRequest = z
+  .object({
+    image_ids: z
+      .array(z.int().positive())
+      .min(1)
+      .max(MAX_SAMPLED_IMAGES_PER_JOB)
+      .optional()
+      .openapi({ example: [7, 12, 19] }),
+    count: z.int().positive().max(MAX_SAMPLED_IMAGES_PER_JOB).optional().openapi({ example: 50 }),
+    strategy: z.literal("random").optional(),
+  })
+  .superRefine((body, ctx) => {
+    const handPicked = body.image_ids !== undefined;
+    const randomDraw = body.count !== undefined || body.strategy !== undefined;
+    if (handPicked === randomDraw) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "give exactly one of image_ids, or {count, strategy:'random'}, never both and never neither",
+        path: ["image_ids"],
+      });
+      return;
+    }
+    // Caught separately from the check above so a caller who sent `count`
+    // but forgot `strategy` (or the reverse) sees "you are missing half of
+    // the random mode" rather than the more confusing "you gave neither
+    // mode" — `randomDraw` above is deliberately true the moment *either*
+    // field is present, exactly so this branch can tell the two apart.
+    if (randomDraw && (body.count === undefined || body.strategy !== "random")) {
+      ctx.addIssue({
+        code: "custom",
+        message: "the random draw needs both count and strategy:'random'",
+        path: ["strategy"],
+      });
+    }
+  })
+  .openapi("CreatePrelabelRequest");
+
+/**
+ * What queuing a supplementary prelabel pass returns (M17, plan §B). Named
+ * `PrelabelJob`, not after the `createPrelabel` operation: oapi-codegen owns
+ * the `<OperationId>Response` namespace, the same reason `VideoSubmission`
+ * is not `SubmitVideoResponse`.
+ *
+ * `images` is a count, not the resolved id list — `ChunkFanOut.created`'s
+ * idiom, not `VideoImages.images`'s: the caller already knows which ids it
+ * asked for in the hand-picked mode, and in the random mode the point is
+ * "how many were drawn," which a count answers directly without asking the
+ * client to diff two arrays to find out whether the pool had enough left.
+ */
+export const PrelabelJob = z
+  .object({
+    job_id: z.int().positive().openapi({ example: 87 }),
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    selection_reason: z.enum(["random", "manual"]).openapi({ example: "manual" }),
+    images: z.int().nonnegative().openapi({ example: 24 }),
+  })
+  .openapi("PrelabelJob");
 
 /**
  * What a dry-run worker reports back (M12.2).
@@ -2094,6 +2216,15 @@ export const AdminVideoImagesQuery = z.object({
  * §Q10): a frame with no predictions at all is not merely "unverified" —
  * there is nothing on it for an operator to rule on — so it gets its own
  * state rather than being lumped in with a frame still waiting on a ruling.
+ *
+ * `sampled` (M17, plan §B) is `images.selection_reason IS NOT NULL`, the same
+ * predicate `createPrelabelHandler` refuses a hand-picked selection against.
+ * Added so the grid this route feeds can grey out — rather than let an
+ * operator pick, and then learn from a 400 — a frame some earlier pass
+ * already claimed. Deliberately a boolean, not the reason itself: which
+ * value it was sampled *as* (`random` vs `manual`) is a fact about the split
+ * a snapshot will use, not something this screen's selection UI has any
+ * decision to make differently for.
  */
 const AdminVideoImage = z
   .object({
@@ -2113,6 +2244,7 @@ const AdminVideoImage = z
     verdict_state: z
       .enum(["no_predictions", "unverified", "verified"])
       .openapi({ example: "unverified" }),
+    sampled: z.boolean().openapi({ example: false }),
   })
   .openapi("AdminVideoImage");
 

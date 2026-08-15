@@ -16,17 +16,30 @@ import { seedVideo } from "./seed";
  * nothing here calls.
  */
 
-/** A prelabel job already held by `workerId`, needing no `chunks` row (unlike `reportImages`'s target). */
-async function seedHeldJob(videoId: string, workerId = "w1"): Promise<number> {
+/**
+ * A prelabel job already held by `workerId`, needing no `chunks` row (unlike
+ * `reportImages`'s target).
+ *
+ * `selectionReason` defaults to `null` — every call site before M17 leaves it
+ * unset, and `reportPredictionsHandler`'s `job.selection_reason ?? 'random'`
+ * fallback is exactly what keeps those existing tests passing unmodified: a
+ * NULL column reads as `'random'`, the only value any prelabel job ever
+ * wrote before migration 0011 added the column.
+ */
+async function seedHeldJob(
+  videoId: string,
+  workerId = "w1",
+  selectionReason: "random" | "manual" | null = null,
+): Promise<number> {
   await seedVideo(videoId);
   const at = Math.floor(Date.now() / 1000);
 
   const row = await env.DB.prepare(
-    `INSERT INTO jobs (kind, video_id, status, attempts, claimed_by, claimed_at, heartbeat_at)
-          VALUES ('prelabel', ?, 'claimed', 1, ?, ?, ?)
+    `INSERT INTO jobs (kind, video_id, status, attempts, claimed_by, claimed_at, heartbeat_at, selection_reason)
+          VALUES ('prelabel', ?, 'claimed', 1, ?, ?, ?, ?)
        RETURNING id`,
   )
-    .bind(videoId, workerId, at, at)
+    .bind(videoId, workerId, at, at, selectionReason)
     .first<{ id: number }>();
   if (!row) throw new Error("seedHeldJob inserted nothing");
 
@@ -481,5 +494,59 @@ describe("POST /api/jobs/{id}/predictions — the sample's selection stamp", () 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { issues?: { path: string }[] };
     expect(body.issues?.map((i) => i.path)).toEqual(["sampled_images"]);
+  });
+
+  // M17, plan §B (migration 0011): before this milestone, a prelabel job
+  // always stamped the literal `'random'`, which was safe only because
+  // `idx_jobs_one_prelabel_per_video` made a second pass over any image
+  // unreachable. Two things changed to keep that safe once a second,
+  // on-demand pass is possible: the stamped *value* now comes from the job
+  // (`jobs.selection_reason`) rather than a hard-coded literal, and the
+  // UPDATE became write-once (`AND selection_reason IS NULL`).
+  it("stamps 'manual' when the job carries that selection_reason, not the literal 'random'", async () => {
+    const jobId = await seedHeldJob("rrrrrrrrrrr", "w1", "manual");
+    await seedImage("rrrrrrrrrrr", "rrrrrrrrrrr/0000000.jpg", 1);
+
+    const res = await reportPredictions(
+      jobId,
+      reported({ predictions: [], sampled_images: ["rrrrrrrrrrr/0000000.jpg"] }),
+    );
+
+    expect(res.status).toBe(200);
+    const { results } = await selectionReason("rrrrrrrrrrr");
+    expect(results).toEqual([{ r2_key: "rrrrrrrrrrr/0000000.jpg", selection_reason: "manual" }]);
+  });
+
+  // The regression test the plan calls for by name: "A second prelabel pass
+  // over an already-sampled image leaves selection_reason unchanged.
+  // Without this test the hazard returns the first time somebody refactors
+  // the stamp." Simulates exactly the failure migration 0011's own comment
+  // describes — a later pass (here, a hand-picked one) naming an image an
+  // earlier pass already stamped `random` — and asserts the write-once
+  // guard, not `createPrelabelHandler`'s own belt-and-suspenders refusal
+  // (covered separately in admin-prelabel.test.ts), is what actually stops
+  // the eval-pool image from silently moving into train.
+  it("leaves an already-sampled image's selection_reason unchanged on a second pass", async () => {
+    const jobId = await seedHeldJob("sssssssssss", "w1", "manual");
+    await seedImage("sssssssssss", "sssssssssss/0000000.jpg", 1);
+
+    // The image's first pass: an ordinary automatic run already stamped it
+    // `random`, putting it in the permanent evaluation pool.
+    await env.DB.prepare("UPDATE images SET selection_reason = 'random' WHERE r2_key = ?")
+      .bind("sssssssssss/0000000.jpg")
+      .run();
+
+    // A later, hand-picked job's report names the same image.
+    const res = await reportPredictions(
+      jobId,
+      reported({ predictions: [], sampled_images: ["sssssssssss/0000000.jpg"] }),
+    );
+
+    expect(res.status).toBe(200);
+    const { results } = await selectionReason("sssssssssss");
+    // Still 'random', not overwritten to 'manual' — the write-once guard
+    // (`AND selection_reason IS NULL`) matched zero rows rather than
+    // silently moving this image out of the frozen evaluation pool.
+    expect(results).toEqual([{ r2_key: "sssssssssss/0000000.jpg", selection_reason: "random" }]);
   });
 });
