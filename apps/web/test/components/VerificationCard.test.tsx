@@ -336,6 +336,62 @@ describe("adjusting", () => {
     ]);
   });
 
+  it("keeps the corrected box on the frame after it is saved", async () => {
+    // The dashed drag rectangle is cleared when the adjustment is saved, so if
+    // the overlay still drew `frame.predictions` the screen would go back to
+    // showing the box the correction *replaces* — leaving the row's "adjust"
+    // badge as the only evidence anything changed. Verified on production
+    // against image 4051: a mis-drag was indistinguishable from a good
+    // correction until Submit wrote it, and `verdicts` is append-only.
+    render(<VerificationCard frame={frame()} onSubmit={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Adjust Paimon 1" }));
+    const surface = layOutFrame();
+
+    await userEvent.pointer([
+      { target: surface, coords: { clientX: 20, clientY: 10 }, keys: "[MouseLeft>]" },
+      { target: surface, coords: { clientX: 120, clientY: 60 } },
+      { target: surface, keys: "[/MouseLeft]" },
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: /save adjustment/i }));
+
+    // The drawn rectangle is gone, and box 1 is now at 10..60% rather than at
+    // the prediction's own 10..50% across and 20..60% down.
+    expect(screen.queryByTestId("adjustment")).not.toBeInTheDocument();
+    expect(screen.getByTestId("box-1")).toHaveStyle({
+      left: "10%",
+      top: "10%",
+      width: "50%",
+      height: "50%",
+    });
+    expect(screen.getByTestId("box-1")).toHaveAttribute("title", expect.stringContaining("adjust"));
+  });
+
+  it("puts the model's own box back when an adjustment is replaced", async () => {
+    // Adjust, then Reject the same box. The staging map holds one ruling per
+    // prediction, so the correction is gone — and the rectangle has to follow
+    // it back rather than stay on screen describing a verdict nobody holds.
+    render(<VerificationCard frame={frame()} onSubmit={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Adjust Paimon 1" }));
+    const surface = layOutFrame();
+
+    await userEvent.pointer([
+      { target: surface, coords: { clientX: 20, clientY: 10 }, keys: "[MouseLeft>]" },
+      { target: surface, coords: { clientX: 120, clientY: 60 } },
+      { target: surface, keys: "[/MouseLeft]" },
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: /save adjustment/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Reject Paimon 1" }));
+
+    expect(screen.getByTestId("box-1")).toHaveStyle({
+      left: "10%",
+      top: "20%",
+      width: "40%",
+      height: "40%",
+    });
+  });
+
   it("will not save an adjustment that was never drawn", async () => {
     render(<VerificationCard frame={frame()} onSubmit={vi.fn()} />);
 
