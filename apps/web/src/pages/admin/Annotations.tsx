@@ -22,7 +22,7 @@ import { VerdictPreviewDialog } from "../../components/VerdictPreviewDialog";
 
 const PAGE_SIZE = 50;
 
-type SourceFilter = "admin" | "anon" | "all";
+type SourceFilter = "admin" | "anon" | "user" | "all";
 type VerdictKind = "accept" | "adjust" | "reject";
 
 const VERDICT_KINDS: readonly VerdictKind[] = ["accept", "adjust", "reject"];
@@ -62,9 +62,18 @@ const DEFAULT_FILTERS: FilterState = {
  * bare `crypto.randomUUID()` — renders truncated. `listVerdictAnnotatorsRoute`'s
  * own comment is why: forty raw UUIDs in one dropdown is unusable, and this
  * is the one place that dropdown gets built.
+ *
+ * A contributor's `annotator_id` (M20, plan §B1) is a `users.id` as text, not
+ * an email — migration 0012's own comment on why `verdicts.annotator_id`
+ * stores the stable numeric id rather than an address that can drift. There
+ * is no lookup here to turn that id back into the display name shown on
+ * `/contribute`, so it renders as `user #<id>`, honest about what the value
+ * actually is rather than dressed up as an email it is not.
  */
-function annotatorLabel(annotatorId: string, source: "admin" | "anon"): string {
-  return source === "admin" ? annotatorId : `anon · ${annotatorId.slice(0, 4)}…`;
+function annotatorLabel(annotatorId: string, source: "admin" | "anon" | "user"): string {
+  if (source === "admin") return annotatorId;
+  if (source === "user") return `user #${annotatorId}`;
+  return `anon · ${annotatorId.slice(0, 4)}…`;
 }
 
 /** An `<input type="date">` value (`YYYY-MM-DD`, parsed in the browser's own local time) to unix seconds. */
@@ -161,6 +170,7 @@ export function AdminAnnotationsPage() {
           >
             <TabsList>
               <TabsTrigger value="admin">Admin</TabsTrigger>
+              <TabsTrigger value="user">Contributor</TabsTrigger>
               <TabsTrigger value="anon">Anonymous</TabsTrigger>
               <TabsTrigger value="all">All</TabsTrigger>
             </TabsList>

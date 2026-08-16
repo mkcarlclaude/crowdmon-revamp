@@ -3,6 +3,7 @@ import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "./bindings";
 import { requireAccess } from "./middleware/access";
 import { publicRateLimit } from "./middleware/rate-limit";
+import { requireUser } from "./middleware/session";
 import { nameSpanAfterRoute } from "./middleware/trace-route";
 import { openApiConfig } from "./openapi";
 import {
@@ -56,7 +57,23 @@ import {
   listAdminVideoImagesHandler,
   listAdminVideoImagesRoute,
 } from "./routes/admin-video-images";
+import {
+  googleAuthCallbackHandler,
+  googleAuthCallbackRoute,
+  googleAuthStartHandler,
+  googleAuthStartRoute,
+  logoutHandler,
+  logoutRoute,
+} from "./routes/auth";
 import { listActiveClassesHandler, listActiveClassesRoute } from "./routes/classes";
+import {
+  contributeBatchHandler,
+  contributeBatchRoute,
+  contributeMeHandler,
+  contributeMeRoute,
+  submitContributeVerdictsHandler,
+  submitContributeVerdictsRoute,
+} from "./routes/contribute";
 import { healthHandler, healthRoute } from "./routes/health";
 import {
   claimJobHandler,
@@ -150,6 +167,13 @@ app.use("*", nameSpanAfterRoute);
 // middleware to it.
 app.use("/api/admin/*", requireAccess);
 
+// M20, plan §B3: the contributor tier's own gate, registered by its own
+// disjoint prefix exactly as `requireAccess` is above. `/api/auth/*` is
+// deliberately outside both prefixes — a caller with no session yet has to
+// be able to reach `/api/auth/google/start` to get one, and `requireUser`
+// gating its own login route would be a lock with the key on the wrong side.
+app.use("/api/contribute/*", requireUser);
+
 // M14.3: the public verification surface's rate limit. One mount per route
 // rather than a prefix, and each with its own literal bucket — see
 // `publicRateLimit`'s own comment for why a shared `/api/public/*` mount
@@ -200,6 +224,12 @@ app.openapi(createSnapshotRoute, createSnapshotHandler);
 app.openapi(listSnapshotsRoute, listSnapshotsHandler);
 app.openapi(snapshotSourceRoute, snapshotSourceHandler);
 app.openapi(reportSnapshotRoute, reportSnapshotHandler);
+app.openapi(googleAuthStartRoute, googleAuthStartHandler);
+app.openapi(googleAuthCallbackRoute, googleAuthCallbackHandler);
+app.openapi(logoutRoute, logoutHandler);
+app.openapi(contributeBatchRoute, contributeBatchHandler);
+app.openapi(submitContributeVerdictsRoute, submitContributeVerdictsHandler);
+app.openapi(contributeMeRoute, contributeMeHandler);
 
 // Serves the same document the build artifact contains, from the same config.
 // A deployed Worker that describes itself is worth one route: it answers "what

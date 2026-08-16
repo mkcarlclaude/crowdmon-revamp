@@ -8,6 +8,8 @@ import {
   AdminVideoDetail,
   AdminVideoImages,
   AdminVideoList,
+  ContributeBatch,
+  ContributeMe,
   type CreateClassRequest,
   type CreateDryRunRequest,
   type CreateMissingReportRequest,
@@ -572,7 +574,7 @@ export function useCreatePrelabel(videoId: string) {
  * filter the request URL below silently drops.
  */
 export interface VerdictFilters {
-  source?: "admin" | "anon";
+  source?: "admin" | "anon" | "user";
   verdict?: Array<"accept" | "adjust" | "reject">;
   classId?: number;
   videoId?: string;
@@ -631,5 +633,100 @@ export function useAdminVerdictAnnotators() {
   return useQuery({
     queryKey: adminVerdictAnnotatorsKey,
     queryFn: () => apiFetch("/api/admin/verdicts/annotators", AdminAnnotatorList),
+  });
+}
+
+// -----------------------------------------------------------------------
+// Contributor accounts (M20, plan §B4, §B5)
+// -----------------------------------------------------------------------
+
+export const contributeMeKey = ["contribute", "me"] as const;
+
+/**
+ * The signed-in contributor's own counts (plan §B5). A 401 here — no cookie,
+ * or an expired one — is what `Contribute.tsx` reads to decide between the
+ * sign-in prompt and the verification session, the same "reaching the
+ * handler answers the question" shape `useAdminSession` already uses for
+ * `requireAccess`; `retry: false` is what keeps TanStack from quietly
+ * retrying a 401 a few times before that decision ever renders.
+ */
+export function useContributeMe() {
+  return useQuery({
+    queryKey: contributeMeKey,
+    queryFn: () => apiFetch("/api/contribute/me", ContributeMe),
+    retry: false,
+  });
+}
+
+export const contributeBatchKey = ["contribute", "batch"] as const;
+
+/**
+ * A contributor's next frames (plan §B4) — `useLabellingBatch`'s own shape
+ * and its own reasoning for `staleTime: Infinity`: this pool is being
+ * consumed by a session, not polled, and a background refetch landing
+ * mid-judgement would replace the frame under the contributor's cursor.
+ */
+export function useContributeBatch() {
+  return useQuery({
+    queryKey: contributeBatchKey,
+    queryFn: () => apiFetch("/api/contribute/batch", ContributeBatch),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/**
+ * A contributor's rulings on one frame (plan §B4). Reuses `CreateVerdictsRequest`
+ * and `VerdictBatch` — the same request and response shapes
+ * `useSubmitVerdicts` posts to `/api/admin/images/{id}/verdicts`, because
+ * `submitContributeVerdictsHandler` and `submitVerdictsHandler` accept and
+ * answer with the identical wire shape and differ only in which `source`
+ * they stamp, which the caller never sends either way.
+ *
+ * Invalidates `contributeMeKey`, unlike `useSubmitVerdicts`'s admin
+ * equivalent invalidating `labellingStatsKey`: the personal-counts screen
+ * (plan §B5) is this tier's equivalent of the admin stats panel, and a
+ * contributor who just ruled on a frame should see their own count move.
+ */
+export function useSubmitContributeVerdicts() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      imageId,
+      ...body
+    }: z.infer<typeof CreateVerdictsRequest> & { imageId: number }) =>
+      apiFetch(`/api/contribute/images/${imageId}/verdicts`, VerdictBatch, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: contributeMeKey }),
+  });
+}
+
+/**
+ * Ends the contributor session (plan §B2). Not routed through `apiFetch`:
+ * `logoutHandler` answers `204 No Content` on purpose (there is nothing to
+ * report beyond "this succeeded"), and `apiFetch`'s own contract is built
+ * around every response carrying a JSON body — a 204's missing
+ * `content-type` would trip its "non-JSON on a 2xx" branch and be
+ * misread as an expired Access session, which this has nothing to do with.
+ *
+ * Invalidates `contributeMeKey` on success so `Contribute.tsx` re-renders
+ * the signed-out state without a full page reload — the one thing a plain
+ * HTML form POST to the same endpoint could not do on its own.
+ */
+export function useLogout() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (!response.ok) throw new Error(`logout failed with status ${response.status}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: contributeMeKey }),
   });
 }
