@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from "react";
-import { BoxOverlay, type BoxVariant, type OverlayBox } from "./BoxOverlay";
+import { BoxOverlay, type BoxVariant, type OverlayBox, type OverlayBoxCoords } from "./BoxOverlay";
 
 /**
  * One frame, its proposed boxes, and a ruling on each (M13.1).
@@ -135,6 +135,35 @@ const asBox = (drag: Drag) => ({
   y_max: Math.max(drag.y1, drag.y2),
 });
 
+/**
+ * The rectangle a staged `adjust` put on the frame, or null for anything else.
+ *
+ * All four coordinates or none. `saveAdjustment` is the only writer and always
+ * sets the four together, so a partial set is a bug rather than a box worth
+ * drawing half of — and falling back to the prediction is the same thing this
+ * returning null already means.
+ */
+function adjustedBoxOf(ruling: StagedVerdict | undefined): OverlayBoxCoords | null {
+  if (ruling?.verdict !== "adjust") return null;
+
+  const { adjusted_x_min, adjusted_y_min, adjusted_x_max, adjusted_y_max } = ruling;
+  if (
+    adjusted_x_min === undefined ||
+    adjusted_y_min === undefined ||
+    adjusted_x_max === undefined ||
+    adjusted_y_max === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    x_min: adjusted_x_min,
+    y_min: adjusted_y_min,
+    x_max: adjusted_x_max,
+    y_max: adjusted_y_max,
+  };
+}
+
 export function VerificationCard({
   frame,
   onSubmit,
@@ -248,7 +277,8 @@ export function VerificationCard({
   // attributes this component's own tests read (`data-highlighted`,
   // `data-staged`) through a renderer that has no reason to know either name.
   const overlayBoxes: OverlayBox[] = frame.predictions.map((box, index) => {
-    const stagedVerdict = staged.get(box.id)?.verdict;
+    const ruling = staged.get(box.id);
+    const stagedVerdict = ruling?.verdict;
     const variant: BoxVariant =
       adjusting === box.id
         ? "editing"
@@ -258,13 +288,27 @@ export function VerificationCard({
             ? "positive"
             : "neutral";
 
+    // A staged adjustment is drawn where the operator put it, not where the
+    // model did. Without this, saving an adjustment puts the *replaced* box
+    // back on screen — the dashed drag rectangle is cleared by
+    // `cancelAdjustment` and the only remaining trace of the correction is the
+    // word "adjust" in the row's badge. A mis-drag then looks exactly like a
+    // good correction right up until Submit writes it, and `verdicts` is
+    // append-only: there is no screen after this one that would catch it.
+    const corrected = adjustedBoxOf(ruling);
+
     return {
       id: box.id,
-      box,
+      box: corrected ?? box,
       label: ordinal(index),
       variant,
       dimmed: highlighted !== null && highlighted !== box.id,
-      title: `${ordinal(index)}. ${box.class_name} — confidence ${box.confidence.toFixed(2)}`,
+      // Says which rectangle is being pointed at, because `positive` is also
+      // what a staged accept looks like and the two would otherwise be one
+      // colour with two meanings.
+      title: `${ordinal(index)}. ${box.class_name} — confidence ${box.confidence.toFixed(2)}${
+        corrected ? " (adjusted)" : ""
+      }`,
       extraData: {
         highlighted: String(highlighted === box.id),
         staged: stagedVerdict ?? "",
