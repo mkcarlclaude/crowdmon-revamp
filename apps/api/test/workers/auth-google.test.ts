@@ -174,6 +174,19 @@ describe("GET /api/auth/google/callback", () => {
     expect(user).toBeNull();
   });
 
+  it("rejects an id_token whose email Google has not verified — a signed-in account should not be able to present an address it does not control", async () => {
+    const { cookie, state } = await start();
+    stubTokenExchange(await googleIdToken({ sub: "sub-unverified-email", emailVerified: false }));
+
+    const res = await callback(`code=abc&state=${state}`, cookie);
+    expect(res.status).toBe(401);
+
+    const user = await env.DB.prepare("SELECT id FROM users WHERE google_sub = ?")
+      .bind("sub-unverified-email")
+      .first();
+    expect(user).toBeNull();
+  });
+
   it("rejects a missing state cookie", async () => {
     const res = await callback("code=abc&state=whatever");
     expect(res.status).toBe(401);

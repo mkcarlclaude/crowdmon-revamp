@@ -94,6 +94,12 @@ export type Bindings = {
   // dashboard step and nothing to mint.
   PUBLIC_RATE_LIMITER: RateLimit;
 
+  // M20, plan §B4: `/api/contribute/batch`'s own rate limit, separate from
+  // PUBLIC_RATE_LIMITER because it needs its own limit/period rather than
+  // another bucket sharing that binding's — see wrangler.toml's own comment
+  // on this binding for the threat model that earns it a dedicated ceiling.
+  CONTRIBUTE_BATCH_RATE_LIMITER: RateLimit;
+
   // Contributor accounts (M20, plan §B2): Google OAuth in the Worker. Both
   // `wrangler secret` values, never `wrangler.toml` — a client secret is a
   // credential by definition, and the client id is treated the same way here

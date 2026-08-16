@@ -334,6 +334,24 @@ export const googleAuthCallbackHandler: RouteHandler<
     return c.json({ error: "id_token carried no sub or email claim" }, 401);
   }
 
+  // Google issues an `id_token` for an account whose email address it has
+  // not confirmed the holder controls — a freshly-added, unverified alias on
+  // an otherwise real account is enough. `sub` is this table's identity
+  // (migration 0012's own comment, echoed above), so this is deliberately
+  // *not* the same class of check as `audience` or `issuer`: nothing here
+  // authorizes off `users.email` — it is display and admin recognition only,
+  // and rejecting on it does not close an auth hole the way the audience
+  // check does. What it protects is the two screens that *show* the address
+  // back — `/api/contribute/me` and the admin annotations page — from
+  // rendering one a signed-in account does not actually control. Checked
+  // with `=== false` rather than `!payload.email_verified`: Google's own
+  // docs describe the claim as present and boolean on every response this
+  // flow requests, but treating an absent claim as a pass rather than a
+  // failure is the conservative reading if some response ever omits it.
+  if (payload.email_verified === false) {
+    return c.json({ error: "invalid id_token" }, 401);
+  }
+
   // Upserted by `google_sub`, never by `email` — migration 0012's own
   // comment on why the subject, not the address, is this table's identity.
   // `RETURNING id` rather than a read-then-write: two concurrent logins for

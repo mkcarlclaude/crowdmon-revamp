@@ -250,3 +250,58 @@ describe("GET /api/contribute/me", () => {
     expect(body).toMatchObject({ trusted: false });
   });
 });
+
+/**
+ * `CONTRIBUTE_BATCH_RATE_LIMITER` (M20, coordinator review of #158): the pool
+ * endpoint mints presigned R2 URLs across the whole unruled pool, and an
+ * account is the thing being bounded here, not an IP — `wrangler.toml`'s own
+ * comment on this binding is why. Two contributors sharing no IP (this test
+ * harness sends no `cf-connecting-ip` at all, so an IP-keyed limiter would
+ * conflate every caller into the one `"unknown"` bucket the same way
+ * `public-rate-limit.test.ts` relies on) still get independent budgets,
+ * which is the property a user-id key buys over an IP one and the thing this
+ * suite exists to prove.
+ */
+describe("the contribute batch rate limit", () => {
+  it("admits the first 10 requests and refuses the 11th, for one contributor", async () => {
+    const userId = await seedUser();
+    const { cookieHeader } = await seedSession(userId);
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) {
+      const res = await app.request(
+        "/api/contribute/batch",
+        { headers: { cookie: cookieHeader } },
+        env,
+      );
+      statuses.push(res.status);
+    }
+
+    expect(statuses.slice(0, 10)).toEqual(Array(10).fill(200));
+    expect(statuses[10]).toBe(429);
+  });
+
+  it("gives a second contributor their own budget rather than sharing the first one's", async () => {
+    const exhaustedUserId = await seedUser();
+    const { cookieHeader: exhaustedCookie } = await seedSession(exhaustedUserId);
+    for (let i = 0; i < 10; i++) {
+      await app.request("/api/contribute/batch", { headers: { cookie: exhaustedCookie } }, env);
+    }
+    const exhausted = await app.request(
+      "/api/contribute/batch",
+      { headers: { cookie: exhaustedCookie } },
+      env,
+    );
+    expect(exhausted.status).toBe(429);
+
+    const freshUserId = await seedUser();
+    const { cookieHeader: freshCookie } = await seedSession(freshUserId);
+    const fresh = await app.request(
+      "/api/contribute/batch",
+      { headers: { cookie: freshCookie } },
+      env,
+    );
+
+    expect(fresh.status).toBe(200);
+  });
+});

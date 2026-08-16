@@ -79,6 +79,8 @@ export interface GoogleClaims {
   iss?: string;
   /** A jose duration string ("1h") for a token that is still good, or an absolute unix-seconds number in the past for one that has already expired. */
   exp?: string | number;
+  /** Omitted defaults to `true` — a verified email is the common case every test but the one about this claim specifically should not have to state. */
+  emailVerified?: boolean;
 }
 
 /** Mints an `id_token` — real RS256 signature, caller-controlled claims for the failure cases. */
@@ -92,9 +94,10 @@ export async function googleIdToken(claims: GoogleClaims = {}): Promise<string> 
     aud = GOOGLE_CLIENT_ID,
     iss = GOOGLE_ISSUER,
     exp = "1h",
+    emailVerified = true,
   } = claims;
 
-  return new SignJWT({ email, name })
+  return new SignJWT({ email, name, email_verified: emailVerified })
     .setSubject(sub)
     .setProtectedHeader({ alg: "RS256", kid: "google-test-key" })
     .setIssuer(iss)

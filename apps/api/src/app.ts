@@ -2,7 +2,7 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "./bindings";
 import { requireAccess } from "./middleware/access";
-import { publicRateLimit } from "./middleware/rate-limit";
+import { contributeBatchRateLimit, publicRateLimit } from "./middleware/rate-limit";
 import { requireUser } from "./middleware/session";
 import { nameSpanAfterRoute } from "./middleware/trace-route";
 import { openApiConfig } from "./openapi";
@@ -173,6 +173,14 @@ app.use("/api/admin/*", requireAccess);
 // be able to reach `/api/auth/google/start` to get one, and `requireUser`
 // gating its own login route would be a lock with the key on the wrong side.
 app.use("/api/contribute/*", requireUser);
+
+// M20, plan §B4: bounds the one contributor route that mints presigned R2
+// URLs across the whole unruled pool. Registered after `requireUser` above
+// (Hono composes same-request middleware in registration order), so
+// `contributeBatchRateLimit` always sees `c.get("user")` already set — see
+// that middleware's own comment for why it keys on the account rather than
+// the IP `publicRateLimit` falls back to for the anonymous surface.
+app.use("/api/contribute/batch", contributeBatchRateLimit);
 
 // M14.3: the public verification surface's rate limit. One mount per route
 // rather than a prefix, and each with its own literal bucket — see
