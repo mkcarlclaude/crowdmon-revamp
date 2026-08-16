@@ -330,6 +330,15 @@ export function VerificationCard({
         alt={frame.r2_key}
         boxes={overlayBoxes}
         onImageError={onImageError}
+        // Only while an adjustment is armed. `touch-none` is the touch-side
+        // half of the same bug `draggable={false}` fixes on the mouse side: a
+        // finger dragged across the frame is a scroll gesture until told
+        // otherwise, and the browser cancels the pointer stream to take it —
+        // arriving here as `pointercancel` and ending the box mid-draw. Left
+        // off the rest of the time so a frame nobody is correcting can still
+        // be swiped past on a phone, and the crosshair says the surface is
+        // drawable rather than leaving "drag on the frame" as the only hint.
+        className={adjusting !== null ? "cursor-crosshair touch-none" : undefined}
         onPointerDown={(event) => {
           if (adjusting === null) return;
           const at = positionOf(event);

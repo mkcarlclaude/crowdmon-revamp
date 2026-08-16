@@ -107,7 +107,22 @@ export const BoxOverlay = forwardRef<HTMLDivElement, BoxOverlayProps>(function B
       )}
       {...rest}
     >
-      <img src={frameUrl} alt={alt} className="block w-full" onError={onImageError} />
+      {/* `draggable={false}` is load-bearing, not tidying. An `<img>` is
+          natively draggable, so pressing on the frame and moving starts an
+          HTML5 drag-and-drop: the browser lifts a ghost of the picture, follows
+          the cursor with it, and fires `pointercancel` — which is exactly the
+          signal `VerificationCard` reads as "this drag is over". Drawing a
+          corrected box by hand was therefore impossible, while a synthetic
+          drag worked fine, because CDP mouse events do not start native
+          drag-and-drop. Set here rather than in `VerificationCard` because the
+          image is this component's, and nothing wants to drag a frame away. */}
+      <img
+        src={frameUrl}
+        alt={alt}
+        draggable={false}
+        className="block w-full"
+        onError={onImageError}
+      />
 
       {boxes.map((entry) => {
         const dataAttrs: Record<string, string> = {};

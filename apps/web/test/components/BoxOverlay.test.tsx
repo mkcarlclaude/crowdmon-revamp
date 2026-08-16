@@ -37,6 +37,18 @@ describe("BoxOverlay", () => {
     });
   });
 
+  it("refuses the browser's native image drag", () => {
+    // An `<img>` is draggable by default, and on the verification surface that
+    // is not cosmetic: pressing on the frame and moving starts an HTML5
+    // drag-and-drop, which fires `pointercancel` and ends the box
+    // `VerificationCard` was drawing. Reported from the real screen; synthetic
+    // pointer events never see it, because they do not start native
+    // drag-and-drop at all.
+    render(<BoxOverlay frameUrl="https://example/frame.jpg" alt="a frame" boxes={[box()]} />);
+
+    expect(screen.getByRole("img")).toHaveAttribute("draggable", "false");
+  });
+
   it("renders each box's label in its corner badge", () => {
     render(
       <BoxOverlay
