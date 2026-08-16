@@ -1268,3 +1268,32 @@ wire — what was missing was somewhere to read it. Plan:
       summary counts, which off a 50-row page would count the page rather than the queue
 - [ ] `JobList` deleted. Its group-by-video tree answered "how far along is this video",
       which M19.1 moves to the page that video owns
+
+## The adjust tool, fixed twice
+
+Found by working `/admin/verify` by hand rather than by a milestone. Recorded because
+both bugs had shipped green and the second is the reason the first one's verification
+was not worth what it claimed.
+
+**Adjusting was invisible before it was permanent**
+([#154](https://github.com/mkcarlclaude/crowdmon-revamp/pull/154)). `overlayBoxes`
+always drew `frame.predictions`, so saving an adjustment put the box it *replaces* back
+on the frame — `cancelAdjustment` clears the dashed drag rectangle, leaving the word
+"adjust" in the row badge as the only trace of the correction. A mis-drag looked exactly
+like a good one until Submit wrote it, and `verdicts` is append-only, so no later screen
+would have caught it. A staged `adjust` now draws where the operator put it; a
+correction replaced by a later accept or reject hands the rectangle back to the model.
+
+**The browser's own gestures cancelled the draw**
+([#155](https://github.com/mkcarlclaude/crowdmon-revamp/pull/155)). An `<img>` is
+natively draggable, so a real press-and-move started an HTML5 drag-and-drop: the frame
+tore loose as a ghost and the browser fired `pointercancel`, which `onPointerCancel`
+correctly treats as the end of the drag. `draggable={false}` on the image, and
+`touch-none` on the surface while an adjustment is armed for the touch-side equivalent.
+
+The pair is the whole lesson, now in [`CLAUDE.md`](CLAUDE.md) under "Synthetic pointers
+cannot reproduce a browser's own gestures": #154 was verified by driving the real
+production screen, which proved the write path and nothing about the gesture, because
+CDP mouse events do not start native drag-and-drop and neither does jsdom. Both fixes'
+tests assert the attributes that keep the browser out of the way rather than replaying a
+drag — a replay passes on the broken code.
