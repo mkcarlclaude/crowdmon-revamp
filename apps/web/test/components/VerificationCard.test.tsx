@@ -392,6 +392,24 @@ describe("adjusting", () => {
     });
   });
 
+  it("takes the frame out of the browser's touch gestures while adjusting", async () => {
+    // The touch-side half of the native-drag bug: a finger dragged across the
+    // frame is a scroll until told otherwise, and the browser cancels the
+    // pointer stream to claim it — arriving as `pointercancel` and ending the
+    // box mid-draw. Scoped to an armed adjustment so a frame nobody is
+    // correcting can still be swiped past on a phone.
+    render(<VerificationCard frame={frame()} onSubmit={vi.fn()} />);
+
+    const surface = () => screen.getByRole("img").parentElement as HTMLElement;
+    expect(surface()).not.toHaveClass("touch-none");
+
+    await userEvent.click(screen.getByRole("button", { name: "Adjust Paimon 1" }));
+    expect(surface()).toHaveClass("touch-none");
+
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(surface()).not.toHaveClass("touch-none");
+  });
+
   it("will not save an adjustment that was never drawn", async () => {
     render(<VerificationCard frame={frame()} onSubmit={vi.fn()} />);
 
