@@ -72,3 +72,24 @@ So: assert on what the build emitted, exercise it at more than the one case the
 build itself used, and be suspicious of a fix whose whole effect is to make an
 error message go away. The HuggingFace checkpoint is cached inside the detector's
 export stage, so re-exports are offline and quick.
+
+### Synthetic pointers cannot reproduce a browser's own gestures
+
+Neither jsdom's `userEvent.pointer` nor Chrome DevTools Protocol mouse events start
+the gestures the browser owns: HTML5 drag-and-drop, touch scrolling, text selection.
+Both replay the pointer stream an *uninterrupted* drag produces, which is the one
+case where a drag-to-draw surface cannot fail.
+
+`/admin/verify`'s adjust tool was driven end to end against production and passed —
+201, coordinates stored to the last decimal, prediction row untouched — and was
+still unusable by hand ([#155](https://github.com/mkcarlclaude/crowdmon-revamp/pull/155)).
+An `<img>` is natively draggable, so a real press-and-move tore the frame loose as a
+drag ghost and fired `pointercancel`, which the component correctly reads as "the
+drag ended". Two harnesses missed it; the first human to try it hit it immediately.
+
+So when a surface handles raw pointer events, the automation checks the *write path*
+and nothing about the gesture. Read the element for the attributes that keep the
+browser out of the way — `draggable={false}`, `touch-action`, `user-select` — and
+test those directly, because replaying the gesture produces a test that passes on
+the broken code. For the rest, a hand on a real mouse is the only instrument; say so
+rather than reporting the synthetic pass as verification.
