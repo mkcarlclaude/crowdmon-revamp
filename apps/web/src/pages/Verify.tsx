@@ -18,9 +18,9 @@ import { useNoindex } from "../hooks/use-noindex";
  */
 export function Verify() {
   // CONTEXT.md §Q25: frame bytes served here should not end up in a search
-  // index. M20 plan §A4 moved this out of `index.html`'s old blanket
-  // `<meta name="robots">` tag and into a per-route hook — see
-  // `use-noindex.ts` for why `/` no longer carries the same tag.
+  // index. The real control is `public/_headers`' `X-Robots-Tag`, which a
+  // non-JS crawler sees too; this hook is defense in depth for the ones
+  // that execute JavaScript. See `use-noindex.ts` for why both exist.
   useNoindex();
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 p-8">

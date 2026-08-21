@@ -25,11 +25,15 @@
       found. `/verify` and `/admin` still need it: `/verify` for CONTEXT.md
       §Q25's frame-bytes reasons, `/admin` because it was never meant to be
       crawled either, and neither reason has anything to do with `/`. Since
-      one shell serves every route, the tag can no longer live here at all —
-      `src/hooks/use-noindex.ts` adds and removes it per mounted route
-      instead. See that file's own comment for why a client-injected tag is
-      the best this SPA can do without also changing the Worker that serves
-      it, which is out of scope for the milestone that added this hook.
+      one shell serves every route, the tag can no longer live here at all.
+
+      The real control for those two is `public/_headers`
+      (`X-Robots-Tag: noindex`, evaluated at the HTTP layer for every
+      crawler, JS or not) — `src/hooks/use-noindex.ts` only adds a matching
+      <meta> tag after React mounts, which is defense in depth for
+      JS-executing crawlers, not the primary control. See `_headers`' own
+      comment for what is and is not confirmed about how it applies under
+      this app's SPA fallback routing.
     -->
   </head>
   <body>

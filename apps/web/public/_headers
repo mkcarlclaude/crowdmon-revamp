@@ -1,0 +1,58 @@
+# The real noindex control for /verify and /admin — not src/hooks/use-noindex.ts.
+#
+# `index.html`'s old blanket `<meta name="robots" content="noindex">` covered
+# every route in the one static document Workers static assets serves for
+# all of them. M20 plan §A4 made `/` indexable, which meant that tag could no
+# longer live in the shared shell at all. A React-injected <meta> tag
+# (use-noindex.ts) only exists after the bundle has loaded and run — a
+# crawler that does not execute JavaScript never sees it. `/verify`'s
+# noindex is not a cosmetic SEO preference: CONTEXT.md §Q25 names it as one
+# of the three bounds that keep the public verification page structurally
+# distinct from the "public browsable gallery of labelled crops" CONTEXT.md
+# §Q11 rejected on *licensing* grounds — republishing frames from
+# copyrighted game footage at scale. A non-JS crawler indexing /verify
+# unopposed would be exactly that exposure.
+#
+# This file is read by Cloudflare Workers static assets (same format as
+# Pages' `_headers`) and applies to *asset* responses only — never to
+# responses your own Worker code generates. That is exactly right here:
+# apps/api/wrangler.toml's `run_worker_first` covers only `/api/*`,
+# `/health` and `/openapi.json`, so `/verify` and everything under `/admin`
+# are asset responses, resolved by the [assets] binding before any Worker
+# code runs, and this file's rules apply to them.
+#
+# UNRESOLVED, DOCUMENTED RATHER THAN GUESSED: `not_found_handling =
+# "single-page-application"` means a request for `/verify` is *served*
+# `/index.html`'s bytes with a 200. Cloudflare's docs describe that as the
+# request being "rewritten to /index.html" but do not state, anywhere I
+# could find, whether `_headers` path matching happens against the
+# original incoming path (`/verify` — matches the rule below) or the
+# resolved/rewritten one (`/index.html` — would not match this rule, and
+# would also wrongly blanket `/`, which is meant to be indexed). The rules
+# below assume matching happens on the original request path, which is the
+# standard, documented use of `_headers` for SPA routes elsewhere in
+# Cloudflare's ecosystem — but this has not been confirmed against this
+# specific deploy. Verify post-deploy with:
+#
+#   curl -sI https://crowdmon.mkcarl.com/verify | grep -i x-robots-tag
+#   curl -sI https://crowdmon.mkcarl.com/admin/dashboard | grep -i x-robots-tag
+#   curl -sI https://crowdmon.mkcarl.com/ | grep -i x-robots-tag   # must be empty
+#
+# If the header is missing on the first two or present on the third, this
+# file's matching assumption is wrong and the fallback is a
+# `run_worker_first` entry in apps/api/wrangler.toml — an apps/api change,
+# out of scope for this PR and blocked on section C merging first.
+#
+# `use-noindex.ts` stays wired into these same routes regardless: defense
+# in depth for crawlers that do execute JavaScript, not the primary control.
+#
+# Rules may contain only a single splat (`*`) each.
+
+/verify
+  X-Robots-Tag: noindex
+
+/admin
+  X-Robots-Tag: noindex
+
+/admin/*
+  X-Robots-Tag: noindex
