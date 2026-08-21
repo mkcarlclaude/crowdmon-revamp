@@ -64,6 +64,30 @@ systemctl --user list-timers crowdmon-update.timer
 journalctl --user -u crowdmon-update.service
 ```
 
+### Is the downloader still working?
+
+```sh
+docker exec crowdmon-worker sh -c \
+  "timeout 60 yt-dlp --no-playlist -f 'bv*[height<=1080]/b' -o /tmp/smoke.%(ext)s \
+   'https://www.youtube.com/watch?v=<any video id>' 2>&1 | tail -3; rm -f /tmp/smoke.*"
+```
+
+Watch it get **past a few percent**, then kill it. That threshold is the whole
+point of the check and it is not arbitrary.
+
+Do not substitute `--test`. It stops after 10 KiB, which is a single range
+request, and the failure this catches only appears on the second one: YouTube
+signs media URLs with an `n` parameter that yt-dlp descrambles by running a
+function from the player's JavaScript, so an image with no JS engine gets the
+first chunk and then a `403 Forbidden` for everything after it. A `--test` run
+passes cleanly against an image that cannot download a single whole video —
+that is exactly how this went unnoticed until every `download` job was failing
+on 2026-08-21 (`CONTEXT.md` §9.8).
+
+The same shape is why the symptom misleads: the download starts, reports the
+real file size and a healthy rate, and dies partway in, so it reads as a
+network fault or a blocked IP rather than a signing problem.
+
 Logs are JSON, one line per record, carrying the `trace_id` of the span each
 was emitted under — `docker compose logs | jq` is the intended local reading.
 The same records also reach Loki over OTLP when `CROWDMON_OTLP_LOGS_ENDPOINT`
