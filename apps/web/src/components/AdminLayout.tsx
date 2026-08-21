@@ -1,5 +1,6 @@
 import { Navigate, NavLink, Outlet, useLocation } from "react-router";
 import { useAdminSession } from "../api/queries";
+import { useNoindex } from "../hooks/use-noindex";
 import { GrafanaLink } from "./GrafanaLink";
 import {
   Sidebar,
@@ -38,6 +39,11 @@ import {
  * this surface that has to leave React Router, and its own comment says why.
  */
 export function AdminLayout() {
+  // Assumed public (§Q19) but never meant to be crawled. M20 plan §A4 only
+  // made `/` indexable — everywhere under `/admin` keeps the `noindex` the
+  // old blanket tag in `index.html` used to cover for free; see
+  // `use-noindex.ts`.
+  useNoindex();
   const session = useAdminSession();
   const location = useLocation();
 

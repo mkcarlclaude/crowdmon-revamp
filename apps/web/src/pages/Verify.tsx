@@ -1,4 +1,5 @@
 import { PublicVerify } from "../components/PublicVerify";
+import { useNoindex } from "../hooks/use-noindex";
 
 /**
  * The public surface, reshaped (M14, CONTEXT.md §12 amending §Q11).
@@ -16,6 +17,11 @@ import { PublicVerify } from "../components/PublicVerify";
  * absence of this sentence, not just by a missing feature.
  */
 export function Verify() {
+  // CONTEXT.md §Q25: frame bytes served here should not end up in a search
+  // index. M20 plan §A4 moved this out of `index.html`'s old blanket
+  // `<meta name="robots">` tag and into a per-route hook — see
+  // `use-noindex.ts` for why `/` no longer carries the same tag.
+  useNoindex();
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 p-8">
       <div>

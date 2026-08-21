@@ -1,0 +1,811 @@
+/**
+ * The landing page's own stylesheet, ported from
+ * `design/landing-prototypes:prototypes/landing/landing-hero.html`
+ * (commit e3bf8cc, approved 2026-08-10 after four rejected directions —
+ * see that commit's README for what was ruled out and why).
+ *
+ * Everything below is scoped under `.landing` rather than the bare element
+ * selectors (`body`, `a`, `h1`, `img`, `*`) the prototype used, because this
+ * file is an ordinary CSS import inside a component, not a standalone
+ * document — Vite bundles it into the same stylesheet every other route
+ * shares, so an unscoped `a { text-decoration: none }` would silently
+ * restyle `/verify` and every `/admin` page too. `.landing` is the class on
+ * `Home.tsx`'s single root element; nothing here reaches outside it.
+ *
+ * `html{scroll-behavior:smooth}` and the warm-paper `body` background from
+ * the prototype are genuinely document-level and can't be contained by a
+ * class selector — `Home.tsx` sets both imperatively in a `useEffect` that
+ * reverts on unmount, so navigating away restores the app's own dark
+ * surface tokens (`styles.css`) instead of leaving this page's paper color
+ * behind on `/verify` or `/admin`.
+ */
+
+@font-face {
+  font-family: "Cabinet Grotesk";
+  src: url("/fonts/CabinetGrotesk-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Cabinet Grotesk";
+  src: url("/fonts/CabinetGrotesk-Extrabold.woff2") format("woff2");
+  font-weight: 800;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+  font-style: normal;
+}
+
+.landing {
+  --paper: #f4f2ec;
+  --paper-2: #eae7de;
+  --card: #fbfaf7;
+  --ink: #1f1e1b;
+  --ink-2: #5c594f;
+  --ink-3: #8d897c;
+  --rule: rgba(31, 30, 27, 0.13);
+  /* Reserved for detection boxes, chips and this one CTA color — CONTEXT.md
+     and the prototype README agree it does not get spent anywhere else on
+     this page. */
+  --mk: #e5326f;
+  --scene: #141a22;
+
+  --disp: "Cabinet Grotesk", "Satoshi", system-ui, sans-serif;
+  --sans: "Satoshi", system-ui, -apple-system, sans-serif;
+  /*
+   * The prototype self-hosted IBM Plex Mono from Google Fonts for this
+   * token. That host is exactly what production's CSP and this milestone's
+   * self-hosting rule forbid, and a third self-hosted family was not worth
+   * adding just to keep one typeface pixel-identical to a throwaway HTML
+   * file. `--font-mono` in `styles.css` (`ui-monospace, "SF Mono", Menlo,
+   * monospace`) already carries this app's "a machine produced this" voice
+   * everywhere else, so the landing page reuses it rather than inventing a
+   * second mono stack.
+   */
+  --mono: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  --max: 1180px;
+  --gut: clamp(20px, 4vw, 44px);
+
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  background: var(--paper);
+}
+.landing * {
+  box-sizing: border-box;
+}
+.landing img {
+  display: block;
+  max-width: 100%;
+}
+.landing a {
+  color: inherit;
+  text-decoration: none;
+}
+.landing h1,
+.landing h2,
+.landing h3 {
+  margin: 0;
+  font-family: var(--disp);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.04;
+}
+.landing p {
+  margin: 0;
+}
+.landing .wrap {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 var(--gut);
+}
+
+/* ======================= HERO — a world, not a page ======================= */
+.landing .hero {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--scene);
+}
+
+/* the frame lives in its own coordinate space so the real box coordinates
+   still land on the real character after the crop. width:max() reproduces
+   object-fit:cover for a 16:9 source without losing that mapping. */
+.landing .scene {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+/* Framing is computed, not eyeballed. At 1440x810 the frame renders 1555
+   wide, so Paimon's real box (x .481–.943) lands at 662–1380px — clear of
+   the copy column on the left and inside the viewport on the right — while
+   the Y offset drops the box top below the nav and pushes the game's own
+   subtitle bar under the bottom scrim. */
+.landing .frame {
+  position: absolute;
+  top: 50%;
+  left: 47%;
+  transform: translate(-50%, -44%);
+  width: max(118%, calc(100svh * 16 / 9));
+  aspect-ratio: 16 / 9;
+}
+.landing .frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.landing .frame svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.landing .frame rect {
+  fill: none;
+  stroke: var(--mk);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.55));
+}
+.landing .tag {
+  position: absolute;
+  font-family: var(--mono);
+  font-size: clamp(10px, 0.85vw, 13px);
+  font-weight: 500;
+  background: var(--mk);
+  color: #fff;
+  padding: 2px 8px;
+  white-space: nowrap;
+  line-height: 1.6;
+  border-radius: 3px;
+}
+.landing .tag .c {
+  opacity: 0.72;
+  margin-left: 7px;
+  font-weight: 400;
+}
+
+/* legibility scrim — left-weighted so the right side of the scene stays clean */
+.landing .scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    96deg,
+    rgba(10, 14, 20, 0.9) 0%,
+    rgba(10, 14, 20, 0.72) 30%,
+    rgba(10, 14, 20, 0.18) 56%,
+    transparent 72%
+  );
+}
+.landing .scrim-b {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 40%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(10, 14, 20, 0.78) 55%,
+    rgba(10, 14, 20, 0.97) 88%,
+    #0a0e14
+  );
+}
+
+/* floating chips — product state living inside the world */
+.landing .float {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  background: rgba(16, 20, 26, 0.62);
+  backdrop-filter: blur(9px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  padding: 8px 13px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #e8e9ec;
+  white-space: nowrap;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.3);
+}
+.landing .float i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ec98b;
+  flex: none;
+  font-style: normal;
+}
+.landing .float.pend i {
+  background: #e0a33c;
+}
+.landing .float b {
+  color: #fff;
+  font-weight: 500;
+}
+.landing .f1 {
+  top: 20%;
+  right: 6%;
+}
+.landing .f2 {
+  top: 29.5%;
+  right: 11%;
+}
+.landing .f3 {
+  bottom: 24%;
+  right: 8%;
+}
+@media (max-width: 1000px) {
+  .landing .float {
+    display: none;
+  }
+}
+
+/* nav — a floating pill, not a bar */
+.landing .nav {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px var(--gut);
+  max-width: 1340px;
+  margin: 0 auto;
+  width: 100%;
+}
+.landing .mark {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #fff;
+  font-family: var(--disp);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.landing .mark .g {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--mk);
+  border-radius: 4px;
+  position: relative;
+  flex: none;
+}
+.landing .mark .g::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  background: var(--mk);
+  border-radius: 1px;
+}
+.landing .navpill {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.11);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 4px;
+}
+.landing .navpill a {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 14.5px;
+  padding: 7px 15px;
+  border-radius: 999px;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.landing .navpill a:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+.landing .navact {
+  display: flex;
+  gap: 9px;
+}
+@media (max-width: 900px) {
+  .landing .navpill {
+    display: none;
+  }
+}
+
+.landing .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 500;
+  padding: 11px 19px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    transform 0.1s;
+  white-space: nowrap;
+}
+.landing .btn:active {
+  transform: translateY(1px);
+}
+.landing .btn .ar {
+  transition: transform 0.16s;
+}
+.landing .btn:hover .ar {
+  transform: translateX(3px);
+}
+.landing .btn-w {
+  background: #fff;
+  color: #16181c;
+}
+.landing .btn-w:hover {
+  background: #e9eaec;
+}
+.landing .btn-ghost {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+.landing .btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.landing .btn-ink {
+  background: var(--ink);
+  color: var(--paper);
+}
+.landing .btn-ink:hover {
+  background: #35332d;
+}
+.landing .btn-line {
+  border-color: var(--rule);
+  color: var(--ink);
+}
+.landing .btn-line:hover {
+  background: var(--paper-2);
+}
+.landing .btn-lg {
+  padding: 14px 26px;
+  font-size: 16px;
+}
+.landing a:focus-visible,
+.landing summary:focus-visible {
+  outline: 2px solid var(--mk);
+  outline-offset: 3px;
+}
+
+.landing .hero-body {
+  position: relative;
+  z-index: 4;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 0 6vh;
+}
+.landing .hero-in {
+  max-width: 1340px;
+  margin: 0 auto;
+  padding: 0 var(--gut);
+  width: 100%;
+}
+.landing .hero-copy {
+  max-width: 33ch;
+}
+.landing .kick {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+  margin-bottom: 22px;
+}
+.landing .kick s {
+  width: 22px;
+  height: 1px;
+  background: var(--mk);
+  display: block;
+  text-decoration: none;
+}
+.landing .hero h1 {
+  color: #fff;
+  font-size: clamp(34px, 4.3vw, 56px);
+  font-weight: 800;
+  letter-spacing: -0.032em;
+  line-height: 1;
+  margin-bottom: 22px;
+}
+.landing .hero h1 span {
+  color: rgba(255, 255, 255, 0.55);
+}
+.landing .hero-sub {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: clamp(16px, 1.35vw, 19px);
+  line-height: 1.55;
+  max-width: 46ch;
+  margin-bottom: 32px;
+}
+.landing .hero-sub b {
+  color: #fff;
+  font-weight: 500;
+}
+.landing .hero-cta {
+  display: flex;
+  gap: 11px;
+  flex-wrap: wrap;
+}
+.landing .hero-foot {
+  position: relative;
+  z-index: 4;
+  padding: 0 var(--gut) 26px;
+  max-width: 1340px;
+  margin: 0 auto;
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.55);
+  display: flex;
+  gap: 8px 26px;
+  flex-wrap: wrap;
+}
+.landing .hero-foot b {
+  color: rgba(255, 255, 255, 0.82);
+  font-weight: 400;
+}
+
+/* ======================= BODY — the quiet document ======================= */
+.landing .sec {
+  padding: clamp(64px, 8vw, 112px) 0;
+}
+.landing .sec-h {
+  text-align: center;
+  max-width: 700px;
+  margin: 0 auto 52px;
+}
+.landing .eyebrow {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 16px;
+}
+.landing h2 {
+  font-size: clamp(28px, 3.8vw, 44px);
+  font-weight: 700;
+}
+/* biome-ignore lint/style/noDescendingSpecificity: targets a <span> inside
+   <h2>, unrelated to `.landing .hero h1 span` above (a <span> inside <h1>)
+   — they never match the same element, the heuristic just can't see that. */
+.landing h2 span {
+  color: var(--ink-3);
+}
+.landing .sec-h p {
+  color: var(--ink-2);
+  margin-top: 16px;
+  font-size: 17px;
+}
+
+.landing .strip {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: 20px 0;
+  background: var(--paper-2);
+}
+.landing .strip-in {
+  display: flex;
+  gap: 12px 30px;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+}
+.landing .strip-l {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.landing .strip-i {
+  font-size: 15px;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.landing .steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+.landing .step {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 26px;
+}
+.landing .step .n {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--mk);
+  margin-bottom: 16px;
+}
+.landing .step h3 {
+  font-size: 19px;
+  margin-bottom: 9px;
+}
+.landing .step p {
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1.55;
+}
+@media (max-width: 860px) {
+  .landing .steps {
+    grid-template-columns: 1fr;
+  }
+}
+
+.landing .plate {
+  margin: 52px auto 0;
+  max-width: 900px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 28px;
+  align-items: center;
+}
+.landing .plate > div {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  background: #0d1117;
+}
+.landing .plate figcaption {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.landing .plate figcaption b {
+  color: var(--ink);
+  font-weight: 700;
+}
+.landing .plate figcaption em {
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--mk);
+}
+@media (max-width: 860px) {
+  .landing .plate {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
+
+.landing .three {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 34px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+.landing .three p {
+  color: var(--ink-2);
+  font-size: 15.5px;
+  line-height: 1.6;
+}
+.landing .three b {
+  color: var(--ink);
+  font-weight: 700;
+}
+@media (max-width: 860px) {
+  .landing .three {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+}
+
+.landing .stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.landing .stat {
+  padding: 30px 24px 30px 0;
+  border-right: 1px solid var(--rule);
+}
+.landing .stat:last-child {
+  border-right: 0;
+}
+.landing .stat .v {
+  font-family: var(--disp);
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  margin-bottom: 10px;
+}
+.landing .stat .l {
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+@media (max-width: 860px) {
+  .landing .stats {
+    grid-template-columns: 1fr 1fr;
+  }
+  .landing .stat:nth-child(2n) {
+    border-right: 0;
+  }
+  .landing .stat:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--rule);
+  }
+}
+
+.landing .faq {
+  max-width: 760px;
+  margin: 0 auto;
+  border-top: 1px solid var(--rule);
+}
+.landing .faq details {
+  border-bottom: 1px solid var(--rule);
+}
+.landing .faq summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 20px 0;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 17.5px;
+  font-weight: 500;
+  font-family: var(--disp);
+  letter-spacing: -0.015em;
+}
+.landing .faq summary::-webkit-details-marker {
+  display: none;
+}
+.landing .faq summary::after {
+  content: "+";
+  font-family: var(--mono);
+  font-size: 20px;
+  color: var(--ink-3);
+  transition: transform 0.2s;
+  flex: none;
+}
+.landing .faq details[open] summary::after {
+  transform: rotate(45deg);
+  color: var(--mk);
+}
+.landing .faq .a {
+  padding: 0 0 22px;
+  color: var(--ink-2);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.landing .endcta {
+  text-align: center;
+  padding: clamp(56px, 7vw, 92px) var(--gut);
+  border-top: 1px solid var(--rule);
+}
+.landing .endcta p {
+  color: var(--ink-2);
+  max-width: 48ch;
+  margin: 16px auto 30px;
+}
+.landing .endcta .row {
+  display: flex;
+  gap: 11px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.landing .foot {
+  background: var(--paper-2);
+  border-top: 1px solid var(--rule);
+  padding: 48px 0 34px;
+}
+.landing .foot-g {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 32px;
+}
+.landing .foot .mark {
+  color: var(--ink);
+}
+.landing .foot-g p {
+  color: var(--ink-3);
+  font-size: 14px;
+  margin-top: 13px;
+  max-width: 32ch;
+}
+.landing .foot h4 {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 13px;
+  font-weight: 400;
+}
+.landing .foot ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.landing .foot ul a {
+  color: var(--ink-2);
+  font-size: 15px;
+}
+.landing .foot ul a:hover {
+  color: var(--ink);
+}
+.landing .foot-b {
+  margin-top: 42px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+@media (max-width: 860px) {
+  .landing .foot-g {
+    grid-template-columns: 1fr 1fr;
+  }
+  .landing .foot-brand {
+    grid-column: span 2;
+  }
+}
+
+/* The accessibility override below has to beat every transition and
+   animation declared above regardless of that rule's own specificity —
+   that is what !important is for here, not a shortcut around the cascade. */
+@media (prefers-reduced-motion: reduce) {
+  .landing * {
+    /* biome-ignore lint/complexity/noImportantStyles: see comment above */
+    transition: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: see comment above */
+    animation: none !important;
+  }
+}

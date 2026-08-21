@@ -3,18 +3,34 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>crowdmon</title>
-    <!-- The v2 public surface is a landing page plus an OG card (CONTEXT.md
-         §Q11). The tags live here from the start so the shell that ships today
-         is the shell that gets a preview card later. -->
-    <meta property="og:title" content="crowdmon" />
-    <meta property="og:description" content="A labelled image dataset of Genshin Impact characters, built by a data flywheel." />
+    <title>crowdmon — teaching a computer to see a video game</title>
+    <!--
+      The v2 public surface is the landing page at `/` plus an OG card
+      (CONTEXT.md §Q11, M20 plan §A4). These tags live in the static shell
+      rather than being injected by React because the real distribution
+      channel is a link pasted into Discord or Reddit — crawlers for those
+      previews do not execute JavaScript, so anything client-rendered would
+      simply not exist yet when the card is built. `og:image` points at a
+      real frame from the dataset (the same one the hero uses), not a
+      generated card, for the same "show the real thing" reason the hero
+      itself does not fake a confident detection.
+    -->
+    <meta property="og:title" content="crowdmon — teaching a computer to see a video game" />
+    <meta property="og:description" content="A real frame, a detector's real (and often wrong) guess, and the human verdict that turns it into a label. Built and run by one person on a home server." />
     <meta property="og:type" content="website" />
-    <!-- M14.3, CONTEXT.md §12: one shell serves every route (M5.1's single-
-         origin SPA), so one tag here covers `/verify` — the public surface a
-         search index must not crawl — along with `/admin`, which was already
-         assumed public but never meant to be indexed either. -->
-    <meta name="robots" content="noindex" />
+    <meta property="og:url" content="https://crowdmon.mkcarl.com/" />
+    <meta property="og:image" content="https://crowdmon.mkcarl.com/og-image.jpg" />
+    <!--
+      No blanket `noindex` here anymore (M20 plan §A4) — `/` is meant to be
+      found. `/verify` and `/admin` still need it: `/verify` for CONTEXT.md
+      §Q25's frame-bytes reasons, `/admin` because it was never meant to be
+      crawled either, and neither reason has anything to do with `/`. Since
+      one shell serves every route, the tag can no longer live here at all —
+      `src/hooks/use-noindex.ts` adds and removes it per mounted route
+      instead. See that file's own comment for why a client-injected tag is
+      the best this SPA can do without also changing the Worker that serves
+      it, which is out of scope for the milestone that added this hook.
+    -->
   </head>
   <body>
     <div id="root"></div>

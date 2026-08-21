@@ -1,5 +1,6 @@
 import { useContributeMe, useLogout } from "../api/queries";
 import { ContributeVerify } from "../components/ContributeVerify";
+import { useNoindex } from "../hooks/use-noindex";
 
 /**
  * `/contribute` (M20, plan §B4) — the signed-in contributor surface.
@@ -25,6 +26,11 @@ import { ContributeVerify } from "../components/ContributeVerify";
  * silently broken page.
  */
 export function Contribute() {
+  // A signed-in personal surface, same reasoning as `/admin` — never meant
+  // to be crawled. M20 plan §A4 only made `/` indexable; every other route
+  // keeps the `noindex` the old blanket `<meta>` tag in `index.html` used to
+  // give it for free (see `use-noindex.ts`).
+  useNoindex();
   const me = useContributeMe();
   const logout = useLogout();
 
