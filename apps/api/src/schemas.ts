@@ -1302,16 +1302,24 @@ export const SnapshotSource = z
 
 /**
  * The inclusion policy every snapshot built by this deployment currently
- * uses (M15.3). Free text on the `snapshots` row rather than a versioned
- * policy table (migration 0003's own comment on `snapshots.inclusion_policy`
- * explains why: a snapshot's dataset must be reconstructible from its own
- * row, not from a foreign key into a table that might later change meaning
- * underneath it) — this constant is simply today's one policy, stated once
- * so `snapshotSourceHandler` and `createSnapshotHandler` cannot describe two
- * different policies by accident.
+ * uses (M15.3, reordered M20 plan §C2). Free text on the `snapshots` row
+ * rather than a versioned policy table (migration 0003's own comment on
+ * `snapshots.inclusion_policy` explains why: a snapshot's dataset must be
+ * reconstructible from its own row, not from a foreign key into a table that
+ * might later change meaning underneath it) — this constant is simply
+ * today's one policy, stated once so `snapshotSourceHandler` and
+ * `createSnapshotHandler` cannot describe two different policies by
+ * accident, and stamped verbatim onto every `snapshots` row so a change here
+ * only describes snapshots built *after* it, never rewrites what an existing
+ * row says about how it was built (plan §C2 — old rows are not backfilled).
+ *
+ * `WINNING_VERDICT` (`routes/jobs.ts`) is the total, static ordering this
+ * string names: the latest `admin` verdict wins outright; absent one, the
+ * latest verdict from a `trusted` user wins; an `anon` verdict never
+ * qualifies at either rank.
  */
 export const DEFAULT_INCLUSION_POLICY =
-  "source=admin; verdict=latest per prediction, accept or adjust; " +
+  "source=admin (latest wins) else trusted user (latest wins); verdict=accept or adjust; " +
   "split: selection_reason='random' -> eval, else train";
 
 /**

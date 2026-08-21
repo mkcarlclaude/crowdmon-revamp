@@ -139,6 +139,25 @@ private admin plane, not a data path.
   for user auth rather than answering it. `annotator_id` stays on every verdict row
   regardless, so swapping the identity source later touches no annotation data.
 
+  **Amended again in v4 (M20, plan §B): built after all, once a third tier existed to
+  authenticate.** v2's "not built" held only while the two-tier design (§7) had nothing
+  for OAuth to authenticate — anonymous sign-up covered every unauthenticated visitor and
+  Access already covered the admin. §7's v4 amendment is what reopens this: a contributor
+  tier whose *trusted* members' verdicts become labels needs an identity that persists
+  across visits and that an admin can flip a boolean on, which an opaque anonymous session
+  id cannot offer. Revisited before building it: Cloudflare **still** has no B2C identity
+  product — Access is org/team gating, built for "is this caller one of a fixed roster,"
+  not "let anyone sign up." Cloudflare's own IdP, the default identity provider for new
+  Zero Trust organizations since June 2026, was checked specifically for this and rejected
+  for the same reason: it requires every signing-in user to hold a Cloudflare account,
+  which is not a bar an anonymous stranger clicking a link from Discord will clear. Q7's
+  original rejection of Access for user auth was correct and stays correct — nothing
+  about Cloudflare's product lineup changed. What changed is the resolution: an OAuth
+  client living in the Worker itself (`arctic`-style flow, `jose` against Google's own
+  JWKS — the same library Access assertions are already verified with, against a
+  different issuer), sessions in D1, exactly as this bullet described before v2 struck it,
+  built now because M20 is the first milestone with a tier for it to authenticate.
+
 ### Repo and delivery (Q18, Q22, Q23)
 
 - **Monorepo.** pnpm workspaces for edge and SPA, Go module in a subdirectory. The
@@ -756,6 +775,38 @@ clause instead of an unrecoverable loss. And accept/adjust/reject rates are comp
 depends on: a troll rejecting everything is otherwise indistinguishable from a model that
 got worse.
 
+**Amended in v4 (M20–M22, plan §C —
+`docs/superpowers/plans/2026-08-16-landing-page-and-contributor-accounts.md`): a third
+tier, `'user'`, whose verdicts become labels.** M20 gave anyone who completes Google
+sign-in a `users` row (migration 0012), with a `trusted` boolean an admin sets on the
+person, defaulting to 0. That alone did not reopen this section's refusal — an account
+with `trusted = 0` is recorded and counted (`/api/contribute/me`) but excluded from every
+snapshot exactly as an `anon` verdict is. What reopens it is §C: a **trusted** contributor's
+verdict now fills a gap no admin has ruled on, admitted by `WINNING_VERDICT`
+(`routes/jobs.ts`) — a total, static ordering, expressed as one `CASE`-ranked scalar
+subquery: the latest `admin` verdict wins outright; absent one, the latest verdict from a
+trusted user wins; `anon` and an untrusted user's verdicts never reach either rank.
+
+**Why the four refused subsystems still stay refused.** Consensus resolution, agreement
+scoring, trust weighting and inter-rater reliability are all mechanisms for **arbitrating
+a disagreement between two verdicts neither of which is presumptively authoritative.**
+This ordering never produces that situation: rank is fixed by tier (admin above trusted
+user above nothing), so two trusted contributors never have their rulings weighed against
+each other — the later one simply supersedes the earlier one, the same "latest wins"
+rule v1's single admin tier always used. Trust itself is one boolean an admin sets on a
+*person*, not a score computed from how often that person agrees with anyone else, so
+nothing here is agreement scoring wearing a different name. `annotator_id` and per-source
+accept/adjust/reject rates (this section's two reversibility properties, above) are
+unchanged and untouched by the third tier — a trusted account demoted later is still a
+`WHERE` clause, not a rewrite.
+
+**What would bring them back.** The day two *trusted* contributors' rulings on the same
+prediction need to be weighed against each other — rather than one simply superseding the
+other by recency — is the day this ordering stops being total and static, and that is
+exactly the trigger this section and `ROADMAP.md`'s deferred list name for reopening
+consensus resolution, agreement scoring or trust weighting. Nothing in M20–M22 asks that
+question; it ships a hierarchy, not a poll.
+
 ### Public surface (Q11) — thin
 
 Public and unauthenticated: landing page, about, and the **live in-browser detector
@@ -793,6 +844,21 @@ means it is full of menus, loading screens and black frames; the public pool mus
 *legible*, or a visitor's first impression is a black rectangle and a broken product.
 Reusing one pool gives one of them the wrong images, and it would attach untrusted
 verdicts to the one set whose labels must stay unimpeachable.
+
+**Amended in v4 (M20–M22, plan §§A–C): the public surface is no longer thin.** Where v2's
+amendment made the verification page the public surface, v4 adds a front door and a
+second gate behind it. `/` is a landing page (plan §A, ported from the settled design at
+`design/landing-prototypes`) rather than the placeholder it was. The anonymous `/verify`
+curated pool is unchanged — still `source = 'anon'`, still never a label. New is a
+"Sign in" path into Google OAuth (plan §B) leading to `/contribute`: a signed-in
+contributor's own mount of the same verification component, drawing from the whole
+unruled pool rather than the curated one, with `allowAdjust` on, whose verdicts fill a
+gap no admin has ruled once an admin flips that account's `trusted` boolean (plan §C,
+above). None of this reopens the rejected gallery of labelled crops: nothing here
+browses images by class or exposes the dataset as a collection, the wider pool behind
+`/contribute` is gated behind a named account rather than open to anyone the way
+`/verify`'s curated pool is, and the eval/public pool split §Q25 established is
+untouched by any of it.
 
 ### Admin dashboard (Q19)
 

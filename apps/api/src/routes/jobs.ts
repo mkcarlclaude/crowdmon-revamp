@@ -1374,23 +1374,75 @@ export const reportDryRunHandler: RouteHandler<typeof reportDryRunRoute, AppEnv>
 };
 
 /**
- * The latest `source = 'admin'` verdict on one prediction, if it is an
- * `accept` or `adjust` — the default inclusion policy's whole rule (M15.3:
- * "default policy excludes anonymous verdicts"). Shared between
+ * The verdict that decides one prediction's fate under the default
+ * inclusion policy (M15.3, reordered in M20 plan §C1) — the label a
+ * `snapshot` reads back, if it is an `accept` or `adjust`. Shared between
  * `snapshotSourceHandler`'s two queries below so the definition of "this
  * prediction is in" cannot drift between "which images qualify" and "which
  * labels do".
  *
- * Latest, not "any admin accept" — several verdicts on one prediction are a
- * legal state (migration 0003), and a box an admin accepted and later
- * rejected on reflection must not still count as accepted just because an
- * older row says so. `p.id` is the correlation: this is a scalar subquery,
- * one row per prediction, ordered newest first and cut to one.
+ * A total, static ordering, expressed as one scalar subquery rather than two
+ * queries merged in TypeScript, so there is never a tie for application code
+ * to arbitrate:
+ *
+ *   1. Any `admin` verdict on the prediction — the *latest* one wins.
+ *   2. Otherwise, the latest verdict from a `trusted` user wins.
+ *   3. Otherwise the prediction has no label.
+ *
+ * `anon` never reaches either rank — it satisfies neither branch of the
+ * `WHERE`, so it drops out before the `ORDER BY` ever sees it. Latest, not
+ * "any admin accept" or "any trusted-user accept" — several verdicts on one
+ * prediction are a legal state (migration 0003), and a box an admin accepted
+ * and later rejected on reflection must not still count as accepted just
+ * because an older row says so.
+ *
+ * The `LEFT JOIN` to `users` carries the same condition
+ * `CONTRIBUTOR_UNRULED_BOX` (`routes/contribute.ts`) uses to decide whether a
+ * *trusted* contributor has already ruled on a box: `u2.id = CAST(v2.
+ * annotator_id AS INTEGER)`, gated to `v2.source = 'user'` rows only, so an
+ * admin's email or an anonymous session id in `annotator_id` is never cast to
+ * an integer and joined against `users` at all — the join predicate never
+ * evaluates for a row it would not apply to, matching `contribute.ts`'s own
+ * reasoning for why that `CAST` is safe.
+ *
+ * `p.id` is the correlation: this is a scalar subquery, one row per
+ * prediction, ordered by rank (admin 0, trusted user 1) then `v2.id DESC`
+ * within a rank, cut to one. `idx_verdicts_prediction` (migration 0003) turns
+ * `v2.prediction_id = p.id` into an index search rather than a table scan of
+ * `verdicts`, so this subquery reads a handful of rows per prediction, not
+ * the whole table — the read-amplification shape `listVideosHandler`'s own
+ * comment documents. `users` is joined by its `INTEGER PRIMARY KEY`, a rowid
+ * lookup, so the added join costs one B-tree probe per candidate verdict
+ * row, not a scan of `users`.
+ *
+ * Benchmarked against a seeded dataset scaled up from production (10,000
+ * images, 1,055 predictions, ~2,000 verdicts, 50 trusted and 50 untrusted
+ * users) via `meta.rows_read`, both of `snapshotSourceHandler`'s queries
+ * together — not this subquery in isolation, per `memory/measure-cost-not-
+ * just-win.md`: the single-table `source = 'admin'` form this replaces reads
+ * 19,357 rows; this form reads 27,673, a real increase (+43%) rather than a
+ * wash. `EXPLAIN QUERY PLAN` shows why: the old `ORDER BY v2.id DESC` was
+ * satisfied by `idx_verdicts_prediction`'s own row order, so the old plan
+ * never sorted; this one orders by a `CASE` expression no index can satisfy,
+ * so SQLite adds `USE TEMP B-TREE FOR ORDER BY`, plus one `users` primary-key
+ * probe per candidate verdict row for the `LEFT JOIN`. Adding
+ * `verdicts(prediction_id, source)` was tried and produced an identical plan
+ * and an identical row count — the sort key is the `CASE`, not `source`
+ * alone, so a composite index on `source` cannot help it, and it was left
+ * out rather than shipped as dead weight. The increase is bounded by verdict
+ * count, not image count, and this handler runs once per admin-triggered
+ * snapshot build, not on a request path — nowhere near the order-of-
+ * magnitude regression that memory file warns about, so it was accepted
+ * rather than chased further.
  */
-const LATEST_ADMIN_VERDICT = `(
+const WINNING_VERDICT = `(
   SELECT v2.id FROM verdicts v2
-   WHERE v2.prediction_id = p.id AND v2.source = 'admin'
-   ORDER BY v2.id DESC LIMIT 1
+   LEFT JOIN users u2
+     ON v2.source = 'user' AND u2.id = CAST(v2.annotator_id AS INTEGER)
+   WHERE v2.prediction_id = p.id
+     AND (v2.source = 'admin' OR (v2.source = 'user' AND u2.trusted = 1))
+   ORDER BY (CASE v2.source WHEN 'admin' THEN 0 ELSE 1 END), v2.id DESC
+   LIMIT 1
 )`;
 
 interface SnapshotImageRow {
@@ -1418,9 +1470,10 @@ export const snapshotSourceRoute = createRoute({
   summary: "Every image and label the current inclusion policy admits (M15.1)",
   description:
     "The whole input to one snapshot build: every image carrying at least one label " +
-    "under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict " +
-    "per prediction, `accept` or `adjust`), with `selection_reason` alongside so the " +
-    "worker can compute M15.2's split. No Access assertion and no credential beyond " +
+    "under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest " +
+    "`admin` verdict wins outright; absent one, the latest verdict from a `trusted` " +
+    "user wins; `accept` or `adjust` either way), with `selection_reason` alongside so " +
+    "the worker can compute M15.2's split. No Access assertion and no credential beyond " +
     "`worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller " +
     "learns nothing here it could not already infer by polling claim.",
   request: { params: JobIdParam, query: ListVideoImagesQuery },
@@ -1464,7 +1517,7 @@ export const snapshotSourceHandler: RouteHandler<typeof snapshotSourceRoute, App
          FROM images i
         WHERE EXISTS (
               SELECT 1 FROM predictions p
-                JOIN verdicts v ON v.id = ${LATEST_ADMIN_VERDICT}
+                JOIN verdicts v ON v.id = ${WINNING_VERDICT}
                WHERE p.image_id = i.id AND v.verdict IN ('accept', 'adjust'))
         ORDER BY i.id`,
     ),
@@ -1477,7 +1530,7 @@ export const snapshotSourceHandler: RouteHandler<typeof snapshotSourceRoute, App
               CASE WHEN v.verdict = 'adjust' THEN v.adjusted_y_max ELSE p.y_max END AS y_max
          FROM predictions p
          JOIN classes c  ON c.id = p.class_id
-         JOIN verdicts v ON v.id = ${LATEST_ADMIN_VERDICT}
+         JOIN verdicts v ON v.id = ${WINNING_VERDICT}
         WHERE v.verdict IN ('accept', 'adjust')`,
     ),
   ]);

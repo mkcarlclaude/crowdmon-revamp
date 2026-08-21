@@ -36,6 +36,10 @@ infra/backend.hcl
 .env.*
 !.env.example
 
+# Production D1 dumps. Every table pull lands here, including `users`, which
+# carries every annotator's email (migration 0012) — never committed.
+.d1-backups/
+
 # OS
 .DS_Store
 

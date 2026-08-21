@@ -1119,14 +1119,31 @@ to end.
 ## Deferred past v2
 
 Training on any machine · model registry · distilled detector · in-browser inference ·
-public detector demo · Google OAuth and sessions · consensus resolution, agreement
-scoring, trust weighting · leaderboards · 70/20/10 weighted selection · a public
-statistics surface · any measurement of detector accuracy.
+public detector demo · consensus resolution, agreement scoring, trust weighting ·
+leaderboards · 70/20/10 weighted selection · a public statistics surface · any
+measurement of detector accuracy.
 
 Training and the flywheel proper are v4 or v5, on the home box, CPU-only and slow by
 choice — `CONTEXT.md` §Q21 records the trap that will eat a multi-day run and the two
 ways out. The operational debt in `CONTEXT.md` §9 stays debt, including yt-dlp
 freshness, which was considered for v2 and left out to keep the sentence honest.
+
+**Google OAuth and sessions left this list at M20** (plan §B,
+[#158](https://github.com/mkcarlclaude/crowdmon-revamp/pull/158)) — a signed-in
+contributor tier whose *trusted* members' verdicts become labels (M20 plan §C) needed
+a persistent identity an anonymous session id cannot offer, which is exactly the
+condition that was missing when v2 struck this item. **The other five survived a
+milestone that looked like it would take them, and the reason is the same reason §7's
+v4 amendment (`CONTEXT.md`) gives for the four refused subsystems**: M20–M22 shipped a
+strict two-rank hierarchy — admin above trusted user, "latest wins" within each rank —
+never a pool of equals whose rulings get counted, scored or compared. Consensus
+resolution, agreement scoring, trust weighting and inter-rater reliability are all
+answers to "these two verdicts disagree and neither is presumptively right," a question
+this ordering never asks; leaderboards and a public statistics surface are both a
+cross-user comparison, which `/api/contribute/me` (plan §B5) deliberately does not
+become — it answers only for the signed-in caller. They come back, if ever, the day two
+trusted contributors' rulings on the same prediction need weighing against each other
+rather than one simply superseding the other by recency.
 
 ---
 

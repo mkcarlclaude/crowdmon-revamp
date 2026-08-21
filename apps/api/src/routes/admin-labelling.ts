@@ -35,7 +35,21 @@ import {
  * public traffic decide what the authoritative annotator never sees.
  */
 
-/** Any box on this image that the admin tier has not ruled on. */
+/**
+ * Any box on this image that the admin tier has not ruled on.
+ *
+ * Stays `source = 'admin'` even after M20 gave contributors their own verdict
+ * source (plan §C3) — deliberately, and asymmetric with `CONTRIBUTOR_UNRULED_BOX`
+ * (`routes/contribute.ts`) on purpose. A contributor's ruling, trusted or not,
+ * must never remove a box from *this* pool: the admin is the tier that
+ * overrides everyone else's verdict (`WINNING_VERDICT`, `routes/jobs.ts`), so
+ * the admin must be able to see and re-rule anything, including a box a
+ * trusted user already ruled on. `CONTRIBUTOR_UNRULED_BOX` is not this
+ * predicate reused — it additionally excludes a box a trusted user has ruled
+ * on, so contributors are not routinely handed each other's already-settled
+ * work — and that asymmetry is the kind of thing that reads as a bug in six
+ * months. It is documented at both definitions for exactly that reason.
+ */
 const UNRULED_BOX = `
   SELECT 1 FROM predictions p
    WHERE p.image_id = i.id
