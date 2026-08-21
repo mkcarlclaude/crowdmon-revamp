@@ -170,6 +170,18 @@ list. Each clause has an observation that kills it:
 | *dataset snapshot* | A snapshot that cannot be listed, or one whose inclusion policy is not recorded on it |
 | *with a split manifest* | A manifest missing, or a frozen-evaluation-pool image appearing in the train split |
 
+**Amended in v4 (M20–M22, plan §C):** the *authoritative for an admin* clause and the
+falsification row under it describe v2's rule, not the current one. A trusted
+contributor's verdict now also becomes a label when no admin has ruled on that
+prediction — `CONTEXT.md` §7's v4 amendment records the auth this required and why it
+does not reopen the subsystems v2 kept out. The clause this table proved false by *an
+anonymous verdict appearing inside a snapshot* is unaffected — `anon` still never
+qualifies — but the table's own wording (*for an admin*) is no longer literally what
+`WINNING_VERDICT` (`routes/jobs.ts`) enforces, and is left here rather than edited:
+`README.md`'s v2 acceptance run was verified against this exact sentence, and rewriting
+the sentence out from under a completed verification is a worse error than an old
+sentence carrying a superseded scope note.
+
 ### In scope
 
 - `prelabel` as a fourth job kind on the existing queue, enqueued behind extraction

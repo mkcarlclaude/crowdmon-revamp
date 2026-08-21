@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../src/app";
 import { DEFAULT_INCLUSION_POLICY } from "../../src/schemas";
 import { adminHeaders, configureAccess, installAdminIdentity } from "./admin-identity";
+import { seedUser } from "./contributor-seed";
 
 /**
  * Dataset snapshots (M15.1, M15.3): an admin-triggered job that packages
@@ -10,9 +11,11 @@ import { adminHeaders, configureAccess, installAdminIdentity } from "./admin-ide
  * artifact, and the default policy that decides what qualifies.
  *
  * The property most of these tests exist to hold down is M15.3's own
- * sentence: the default inclusion policy excludes anonymous verdicts, uses
- * the *latest* admin verdict per prediction, and resolves an `adjust` to its
- * adjusted coordinates rather than the model's original box.
+ * sentence, reordered by M20 plan §C1: the default inclusion policy admits
+ * the latest `admin` verdict outright; absent one, the latest verdict from a
+ * *trusted* user; `anon` verdicts and an untrusted user's verdicts never
+ * qualify; and an `adjust` resolves to its adjusted coordinates rather than
+ * the model's original box.
  */
 
 beforeAll(installAdminIdentity);
@@ -68,7 +71,7 @@ async function seedVerdict(
   predictionId: number,
   verdict: "accept" | "adjust" | "reject",
   opts: {
-    source?: "admin" | "anon";
+    source?: "admin" | "anon" | "user";
     annotator?: string;
     adjusted?: [number, number, number, number];
   } = {},
@@ -348,6 +351,113 @@ describe("GET /api/jobs/{id}/snapshot-source", () => {
 
     expect(body.images).toHaveLength(1);
     expect(body.images[0]?.labels).toHaveLength(2);
+  });
+
+  // M20 plan §C1 — the ordering that fills a gap no admin has ruled on with
+  // a *trusted* user's verdict, and only a trusted one.
+
+  it("admits a trusted user's verdict when no admin has ruled on the prediction", async () => {
+    const jobId = await queueAndClaim();
+    const imageId = await seedImage(`frames/${VIDEO}/00007.000.jpg`, 7);
+    const classId = await seedClass();
+    const predictionId = await seedPrediction(imageId, classId);
+    const trustedUserId = await seedUser({ trusted: 1 });
+    await seedVerdict(predictionId, "accept", { source: "user", annotator: String(trustedUserId) });
+
+    const res = await snapshotSource(jobId);
+    const body = (await res.json()) as { images: Array<{ labels: unknown[] }> };
+    expect(body.images).toHaveLength(1);
+    expect(body.images[0]?.labels).toHaveLength(1);
+  });
+
+  it("excludes an untrusted user's verdict even though the source is 'user'", async () => {
+    const jobId = await queueAndClaim();
+    const imageId = await seedImage(`frames/${VIDEO}/00008.000.jpg`, 8);
+    const classId = await seedClass();
+    const predictionId = await seedPrediction(imageId, classId);
+    const untrustedUserId = await seedUser({ trusted: 0 });
+    await seedVerdict(predictionId, "accept", {
+      source: "user",
+      annotator: String(untrustedUserId),
+    });
+
+    const res = await snapshotSource(jobId);
+    const body = (await res.json()) as { images: unknown[] };
+    expect(body.images).toEqual([]);
+  });
+
+  it("prefers the latest admin verdict over a trusted user's verdict on the same prediction", async () => {
+    const jobId = await queueAndClaim();
+    const imageId = await seedImage(`frames/${VIDEO}/00009.000.jpg`, 9);
+    const classId = await seedClass();
+    const predictionId = await seedPrediction(imageId, classId);
+    const trustedUserId = await seedUser({ trusted: 1 });
+    // The trusted user's verdict is written first and would win on recency
+    // alone; the admin's later reject must still be authoritative, because
+    // rank (admin before trusted user) outranks recency, not the reverse.
+    await seedVerdict(predictionId, "accept", { source: "user", annotator: String(trustedUserId) });
+    await seedVerdict(predictionId, "reject");
+
+    const res = await snapshotSource(jobId);
+    const body = (await res.json()) as { images: unknown[] };
+    expect(body.images).toEqual([]);
+  });
+
+  it("prefers an admin accept over a trusted user's verdict, even when the user ruled last", async () => {
+    const jobId = await queueAndClaim();
+    const imageId = await seedImage(`frames/${VIDEO}/00010.000.jpg`, 10);
+    const classId = await seedClass();
+    const predictionId = await seedPrediction(imageId, classId);
+    const trustedUserId = await seedUser({ trusted: 1 });
+    await seedVerdict(predictionId, "adjust", { adjusted: [0.15, 0.15, 0.45, 0.45] });
+    // Written after the admin's adjust, and would win by recency alone.
+    await seedVerdict(predictionId, "accept", { source: "user", annotator: String(trustedUserId) });
+
+    const res = await snapshotSource(jobId);
+    const body = (await res.json()) as {
+      images: Array<{ labels: Array<{ x_min: number; y_min: number }> }>;
+    };
+    expect(body.images).toHaveLength(1);
+    // The admin's adjusted coordinates, not the prediction's own box and not
+    // whatever the trusted user's own verdict carried.
+    expect(body.images[0]?.labels).toEqual([expect.objectContaining({ x_min: 0.15, y_min: 0.15 })]);
+  });
+
+  it("a mixed pool: admin, trusted user, untrusted user and anon each rule a different prediction — exactly the first two become labels", async () => {
+    const jobId = await queueAndClaim();
+    const classId = await seedClass();
+    const trustedUserId = await seedUser({ trusted: 1, email: "trusted@example.com" });
+    const untrustedUserId = await seedUser({ trusted: 0, email: "untrusted@example.com" });
+
+    const adminImageId = await seedImage(`frames/${VIDEO}/00011.000.jpg`, 11);
+    const adminPredictionId = await seedPrediction(adminImageId, classId);
+    await seedVerdict(adminPredictionId, "accept");
+
+    const trustedImageId = await seedImage(`frames/${VIDEO}/00012.000.jpg`, 12);
+    const trustedPredictionId = await seedPrediction(trustedImageId, classId);
+    await seedVerdict(trustedPredictionId, "accept", {
+      source: "user",
+      annotator: String(trustedUserId),
+    });
+
+    const untrustedImageId = await seedImage(`frames/${VIDEO}/00013.000.jpg`, 13);
+    const untrustedPredictionId = await seedPrediction(untrustedImageId, classId);
+    await seedVerdict(untrustedPredictionId, "accept", {
+      source: "user",
+      annotator: String(untrustedUserId),
+    });
+
+    const anonImageId = await seedImage(`frames/${VIDEO}/00014.000.jpg`, 14);
+    const anonPredictionId = await seedPrediction(anonImageId, classId);
+    await seedVerdict(anonPredictionId, "accept", { source: "anon", annotator: "anon-session-3" });
+
+    const res = await snapshotSource(jobId);
+    const body = (await res.json()) as { images: Array<{ r2_key: string }> };
+
+    expect(body.images).toHaveLength(2);
+    expect(body.images.map((image) => image.r2_key).sort()).toEqual(
+      [`frames/${VIDEO}/00011.000.jpg`, `frames/${VIDEO}/00012.000.jpg`].sort(),
+    );
   });
 });
 

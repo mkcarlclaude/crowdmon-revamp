@@ -150,6 +150,17 @@ safe to queue once every worker polling the queue understands it, and a job queu
 early fails loud and terminal rather than waiting. Once `crowdmon-update.service` pulled
 the new image, the retry (job 329) ran clean.
 
+**Note, added at v4 (M20–M22, plan §C4):** the *authoritative for an admin* row's
+evidence — `label_count` is exactly 21 (19 + 2), so neither the anon verdicts nor a
+single admin reject leaked in — describes the inclusion rule as it stood on
+2026-08-10, when `source = 'admin'` was the whole rule. It is still an accurate
+account of that run: no `users` table existed yet for a trusted contributor's verdict
+to leak in from. The rule itself changed at M20 (`CONTEXT.md` §7's v4 amendment,
+`PRD.md` §9's own note beside the falsification table) — a trusted user's verdict now
+also becomes a label when no admin has ruled — so this evidence should be read as a
+historical result under the rule then in force, not as a description of what
+`label_count` would total against the same data today.
+
 ## Observability
 
 A span leaves the Worker on every request, crosses the public internet to a Cloudflare

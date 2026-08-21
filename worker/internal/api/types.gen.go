@@ -1436,7 +1436,7 @@ type Snapshot struct {
 	// ImageCount Example: 254
 	ImageCount int `json:"image_count"`
 
-	// InclusionPolicy Example: source=admin; verdict=latest per prediction, accept or adjust; split: selection_reason='random' -> eval, else train
+	// InclusionPolicy Example: source=admin (latest wins) else trusted user (latest wins); verdict=accept or adjust; split: selection_reason='random' -> eval, else train
 	InclusionPolicy string `json:"inclusion_policy"`
 
 	// LabelCount Example: 401
@@ -2257,7 +2257,7 @@ type ClientInterface interface {
 
 	// SnapshotSource Every image and label the current inclusion policy admits (M15.1)
 	//
-	// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict per prediction, `accept` or `adjust`), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+	// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user wins; `accept` or `adjust` either way), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
 	//
 	// Corresponds with GET /api/jobs/{id}/snapshot-source (the `SnapshotSource` operationId).
 	SnapshotSource(ctx context.Context, id int, params *SnapshotSourceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3318,7 +3318,7 @@ func (c *Client) ReportSnapshot(ctx context.Context, id int, body ReportSnapshot
 
 // SnapshotSource Every image and label the current inclusion policy admits (M15.1)
 //
-// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict per prediction, `accept` or `adjust`), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user wins; `accept` or `adjust` either way), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
 //
 // Corresponds with GET /api/jobs/{id}/snapshot-source (the `SnapshotSource` operationId).
 func (c *Client) SnapshotSource(ctx context.Context, id int, params *SnapshotSourceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -5980,7 +5980,7 @@ type ClientWithResponsesInterface interface {
 
 	// SnapshotSourceWithResponse Every image and label the current inclusion policy admits (M15.1)
 	//
-	// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict per prediction, `accept` or `adjust`), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+	// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user wins; `accept` or `adjust` either way), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -9555,7 +9555,7 @@ func (c *ClientWithResponses) ReportSnapshotWithResponse(ctx context.Context, id
 
 // SnapshotSourceWithResponse Every image and label the current inclusion policy admits (M15.1)
 //
-// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3 — `source = 'admin'`, the latest verdict per prediction, `accept` or `adjust`), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user wins; `accept` or `adjust` either way), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
 //
 // Returns a wrapper object for the known response body format(s).
 //
