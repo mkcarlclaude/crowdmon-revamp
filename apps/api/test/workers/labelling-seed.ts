@@ -95,14 +95,25 @@ export async function seedPool(videoId = "dQw4w9WgXcQ") {
   return { videoId, classId, imageId, predictionId };
 }
 
-/** A verdict written without going through the endpoint under test. */
+/**
+ * A verdict written without going through the endpoint under test.
+ *
+ * `source` admits `'user'` (migration 0012, M20 plan §B1) alongside the
+ * original two — `annotatorId` for that source should be a `users.id` as
+ * text, matching what `submitContributeVerdictsHandler` actually writes, not
+ * an email; see that migration's own comment on `verdicts.annotator_id`.
+ */
 export async function seedVerdict(
   predictionId: number,
   {
     verdict = "accept",
     source = "admin",
     annotatorId = "someone@example.com",
-  }: { verdict?: "accept" | "reject"; source?: "admin" | "anon"; annotatorId?: string } = {},
+  }: {
+    verdict?: "accept" | "reject";
+    source?: "admin" | "anon" | "user";
+    annotatorId?: string;
+  } = {},
 ): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO verdicts (prediction_id, verdict, source, annotator_id) VALUES (?, ?, ?, ?)`,

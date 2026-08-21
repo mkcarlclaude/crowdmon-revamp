@@ -2043,7 +2043,7 @@ export const AdminVerdictListQuery = z.object({
   // stay visually distinct without narrowing the query). Filtering is a
   // convenience for "just what I ruled on", not the route's only mode.
   source: z
-    .enum(["admin", "anon"])
+    .enum(["admin", "anon", "user"])
     .optional()
     .openapi({ param: { name: "source", in: "query" } }),
   // Multi-select, unlike `source`: an operator reviewing "everything that
@@ -2127,7 +2127,10 @@ export const AdminVerdict = z
     x_max: z.number().min(0).max(1).openapi({ example: 0.5 }),
     y_max: z.number().min(0).max(1).openapi({ example: 0.6 }),
     confidence: z.number().openapi({ example: 0.87 }),
-    source: z.enum(["admin", "anon"]).openapi({ example: "admin" }),
+    // Widened in migration 0012 (M20, plan §B1) to admit 'user' — a
+    // contributor's own verdicts, alongside admin and anonymous ones, in the
+    // same per-source split CONTEXT.md §Q10 already relies on.
+    source: z.enum(["admin", "anon", "user"]).openapi({ example: "admin" }),
     annotator_id: z.string().openapi({ example: "admin@example.com" }),
     created_at: z.int().openapi({ example: 1_754_099_000 }),
     image_id: z.int().positive().openapi({ example: 7 }),
@@ -2171,7 +2174,10 @@ export const AdminVerdictList = z
 const AdminAnnotator = z
   .object({
     annotator_id: z.string().openapi({ example: "admin@example.com" }),
-    source: z.enum(["admin", "anon"]).openapi({ example: "admin" }),
+    // Widened in migration 0012 (M20, plan §B1) to admit 'user' — a
+    // contributor's own verdicts, alongside admin and anonymous ones, in the
+    // same per-source split CONTEXT.md §Q10 already relies on.
+    source: z.enum(["admin", "anon", "user"]).openapi({ example: "admin" }),
     verdicts: z.int().nonnegative().openapi({ example: 87 }),
   })
   .openapi("AdminAnnotator");
@@ -2341,3 +2347,162 @@ export const AdminVideoDetail = z
   .openapi("AdminVideoDetail");
 
 export type AdminVideoDetailRow = z.infer<typeof AdminVideoDetail>;
+
+// ---------------------------------------------------------------------------
+// Contributor accounts (M20, plan §B) — Google OAuth in the Worker and the
+// contributor verification surface. See `routes/auth.ts` and
+// `routes/contribute.ts`.
+// ---------------------------------------------------------------------------
+
+/**
+ * `/api/auth/google/start`'s one caller-supplied input (M20, plan §B2).
+ *
+ * `turnstile_token` is optional at the schema layer even though the route
+ * requires one whenever `TURNSTILE_SECRET_KEY` is configured — the schema
+ * cannot see that binding, so "missing" is a 400 zod would produce for the
+ * wrong reason (a malformed request) if this were `.min(1)` unconditionally.
+ * `googleStartHandler` itself is what turns "configured but absent" into the
+ * 403 a caller who skipped the widget actually gets.
+ */
+export const GoogleAuthStartQuery = z.object({
+  turnstile_token: z
+    .string()
+    .min(1)
+    .optional()
+    .openapi({
+      param: { name: "turnstile_token", in: "query" },
+      example: "0.AAAA-BBBB…",
+    }),
+});
+
+/**
+ * `/api/auth/google/callback`'s query, as Google's own redirect populates it
+ * (M20, plan §B2).
+ *
+ * `error` is Google's own escape hatch for "the user declined consent" or a
+ * misconfigured client — present instead of `code`, never alongside it. Kept
+ * optional and checked first in the handler, rather than folded into a
+ * `superRefine` that requires exactly one of `code` or `error`: Google is the
+ * only caller that ever reaches this route with a `state` that could
+ * possibly match the cookie, so the handler's own branch is simpler than a
+ * refinement that has to describe the same "one or the other" rule twice.
+ */
+export const GoogleAuthCallbackQuery = z.object({
+  code: z
+    .string()
+    .min(1)
+    .optional()
+    .openapi({
+      param: { name: "code", in: "query" },
+      example: "4/0AY0e-g7…",
+    }),
+  state: z
+    .string()
+    .min(1)
+    .openapi({
+      param: { name: "state", in: "query" },
+      example: "b3f1c2a4-8e5d-4c6a-9b1a-2f3e4d5c6b7a",
+    }),
+  error: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "error", in: "query" },
+      example: "access_denied",
+    }),
+});
+
+/**
+ * How many frames one call of the contributor pool hands out, and the
+ * ceiling on what a caller may ask for — the same numbers `LABELLING_BATCH_SIZE`
+ * and `MAX_LABELLING_BATCH` use, kept as separate constants rather than
+ * reused ones: the two pools are read by different predicates
+ * (`labellingBatchHandler`'s `UNRULED_BOX` vs. `contributeBatchHandler`'s
+ * `CONTRIBUTOR_UNRULED_BOX`, plan §C3) and sizing them from one shared
+ * constant would make a future change to one session's arithmetic silently
+ * change the other's too.
+ */
+export const CONTRIBUTE_BATCH_SIZE = 20;
+export const MAX_CONTRIBUTE_BATCH = 100;
+
+export const ContributeBatchQuery = z.object({
+  limit: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((n) => n >= 1 && n <= MAX_CONTRIBUTE_BATCH)
+    .optional()
+    .openapi({ param: { name: "limit", in: "query" }, type: "integer", example: 20 }),
+});
+
+/**
+ * One frame in a contributor's batch — `LabellingImage` without
+ * `public_sample`. Curating the public sample is an admin-only act (plan
+ * §B4's table: "Missing-object report … admin-only"; flagging a frame into
+ * `public_sample` is the same kind of authoring act), so a field that exists
+ * to drive a checkbox only the admin mount renders has no reason to travel
+ * to a screen that cannot act on it.
+ */
+const ContributeImage = z
+  .object({
+    id: z.int().positive().openapi({ example: 7 }),
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    r2_key: z.string().openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    timestamp_seconds: z.number().openapi({ example: 42 }),
+    url: z.string().openapi({
+      example:
+        "https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…",
+    }),
+    predictions: z.array(ProposedBox),
+  })
+  .openapi("ContributeImage");
+
+/**
+ * A contributor session's next N frames (M20, plan §B4) — `LabellingBatch`'s
+ * shape exactly, because it is the same kind of session over a different pool
+ * and a different `source` stamp, not a different mechanism. `url_mode` and
+ * `expires_at` carry the same meaning `labellingBatchHandler`'s own comment
+ * gives them; `remaining` is sized against `CONTRIBUTOR_UNRULED_BOX`
+ * (`contribute.ts`), not `UNRULED_BOX`.
+ */
+export const ContributeBatch = z
+  .object({
+    images: z.array(ContributeImage).max(MAX_CONTRIBUTE_BATCH),
+    url_mode: z.enum(["signed", "proxy"]).openapi({ example: "signed" }),
+    expires_at: z.int().openapi({ example: 1_754_099_900 }),
+    remaining: z.int().nonnegative().openapi({ example: 214 }),
+  })
+  .openapi("ContributeBatch");
+
+/**
+ * `GET /api/contribute/me`'s response (M20, plan §B5): the signed-in
+ * contributor's own counts, and nothing about anyone else's.
+ *
+ * **Personal only, deliberately.** ROADMAP's deferred list rejects
+ * leaderboards and a public statistics surface, and `memory/crowdmon-public-
+ * stats-rejected.md` records that exact surface being built and reverted
+ * once already. This schema has no field this route could grow into that
+ * kind of surface by accident — there is no `rank`, no comparison to anyone
+ * else's numbers, nothing keyed by any id but the caller's own session.
+ *
+ * `trusted` travels here so the screen can be honest about it (plan §B5:
+ * "someone whose verdicts are recorded but not yet promoted should be told
+ * so, not shown a number that implies more than it means") — a contributor
+ * whose count is rising has no way to know from the count alone whether any
+ * of it is a label yet.
+ */
+export const ContributeMe = z
+  .object({
+    email: z.string().openapi({ example: "friend@example.com" }),
+    display_name: z.string().nullable().openapi({ example: "Alex" }),
+    trusted: z.boolean().openapi({ example: false }),
+    frames_touched: z.int().nonnegative().openapi({ example: 12 }),
+    verdicts: z
+      .object({
+        accept: z.int().nonnegative().openapi({ example: 9 }),
+        adjust: z.int().nonnegative().openapi({ example: 3 }),
+        reject: z.int().nonnegative().openapi({ example: 2 }),
+      })
+      .openapi("ContributeMeVerdicts"),
+  })
+  .openapi("ContributeMe");

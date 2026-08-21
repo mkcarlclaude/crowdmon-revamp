@@ -20,6 +20,7 @@ import (
 const (
 	AdminAnnotatorSourceAdmin AdminAnnotatorSource = "admin"
 	AdminAnnotatorSourceAnon  AdminAnnotatorSource = "anon"
+	AdminAnnotatorSourceUser  AdminAnnotatorSource = "user"
 )
 
 // Valid indicates whether the value is a known member of the AdminAnnotatorSource enum.
@@ -28,6 +29,8 @@ func (e AdminAnnotatorSource) Valid() bool {
 	case AdminAnnotatorSourceAdmin:
 		return true
 	case AdminAnnotatorSourceAnon:
+		return true
+	case AdminAnnotatorSourceUser:
 		return true
 	default:
 		return false
@@ -38,6 +41,7 @@ func (e AdminAnnotatorSource) Valid() bool {
 const (
 	AdminVerdictSourceAdmin AdminVerdictSource = "admin"
 	AdminVerdictSourceAnon  AdminVerdictSource = "anon"
+	AdminVerdictSourceUser  AdminVerdictSource = "user"
 )
 
 // Valid indicates whether the value is a known member of the AdminVerdictSource enum.
@@ -46,6 +50,8 @@ func (e AdminVerdictSource) Valid() bool {
 	case AdminVerdictSourceAdmin:
 		return true
 	case AdminVerdictSourceAnon:
+		return true
+	case AdminVerdictSourceUser:
 		return true
 	default:
 		return false
@@ -151,6 +157,24 @@ func (e CompleteRequestStatus) Valid() bool {
 	case CompleteRequestStatusDone:
 		return true
 	case CompleteRequestStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ContributeBatchUrlMode.
+const (
+	ContributeBatchUrlModeProxy  ContributeBatchUrlMode = "proxy"
+	ContributeBatchUrlModeSigned ContributeBatchUrlMode = "signed"
+)
+
+// Valid indicates whether the value is a known member of the ContributeBatchUrlMode enum.
+func (e ContributeBatchUrlMode) Valid() bool {
+	switch e {
+	case ContributeBatchUrlModeProxy:
+		return true
+	case ContributeBatchUrlModeSigned:
 		return true
 	default:
 		return false
@@ -332,6 +356,7 @@ func (e VerdictKind) Valid() bool {
 const (
 	ListVerdictsParamsSourceAdmin ListVerdictsParamsSource = "admin"
 	ListVerdictsParamsSourceAnon  ListVerdictsParamsSource = "anon"
+	ListVerdictsParamsSourceUser  ListVerdictsParamsSource = "user"
 )
 
 // Valid indicates whether the value is a known member of the ListVerdictsParamsSource enum.
@@ -340,6 +365,8 @@ func (e ListVerdictsParamsSource) Valid() bool {
 	case ListVerdictsParamsSourceAdmin:
 		return true
 	case ListVerdictsParamsSourceAnon:
+		return true
+	case ListVerdictsParamsSourceUser:
 		return true
 	default:
 		return false
@@ -765,6 +792,69 @@ type CompleteRequest struct {
 
 // CompleteRequestStatus defines model for CompleteRequest.Status.
 type CompleteRequestStatus string
+
+// ContributeBatch defines model for ContributeBatch.
+type ContributeBatch struct {
+	// ExpiresAt Example: 1754099900
+	ExpiresAt int               `json:"expires_at"`
+	Images    []ContributeImage `json:"images"`
+
+	// Remaining Example: 214
+	Remaining int `json:"remaining"`
+
+	// UrlMode Example: signed
+	UrlMode ContributeBatchUrlMode `json:"url_mode"`
+}
+
+// ContributeBatchUrlMode Example: signed
+type ContributeBatchUrlMode string
+
+// ContributeImage defines model for ContributeImage.
+type ContributeImage struct {
+	// Id Example: 7
+	Id          int           `json:"id"`
+	Predictions []ProposedBox `json:"predictions"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// TimestampSeconds Example: 42
+	TimestampSeconds float32 `json:"timestamp_seconds"`
+
+	// Url Example: https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…
+	Url string `json:"url"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
+// ContributeMe defines model for ContributeMe.
+type ContributeMe struct {
+	// DisplayName Example: Alex
+	DisplayName *string `json:"display_name"`
+
+	// Email Example: friend@example.com
+	Email string `json:"email"`
+
+	// FramesTouched Example: 12
+	FramesTouched int `json:"frames_touched"`
+
+	// Trusted Example: false
+	Trusted  bool                 `json:"trusted"`
+	Verdicts ContributeMeVerdicts `json:"verdicts"`
+}
+
+// ContributeMeVerdicts defines model for ContributeMeVerdicts.
+type ContributeMeVerdicts struct {
+	// Accept Example: 9
+	Accept int `json:"accept"`
+
+	// Adjust Example: 3
+	Adjust int `json:"adjust"`
+
+	// Reject Example: 2
+	Reject int `json:"reject"`
+}
 
 // CreateClassRequest defines model for CreateClassRequest.
 type CreateClassRequest struct {
@@ -1549,6 +1639,23 @@ type ListAdminVideoImagesParams struct {
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// GoogleAuthCallbackParams defines parameters for GoogleAuthCallback.
+type GoogleAuthCallbackParams struct {
+	Code  *string `form:"code,omitempty" json:"code,omitempty"`
+	State string  `form:"state" json:"state"`
+	Error *string `form:"error,omitempty" json:"error,omitempty"`
+}
+
+// GoogleAuthStartParams defines parameters for GoogleAuthStart.
+type GoogleAuthStartParams struct {
+	TurnstileToken *string `form:"turnstile_token,omitempty" json:"turnstile_token,omitempty"`
+}
+
+// ContributeBatchParams defines parameters for ContributeBatch.
+type ContributeBatchParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // SnapshotSourceParams defines parameters for SnapshotSource.
 type SnapshotSourceParams struct {
 	WorkerId string `form:"worker_id" json:"worker_id"`
@@ -1587,6 +1694,9 @@ type SubmitVideoJSONRequestBody = SubmitVideoRequest
 
 // CreatePrelabelJSONRequestBody defines body for CreatePrelabel for application/json ContentType.
 type CreatePrelabelJSONRequestBody = CreatePrelabelRequest
+
+// SubmitContributeVerdictsJSONRequestBody defines body for SubmitContributeVerdicts for application/json ContentType.
+type SubmitContributeVerdictsJSONRequestBody = CreateVerdictsRequest
 
 // ClaimJobJSONRequestBody defines body for ClaimJob for application/json ContentType.
 type ClaimJobJSONRequestBody = ClaimRequest
@@ -1938,12 +2048,65 @@ type ClientInterface interface {
 	// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
 	CreatePrelabel(ctx context.Context, id string, body CreatePrelabelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GoogleAuthCallback Complete a Google sign-in
+	//
+	// Verifies `state` against the cookie `/start` set, exchanges the code for an `id_token` (PKCE, no `state` reuse), verifies it against Google's JWKS, upserts `users` by `google_sub`, opens a session, and redirects to `/contribute` — always that path, never a caller-supplied one (see this file's module comment).
+	//
+	// Corresponds with GET /api/auth/google/callback (the `GoogleAuthCallback` operationId).
+	GoogleAuthCallback(ctx context.Context, params *GoogleAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GoogleAuthStart Begin a Google sign-in
+	//
+	// Mints `state` and a PKCE verifier, stores both in a short-lived `HttpOnly` cookie scoped to this path, and 302s to Google's own consent screen. Verified by Turnstile first whenever this deployment has `TURNSTILE_SECRET_KEY` configured.
+	//
+	// Corresponds with GET /api/auth/google/start (the `GoogleAuthStart` operationId).
+	GoogleAuthStart(ctx context.Context, params *GoogleAuthStartParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// Logout End the caller's contributor session
+	//
+	// Deletes the `sessions` row the cookie names, if any, and clears the cookie either way. Never fails on a missing or already-invalid session — logging out of a session that no longer exists is success, not an error, the same as it would be for any caller who simply waited for it to expire.
+	//
+	// Corresponds with POST /api/auth/logout (the `Logout` operationId).
+	Logout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListActiveClasses The classes a prelabel job's detector currently runs against
 	//
 	// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
 	//
 	// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
 	ListActiveClasses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ContributeBatch The next N frames for a contributor to verify, with their boxes and their URLs
+	//
+	// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Requires a contributor session.
+	//
+	// Corresponds with GET /api/contribute/batch (the `ContributeBatch` operationId).
+	ContributeBatch(ctx context.Context, params *ContributeBatchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SubmitContributeVerdictsWithBody Submit a contributor's rulings on one frame, all at once
+	//
+	// Appends one `source = 'user'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame, `source` and `annotator_id` read off the session rather than the body. Adjust is offered, unlike the anonymous surface: a contributor's correction is a label a later snapshot can select (plan §C1). Requires a contributor session.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/contribute/images/{id}/verdicts (the `SubmitContributeVerdicts` operationId).
+	SubmitContributeVerdictsWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SubmitContributeVerdicts Submit a contributor's rulings on one frame, all at once
+	//
+	// Appends one `source = 'user'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame, `source` and `annotator_id` read off the session rather than the body. Adjust is offered, unlike the anonymous surface: a contributor's correction is a label a later snapshot can select (plan §C1). Requires a contributor session.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/contribute/images/{id}/verdicts (the `SubmitContributeVerdicts` operationId).
+	SubmitContributeVerdicts(ctx context.Context, id int, body SubmitContributeVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ContributeMe The signed-in contributor's own counts
+	//
+	// Verdicts by kind, distinct frames touched, and whether the account is trusted — personal only, no comparison to anyone else's numbers (plan §B5; see `ContributeMe`'s own comment for why no ranking surface may ever be built from this route). Requires a contributor session.
+	//
+	// Corresponds with GET /api/contribute/me (the `ContributeMe` operationId).
+	ContributeMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClaimJobWithBody Claim the next pending job
 	//
@@ -2696,6 +2859,57 @@ func (c *Client) CreatePrelabel(ctx context.Context, id string, body CreatePrela
 	return c.Client.Do(req)
 }
 
+// GoogleAuthCallback Complete a Google sign-in
+//
+// Verifies `state` against the cookie `/start` set, exchanges the code for an `id_token` (PKCE, no `state` reuse), verifies it against Google's JWKS, upserts `users` by `google_sub`, opens a session, and redirects to `/contribute` — always that path, never a caller-supplied one (see this file's module comment).
+//
+// Corresponds with GET /api/auth/google/callback (the `GoogleAuthCallback` operationId).
+func (c *Client) GoogleAuthCallback(ctx context.Context, params *GoogleAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGoogleAuthCallbackRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GoogleAuthStart Begin a Google sign-in
+//
+// Mints `state` and a PKCE verifier, stores both in a short-lived `HttpOnly` cookie scoped to this path, and 302s to Google's own consent screen. Verified by Turnstile first whenever this deployment has `TURNSTILE_SECRET_KEY` configured.
+//
+// Corresponds with GET /api/auth/google/start (the `GoogleAuthStart` operationId).
+func (c *Client) GoogleAuthStart(ctx context.Context, params *GoogleAuthStartParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGoogleAuthStartRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// Logout End the caller's contributor session
+//
+// Deletes the `sessions` row the cookie names, if any, and clears the cookie either way. Never fails on a missing or already-invalid session — logging out of a session that no longer exists is success, not an error, the same as it would be for any caller who simply waited for it to expire.
+//
+// Corresponds with POST /api/auth/logout (the `Logout` operationId).
+func (c *Client) Logout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLogoutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListActiveClasses The classes a prelabel job's detector currently runs against
 //
 // M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
@@ -2703,6 +2917,78 @@ func (c *Client) CreatePrelabel(ctx context.Context, id string, body CreatePrela
 // Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
 func (c *Client) ListActiveClasses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListActiveClassesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ContributeBatch The next N frames for a contributor to verify, with their boxes and their URLs
+//
+// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Requires a contributor session.
+//
+// Corresponds with GET /api/contribute/batch (the `ContributeBatch` operationId).
+func (c *Client) ContributeBatch(ctx context.Context, params *ContributeBatchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewContributeBatchRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SubmitContributeVerdictsWithBody Submit a contributor's rulings on one frame, all at once
+//
+// Appends one `source = 'user'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame, `source` and `annotator_id` read off the session rather than the body. Adjust is offered, unlike the anonymous surface: a contributor's correction is a label a later snapshot can select (plan §C1). Requires a contributor session.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/contribute/images/{id}/verdicts (the `SubmitContributeVerdicts` operationId).
+func (c *Client) SubmitContributeVerdictsWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSubmitContributeVerdictsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SubmitContributeVerdicts Submit a contributor's rulings on one frame, all at once
+//
+// Appends one `source = 'user'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame, `source` and `annotator_id` read off the session rather than the body. Adjust is offered, unlike the anonymous surface: a contributor's correction is a label a later snapshot can select (plan §C1). Requires a contributor session.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/contribute/images/{id}/verdicts (the `SubmitContributeVerdicts` operationId).
+func (c *Client) SubmitContributeVerdicts(ctx context.Context, id int, body SubmitContributeVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSubmitContributeVerdictsRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ContributeMe The signed-in contributor's own counts
+//
+// Verdicts by kind, distinct frames touched, and whether the account is trusted — personal only, no comparison to anyone else's numbers (plan §B5; see `ContributeMe`'s own comment for why no ranking surface may ever be built from this route). Requires a contributor session.
+//
+// Corresponds with GET /api/contribute/me (the `ContributeMe` operationId).
+func (c *Client) ContributeMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewContributeMeRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -4200,6 +4486,161 @@ func NewCreatePrelabelRequestWithBody(server string, id string, contentType stri
 	return req, nil
 }
 
+// NewGoogleAuthCallbackRequest constructs an http.Request for the GoogleAuthCallback method
+func NewGoogleAuthCallbackRequest(server string, params *GoogleAuthCallbackParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/auth/google/callback")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Code != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", *params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Error != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "error", *params.Error, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGoogleAuthStartRequest constructs an http.Request for the GoogleAuthStart method
+func NewGoogleAuthStartRequest(server string, params *GoogleAuthStartParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/auth/google/start")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.TurnstileToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "turnstile_token", *params.TurnstileToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLogoutRequest constructs an http.Request for the Logout method
+func NewLogoutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/auth/logout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListActiveClassesRequest constructs an http.Request for the ListActiveClasses method
 func NewListActiveClassesRequest(server string) (*http.Request, error) {
 	var err error
@@ -4210,6 +4651,134 @@ func NewListActiveClassesRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/api/classes/active")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewContributeBatchRequest constructs an http.Request for the ContributeBatch method
+func NewContributeBatchRequest(server string, params *ContributeBatchParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/contribute/batch")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSubmitContributeVerdictsRequest calls the generic SubmitContributeVerdicts builder with application/json body
+func NewSubmitContributeVerdictsRequest(server string, id int, body SubmitContributeVerdictsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSubmitContributeVerdictsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSubmitContributeVerdictsRequestWithBody constructs an http.Request for the SubmitContributeVerdicts method, with any body, and a specified content type
+func NewSubmitContributeVerdictsRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/contribute/images/%s/verdicts", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewContributeMeRequest constructs an http.Request for the ContributeMe method
+func NewContributeMeRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/contribute/me")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -5188,6 +5757,33 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
 	CreatePrelabelWithResponse(ctx context.Context, id string, body CreatePrelabelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePrelabelResponse, error)
 
+	// GoogleAuthCallbackWithResponse Complete a Google sign-in
+	//
+	// Verifies `state` against the cookie `/start` set, exchanges the code for an `id_token` (PKCE, no `state` reuse), verifies it against Google's JWKS, upserts `users` by `google_sub`, opens a session, and redirects to `/contribute` — always that path, never a caller-supplied one (see this file's module comment).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/auth/google/callback (the `GoogleAuthCallback` operationId).
+	GoogleAuthCallbackWithResponse(ctx context.Context, params *GoogleAuthCallbackParams, reqEditors ...RequestEditorFn) (*GoogleAuthCallbackResponse, error)
+
+	// GoogleAuthStartWithResponse Begin a Google sign-in
+	//
+	// Mints `state` and a PKCE verifier, stores both in a short-lived `HttpOnly` cookie scoped to this path, and 302s to Google's own consent screen. Verified by Turnstile first whenever this deployment has `TURNSTILE_SECRET_KEY` configured.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/auth/google/start (the `GoogleAuthStart` operationId).
+	GoogleAuthStartWithResponse(ctx context.Context, params *GoogleAuthStartParams, reqEditors ...RequestEditorFn) (*GoogleAuthStartResponse, error)
+
+	// LogoutWithResponse End the caller's contributor session
+	//
+	// Deletes the `sessions` row the cookie names, if any, and clears the cookie either way. Never fails on a missing or already-invalid session — logging out of a session that no longer exists is success, not an error, the same as it would be for any caller who simply waited for it to expire.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/auth/logout (the `Logout` operationId).
+	LogoutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutResponse, error)
+
 	// ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
 	//
 	// M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
@@ -5196,6 +5792,42 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/classes/active (the `ListActiveClasses` operationId).
 	ListActiveClassesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListActiveClassesResponse, error)
+
+	// ContributeBatchWithResponse The next N frames for a contributor to verify, with their boxes and their URLs
+	//
+	// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Requires a contributor session.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/contribute/batch (the `ContributeBatch` operationId).
+	ContributeBatchWithResponse(ctx context.Context, params *ContributeBatchParams, reqEditors ...RequestEditorFn) (*ContributeBatchResponse, error)
+
+	// SubmitContributeVerdictsWithBodyWithResponse Submit a contributor's rulings on one frame, all at once
+	//
+	// Appends one `source = 'user'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame, `source` and `annotator_id` read off the session rather than the body. Adjust is offered, unlike the anonymous surface: a contributor's correction is a label a later snapshot can select (plan §C1). Requires a contributor session.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/contribute/images/{id}/verdicts (the `SubmitContributeVerdicts` operationId).
+	SubmitContributeVerdictsWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubmitContributeVerdictsResponse, error)
+
+	// SubmitContributeVerdictsWithResponse Submit a contributor's rulings on one frame, all at once
+	//
+	// Appends one `source = 'user'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame, `source` and `annotator_id` read off the session rather than the body. Adjust is offered, unlike the anonymous surface: a contributor's correction is a label a later snapshot can select (plan §C1). Requires a contributor session.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/contribute/images/{id}/verdicts (the `SubmitContributeVerdicts` operationId).
+	SubmitContributeVerdictsWithResponse(ctx context.Context, id int, body SubmitContributeVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitContributeVerdictsResponse, error)
+
+	// ContributeMeWithResponse The signed-in contributor's own counts
+	//
+	// Verdicts by kind, distinct frames touched, and whether the account is trusted — personal only, no comparison to anyone else's numbers (plan §B5; see `ContributeMe`'s own comment for why no ranking surface may ever be built from this route). Requires a contributor session.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/contribute/me (the `ContributeMe` operationId).
+	ContributeMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ContributeMeResponse, error)
 
 	// ClaimJobWithBodyWithResponse Claim the next pending job
 	//
@@ -7000,6 +7632,150 @@ func (r CreatePrelabelResponse) ContentType() string {
 	return ""
 }
 
+// GoogleAuthCallbackResponse302Headers the declared response headers of an HTTP 302 response for GoogleAuthCallback
+type GoogleAuthCallbackResponse302Headers struct {
+	Location *string
+}
+
+type GoogleAuthCallbackResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// Headers302 the parsed response headers for an HTTP 302 response
+	Headers302 *GoogleAuthCallbackResponse302Headers
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GoogleAuthCallbackResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GoogleAuthCallbackResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GoogleAuthCallbackResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GoogleAuthCallbackResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GoogleAuthCallbackResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GoogleAuthCallbackResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GoogleAuthStartResponse302Headers the declared response headers of an HTTP 302 response for GoogleAuthStart
+type GoogleAuthStartResponse302Headers struct {
+	Location *string
+}
+
+type GoogleAuthStartResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// Headers302 the parsed response headers for an HTTP 302 response
+	Headers302 *GoogleAuthStartResponse302Headers
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GoogleAuthStartResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GoogleAuthStartResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GoogleAuthStartResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GoogleAuthStartResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GoogleAuthStartResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GoogleAuthStartResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LogoutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// GetBody returns the raw response body bytes
+func (r LogoutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LogoutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LogoutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LogoutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListActiveClassesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7035,6 +7811,171 @@ func (r ListActiveClassesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListActiveClassesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ContributeBatchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ContributeBatch
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ContributeBatchResponse) GetJSON200() *ContributeBatch {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ContributeBatchResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ContributeBatchResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r ContributeBatchResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ContributeBatchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ContributeBatchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ContributeBatchResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SubmitContributeVerdictsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *VerdictBatch
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r SubmitContributeVerdictsResponse) GetJSON201() *VerdictBatch {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SubmitContributeVerdictsResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SubmitContributeVerdictsResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SubmitContributeVerdictsResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r SubmitContributeVerdictsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SubmitContributeVerdictsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SubmitContributeVerdictsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SubmitContributeVerdictsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ContributeMeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ContributeMe
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ContributeMeResponse) GetJSON200() *ContributeMe {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ContributeMeResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r ContributeMeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ContributeMeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ContributeMeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ContributeMeResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -8241,6 +9182,51 @@ func (c *ClientWithResponses) CreatePrelabelWithResponse(ctx context.Context, id
 	return ParseCreatePrelabelResponse(rsp)
 }
 
+// GoogleAuthCallbackWithResponse Complete a Google sign-in
+//
+// Verifies `state` against the cookie `/start` set, exchanges the code for an `id_token` (PKCE, no `state` reuse), verifies it against Google's JWKS, upserts `users` by `google_sub`, opens a session, and redirects to `/contribute` — always that path, never a caller-supplied one (see this file's module comment).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/auth/google/callback (the `GoogleAuthCallback` operationId).
+func (c *ClientWithResponses) GoogleAuthCallbackWithResponse(ctx context.Context, params *GoogleAuthCallbackParams, reqEditors ...RequestEditorFn) (*GoogleAuthCallbackResponse, error) {
+	rsp, err := c.GoogleAuthCallback(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGoogleAuthCallbackResponse(rsp)
+}
+
+// GoogleAuthStartWithResponse Begin a Google sign-in
+//
+// Mints `state` and a PKCE verifier, stores both in a short-lived `HttpOnly` cookie scoped to this path, and 302s to Google's own consent screen. Verified by Turnstile first whenever this deployment has `TURNSTILE_SECRET_KEY` configured.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/auth/google/start (the `GoogleAuthStart` operationId).
+func (c *ClientWithResponses) GoogleAuthStartWithResponse(ctx context.Context, params *GoogleAuthStartParams, reqEditors ...RequestEditorFn) (*GoogleAuthStartResponse, error) {
+	rsp, err := c.GoogleAuthStart(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGoogleAuthStartResponse(rsp)
+}
+
+// LogoutWithResponse End the caller's contributor session
+//
+// Deletes the `sessions` row the cookie names, if any, and clears the cookie either way. Never fails on a missing or already-invalid session — logging out of a session that no longer exists is success, not an error, the same as it would be for any caller who simply waited for it to expire.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/auth/logout (the `Logout` operationId).
+func (c *ClientWithResponses) LogoutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutResponse, error) {
+	rsp, err := c.Logout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLogoutResponse(rsp)
+}
+
 // ListActiveClassesWithResponse The classes a prelabel job's detector currently runs against
 //
 // M11.5: the fetch that replaces `worker.Pipeline`'s old static `Prompts` field. Reads migration 0003's `classes` table, filtered to `active = 1` — a deactivated class must stop being detected. Every prelabel job gets the identical answer, so unlike `listVideoImages` this carries no `worker_id`: there is no lease, no video and no job to scope the read against, only one global list every caller sees alike (see this route's own module comment for the fuller argument, and `jobStatsRoute`'s for the matching trust-tier precedent).
@@ -8254,6 +9240,66 @@ func (c *ClientWithResponses) ListActiveClassesWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseListActiveClassesResponse(rsp)
+}
+
+// ContributeBatchWithResponse The next N frames for a contributor to verify, with their boxes and their URLs
+//
+// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Requires a contributor session.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/contribute/batch (the `ContributeBatch` operationId).
+func (c *ClientWithResponses) ContributeBatchWithResponse(ctx context.Context, params *ContributeBatchParams, reqEditors ...RequestEditorFn) (*ContributeBatchResponse, error) {
+	rsp, err := c.ContributeBatch(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseContributeBatchResponse(rsp)
+}
+
+// SubmitContributeVerdictsWithBodyWithResponse Submit a contributor's rulings on one frame, all at once
+//
+// Appends one `source = 'user'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame, `source` and `annotator_id` read off the session rather than the body. Adjust is offered, unlike the anonymous surface: a contributor's correction is a label a later snapshot can select (plan §C1). Requires a contributor session.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/contribute/images/{id}/verdicts (the `SubmitContributeVerdicts` operationId).
+func (c *ClientWithResponses) SubmitContributeVerdictsWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubmitContributeVerdictsResponse, error) {
+	rsp, err := c.SubmitContributeVerdictsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSubmitContributeVerdictsResponse(rsp)
+}
+
+// SubmitContributeVerdictsWithResponse Submit a contributor's rulings on one frame, all at once
+//
+// Appends one `source = 'user'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame, `source` and `annotator_id` read off the session rather than the body. Adjust is offered, unlike the anonymous surface: a contributor's correction is a label a later snapshot can select (plan §C1). Requires a contributor session.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/contribute/images/{id}/verdicts (the `SubmitContributeVerdicts` operationId).
+func (c *ClientWithResponses) SubmitContributeVerdictsWithResponse(ctx context.Context, id int, body SubmitContributeVerdictsJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitContributeVerdictsResponse, error) {
+	rsp, err := c.SubmitContributeVerdicts(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSubmitContributeVerdictsResponse(rsp)
+}
+
+// ContributeMeWithResponse The signed-in contributor's own counts
+//
+// Verdicts by kind, distinct frames touched, and whether the account is trusted — personal only, no comparison to anyone else's numbers (plan §B5; see `ContributeMe`'s own comment for why no ranking surface may ever be built from this route). Requires a contributor session.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/contribute/me (the `ContributeMe` operationId).
+func (c *ClientWithResponses) ContributeMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ContributeMeResponse, error) {
+	rsp, err := c.ContributeMe(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseContributeMeResponse(rsp)
 }
 
 // ClaimJobWithBodyWithResponse Claim the next pending job
@@ -9860,6 +10906,120 @@ func ParseCreatePrelabelResponse(rsp *http.Response) (*CreatePrelabelResponse, e
 	return response, nil
 }
 
+// ParseGoogleAuthCallbackResponse parses an HTTP response from a GoogleAuthCallbackWithResponse call
+func ParseGoogleAuthCallbackResponse(rsp *http.Response) (*GoogleAuthCallbackResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GoogleAuthCallbackResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		var headers GoogleAuthCallbackResponse302Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers302 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGoogleAuthStartResponse parses an HTTP response from a GoogleAuthStartWithResponse call
+func ParseGoogleAuthStartResponse(rsp *http.Response) (*GoogleAuthStartResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GoogleAuthStartResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 302:
+		var headers GoogleAuthStartResponse302Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers302 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseLogoutResponse parses an HTTP response from a LogoutWithResponse call
+func ParseLogoutResponse(rsp *http.Response) (*LogoutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LogoutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseListActiveClassesResponse parses an HTTP response from a ListActiveClassesWithResponse call
 func ParseListActiveClassesResponse(rsp *http.Response) (*ListActiveClassesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -9880,6 +11040,126 @@ func ParseListActiveClassesResponse(rsp *http.Response) (*ListActiveClassesRespo
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseContributeBatchResponse parses an HTTP response from a ContributeBatchWithResponse call
+func ParseContributeBatchResponse(rsp *http.Response) (*ContributeBatchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ContributeBatchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ContributeBatch
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSubmitContributeVerdictsResponse parses an HTTP response from a SubmitContributeVerdictsWithResponse call
+func ParseSubmitContributeVerdictsResponse(rsp *http.Response) (*SubmitContributeVerdictsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SubmitContributeVerdictsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest VerdictBatch
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseContributeMeResponse parses an HTTP response from a ContributeMeWithResponse call
+func ParseContributeMeResponse(rsp *http.Response) (*ContributeMeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ContributeMeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ContributeMe
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	}
 

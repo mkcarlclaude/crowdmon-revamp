@@ -9,6 +9,7 @@ import { AdminSnapshotsPage } from "./pages/admin/Snapshots";
 import { AdminVerifyPage } from "./pages/admin/Verify";
 import { AdminVideoDetailPage } from "./pages/admin/VideoDetail";
 import { AdminVideosPage } from "./pages/admin/Videos";
+import { Contribute } from "./pages/Contribute";
 import { Home } from "./pages/Home";
 import { Verify } from "./pages/Verify";
 
@@ -31,12 +32,20 @@ import { Verify } from "./pages/Verify";
  * failed probe (see that component's own comment) — a client-side
  * convenience, not the boundary; §Q19's amendment is explicit that this is
  * cosmetics.
+ *
+ * `/contribute` (M20, plan §B4) has no equivalent gate screen or redirect —
+ * `Contribute.tsx` itself branches on whether `/api/contribute/me` succeeds,
+ * the same "reaching the handler is the answer" shape `requireAccess` and
+ * `requireUser` both give their own routes, so there is nothing here for a
+ * router-level redirect to decide that the page's own render does not
+ * already decide correctly.
  */
 export function App() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/verify" element={<Verify />} />
+      <Route path="/contribute" element={<Contribute />} />
       <Route path="/admin/login" element={<AdminLoginPage />} />
       <Route path="/admin" element={<AdminLayout />}>
         {/* Not a route of its own — `/admin` has nothing to show until it

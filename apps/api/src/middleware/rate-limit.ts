@@ -35,3 +35,39 @@ export const publicRateLimit = (bucket: string) =>
 
     await next();
   });
+
+/**
+ * Bounds `/api/contribute/batch` (M20, plan §B4) — the contributor
+ * equivalent of `publicRateLimit` above, keyed differently on purpose.
+ *
+ * The anonymous surface has no identity to key on, so `publicRateLimit`
+ * falls back to `cf-connecting-ip`. This route always runs behind
+ * `requireUser` — `app.ts` registers the two by the same `/api/contribute/*`
+ * prefix that gates every route in this file's sibling — so `c.get("user")`
+ * is populated by the time this executes, and keying on it is strictly
+ * better than IP here: what is actually being bounded is *accounts*
+ * (`CONTEXT.md`'s "the practical distance between anonymous and 'can
+ * enumerate the whole frame pool' is one throwaway Google account"), and an
+ * IP-keyed limit would let one person cycle through several signed-up
+ * accounts from the same address, or over-throttle a shared IP — a campus
+ * NAT, an office — down to one contributor's budget for everyone behind it.
+ *
+ * The `??` fallback to IP is not a reachable path in production: it exists
+ * only because the type system does not know `requireUser` always ran first,
+ * the same non-guarantee `contribute.ts`'s own `contributor()` helper
+ * documents for the same reason.
+ */
+export const contributeBatchRateLimit = createMiddleware<AppEnv>(async (c, next) => {
+  const user = c.get("user");
+  const key = user
+    ? `contribute-batch:user:${user.id}`
+    : `contribute-batch:ip:${c.req.header("cf-connecting-ip") ?? "unknown"}`;
+
+  const { success } = await c.env.CONTRIBUTE_BATCH_RATE_LIMITER.limit({ key });
+
+  if (!success) {
+    return c.json({ error: "too many requests" }, 429);
+  }
+
+  await next();
+});

@@ -150,6 +150,27 @@ name = "PUBLIC_RATE_LIMITER"
 namespace_id = "1"
 simple = { limit = 20, period = 60 }
 
+# M20, plan §B4: bounds `/api/contribute/batch`, which mints presigned R2 URLs
+# across the whole unruled pool the way `PUBLIC_RATE_LIMITER` bounds the
+# curated public one. A separate binding rather than a third bucket on
+# `PUBLIC_RATE_LIMITER`: Cloudflare's simple rate limiting sets one limit/
+# period per *binding*, shared by every bucket keyed under it, and this
+# route's threat model is not the anonymous surface's — a signed-up,
+# rate-limited, named account is still just one throwaway Google account away
+# from being able to enumerate the entire pool, which is the same licensing
+# exposure CONTEXT.md §Q11's rejected "public browsable gallery" describes, so
+# it earns its own ceiling rather than inheriting one tuned for single-frame
+# anonymous calls. 10 requests per 60 seconds: `CONTRIBUTE_BATCH_SIZE` is 20
+# frames per call, and verify-not-draw is fast but still a human decision per
+# frame, so a genuine contributor working through one batch takes meaningfully
+# longer than 6 seconds a call — 10 calls a minute is far above any real
+# session's rate and still caps a scripted client at 200 images a minute
+# rather than an unthrottled loop pulling the whole pool in one command.
+[[ratelimits]]
+name = "CONTRIBUTE_BATCH_RATE_LIMITER"
+namespace_id = "2"
+simple = { limit = 10, period = 60 }
+
 # The SPA (M5.1). Served by this Worker rather than by Pages: one origin means
 # the Access cookie, the Access application and the API cannot disagree, and it
 # keeps M5.4's documented expiry symptom (a 302 followed to an HTML 200) intact

@@ -38,6 +38,13 @@ await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
  * same trap this hook already exists to close for one download job per
  * video. A per-file `beforeEach` would work only for the file that
  * remembered to write one.
+ *
+ * `sessions` before `users`: migration 0012's `sessions.user_id ...
+ * ON DELETE CASCADE` would take a leftover session with it either way, but
+ * this hook does not lean on that any more than it leans on any other
+ * table's cascade — see the `prelabel_images` paragraph above for why.
+ * `users.google_sub` is UNIQUE, the same trap `classes.name` sets for a test
+ * that seeds the same account twice across two tests in one file.
  */
 beforeEach(async () => {
   await env.DB.batch([
@@ -60,5 +67,7 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM videos"),
     env.DB.prepare("DELETE FROM classes"),
     env.DB.prepare("DELETE FROM snapshots"),
+    env.DB.prepare("DELETE FROM sessions"),
+    env.DB.prepare("DELETE FROM users"),
   ]);
 });

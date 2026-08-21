@@ -1476,7 +1476,8 @@
             "type": "string",
             "enum": [
               "admin",
-              "anon"
+              "anon",
+              "user"
             ],
             "example": "admin"
           },
@@ -1566,7 +1567,8 @@
             "type": "string",
             "enum": [
               "admin",
-              "anon"
+              "anon",
+              "user"
             ],
             "example": "admin"
           },
@@ -2553,6 +2555,140 @@
           "r2_key",
           "image_count",
           "label_count"
+        ]
+      },
+      "ContributeBatch": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContributeImage"
+            },
+            "maxItems": 100
+          },
+          "url_mode": {
+            "type": "string",
+            "enum": [
+              "signed",
+              "proxy"
+            ],
+            "example": "signed"
+          },
+          "expires_at": {
+            "type": "integer",
+            "example": 1754099900
+          },
+          "remaining": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 214
+          }
+        },
+        "required": [
+          "images",
+          "url_mode",
+          "expires_at",
+          "remaining"
+        ]
+      },
+      "ContributeImage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "r2_key": {
+            "type": "string",
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "example": 42
+          },
+          "url": {
+            "type": "string",
+            "example": "https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…"
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposedBox"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "video_id",
+          "r2_key",
+          "timestamp_seconds",
+          "url",
+          "predictions"
+        ]
+      },
+      "ContributeMe": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "friend@example.com"
+          },
+          "display_name": {
+            "type": "string",
+            "nullable": true,
+            "example": "Alex"
+          },
+          "trusted": {
+            "type": "boolean",
+            "example": false
+          },
+          "frames_touched": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 12
+          },
+          "verdicts": {
+            "$ref": "#/components/schemas/ContributeMeVerdicts"
+          }
+        },
+        "required": [
+          "email",
+          "display_name",
+          "trusted",
+          "frames_touched",
+          "verdicts"
+        ]
+      },
+      "ContributeMeVerdicts": {
+        "type": "object",
+        "properties": {
+          "accept": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 9
+          },
+          "adjust": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 3
+          },
+          "reject": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 2
+          }
+        },
+        "required": [
+          "accept",
+          "adjust",
+          "reject"
         ]
       }
     },
@@ -4065,7 +4201,8 @@
               "type": "string",
               "enum": [
                 "admin",
-                "anon"
+                "anon",
+                "user"
               ]
             },
             "required": false,
@@ -5150,6 +5287,308 @@
           },
           "404": {
             "description": "No job with this id is held by this worker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/google/start": {
+      "get": {
+        "operationId": "googleAuthStart",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Begin a Google sign-in",
+        "description": "Mints `state` and a PKCE verifier, stores both in a short-lived `HttpOnly` cookie scoped to this path, and 302s to Google's own consent screen. Verified by Turnstile first whenever this deployment has `TURNSTILE_SECRET_KEY` configured.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0.AAAA-BBBB…"
+            },
+            "required": false,
+            "name": "turnstile_token",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirecting to Google's consent screen",
+            "headers": {
+              "Location": {
+                "description": "Google's authorization endpoint",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Turnstile verification failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Google sign-in is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/google/callback": {
+      "get": {
+        "operationId": "googleAuthCallback",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Complete a Google sign-in",
+        "description": "Verifies `state` against the cookie `/start` set, exchanges the code for an `id_token` (PKCE, no `state` reuse), verifies it against Google's JWKS, upserts `users` by `google_sub`, opens a session, and redirects to `/contribute` — always that path, never a caller-supplied one (see this file's module comment).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "4/0AY0e-g7…"
+            },
+            "required": false,
+            "name": "code",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "b3f1c2a4-8e5d-4c6a-9b1a-2f3e4d5c6b7a"
+            },
+            "required": true,
+            "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "access_denied"
+            },
+            "required": false,
+            "name": "error",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Signed in; redirecting to /contribute",
+            "headers": {
+              "Location": {
+                "description": "Always /contribute",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Google declined consent, the state did not match, the code exchange failed, or the id_token failed verification",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Google sign-in is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "tags": [
+          "auth"
+        ],
+        "summary": "End the caller's contributor session",
+        "description": "Deletes the `sessions` row the cookie names, if any, and clears the cookie either way. Never fails on a missing or already-invalid session — logging out of a session that no longer exists is success, not an error, the same as it would be for any caller who simply waited for it to expire.",
+        "responses": {
+          "204": {
+            "description": "Logged out (or already was)"
+          }
+        }
+      }
+    },
+    "/api/contribute/batch": {
+      "get": {
+        "operationId": "contributeBatch",
+        "tags": [
+          "contribute"
+        ],
+        "summary": "The next N frames for a contributor to verify, with their boxes and their URLs",
+        "description": "The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Requires a contributor session.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The next frames, their boxes and their URLs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributeBatch"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A limit outside 1..100",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or expired contributor session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contribute/images/{id}/verdicts": {
+      "post": {
+        "operationId": "submitContributeVerdicts",
+        "tags": [
+          "contribute"
+        ],
+        "summary": "Submit a contributor's rulings on one frame, all at once",
+        "description": "Appends one `source = 'user'` verdict row per ruling, exactly as `submitVerdicts` does for `source = 'admin'` — append-only, one call per frame, `source` and `annotator_id` read off the session rather than the body. Adjust is offered, unlike the anonymous surface: a contributor's correction is a label a later snapshot can select (plan §C1). Requires a contributor session.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVerdictsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "How many verdicts the submission wrote",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerdictBatch"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, an empty submission, coordinates that disagree with a verdict, or a duplicated prediction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or expired contributor session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No image with this id, or a prediction that is not on this frame",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contribute/me": {
+      "get": {
+        "operationId": "contributeMe",
+        "tags": [
+          "contribute"
+        ],
+        "summary": "The signed-in contributor's own counts",
+        "description": "Verdicts by kind, distinct frames touched, and whether the account is trusted — personal only, no comparison to anyone else's numbers (plan §B5; see `ContributeMe`'s own comment for why no ranking surface may ever be built from this route). Requires a contributor session.",
+        "responses": {
+          "200": {
+            "description": "This contributor's own counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributeMe"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or expired contributor session",
             "content": {
               "application/json": {
                 "schema": {
