@@ -1,5 +1,6 @@
 import { Navigate, NavLink, Outlet, useLocation } from "react-router";
 import { useAdminSession } from "../api/queries";
+import { useNoindex } from "../hooks/use-noindex";
 import { GrafanaLink } from "./GrafanaLink";
 import {
   Sidebar,
@@ -38,6 +39,10 @@ import {
  * this surface that has to leave React Router, and its own comment says why.
  */
 export function AdminLayout() {
+  // Assumed public (§Q19) but never meant to be crawled. `public/_headers`
+  // is the real control (`X-Robots-Tag`, seen by non-JS crawlers too); this
+  // hook is defense in depth — see `use-noindex.ts`.
+  useNoindex();
   const session = useAdminSession();
   const location = useLocation();
 

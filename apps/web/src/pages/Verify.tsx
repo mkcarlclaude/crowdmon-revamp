@@ -1,4 +1,5 @@
 import { PublicVerify } from "../components/PublicVerify";
+import { useNoindex } from "../hooks/use-noindex";
 
 /**
  * The public surface, reshaped (M14, CONTEXT.md §12 amending §Q11).
@@ -16,6 +17,11 @@ import { PublicVerify } from "../components/PublicVerify";
  * absence of this sentence, not just by a missing feature.
  */
 export function Verify() {
+  // CONTEXT.md §Q25: frame bytes served here should not end up in a search
+  // index. The real control is `public/_headers`' `X-Robots-Tag`, which a
+  // non-JS crawler sees too; this hook is defense in depth for the ones
+  // that execute JavaScript. See `use-noindex.ts` for why both exist.
+  useNoindex();
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 p-8">
       <div>

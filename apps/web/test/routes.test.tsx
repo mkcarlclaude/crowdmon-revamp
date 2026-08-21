@@ -56,9 +56,11 @@ function stubAuthenticated() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("routing", () => {
-  it("renders the public page at /", () => {
+  it("renders the landing page at /", () => {
     renderApp("/");
-    expect(screen.getByRole("heading", { name: "crowdmon" })).toBeInTheDocument();
+    // M20 plan §A: the landing page's hero headline, not a bare wordmark —
+    // `test/pages/Home.test.tsx` covers everything else about this page.
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/paimon/i);
   });
 
   // M16, CONTEXT.md §Q19 amendment: `/admin` used to render a heading

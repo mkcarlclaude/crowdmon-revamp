@@ -7,6 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from "../../components/ui/card";
+import { useNoindex } from "../../hooks/use-noindex";
 
 /**
  * The Access gate screen (M16, CONTEXT.md §Q19 amendment).
@@ -29,6 +30,11 @@ import {
  * screen existing; see the amendment for the rest of that argument.
  */
 export function AdminLoginPage() {
+  // This screen renders *before* `AdminLayout` mounts (it sits outside that
+  // component precisely so it can — see `routes.tsx`), so it needs its own
+  // call rather than inheriting `AdminLayout`'s. Same reasoning: `public/_headers`
+  // is the real noindex control here, this hook is defense in depth.
+  useNoindex();
   return (
     <div className="admin-theme flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
       <Card className="w-full max-w-sm">
