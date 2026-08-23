@@ -36,8 +36,10 @@ FROM debian:bookworm-slim
 # back. The real fix is scheduled rebuilds plus a health check that tells "no
 # jobs queued" apart from "every job failing at download"; neither exists yet,
 # and this line is where that debt is visible.
-ARG YT_DLP_VERSION=2026.07.04
-ARG YT_DLP_SHA256=6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae
+#
+# The debt came due on 2026-08-21, and not in the shape this comment expected.
+ARG YT_DLP_VERSION=2026.08.19
+ARG YT_DLP_SHA256=58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a
 
 # ca-certificates is not optional: the worker talks to the API and the
 # collector over TLS, and a slim image has no roots. curl is build-time only.
@@ -51,6 +53,39 @@ ADD --checksum=sha256:${YT_DLP_SHA256} \
     https://github.com/yt-dlp/yt-dlp/releases/download/${YT_DLP_VERSION}/yt-dlp_linux \
     /usr/local/bin/yt-dlp
 RUN chmod 0755 /usr/local/bin/yt-dlp
+
+# A JavaScript engine, and it is not optional any more.
+#
+# **This is what actually broke on 2026-08-21**, and the version bump above
+# was not the fix — every `download` job was failing with
+# `unable to download video data: HTTP Error 403: Forbidden`, and the pinned
+# 2026.07.04 binary reproduced it just as faithfully as the newest release
+# does without this.
+#
+# YouTube signs media URLs with an `n` parameter that has to be descrambled by
+# running a function out of the player's own JavaScript. yt-dlp cannot do that
+# with no engine to run it in, so it requests the stream with the scrambled
+# value: YouTube serves the first chunk, then answers every subsequent range
+# request with a 403. The failure therefore looks nothing like a signature
+# error and everything like a transient network fault — the download starts,
+# reports a real size and a healthy rate, and dies partway in. Measured on the
+# home box against one real video, worker's exact flags, same binary, same
+# minute: 403 at 0.6% of 1.65GiB without a runtime, 30.9% and still climbing
+# with one.
+#
+# It is also why a `--test` run (10 KiB, one range request) succeeds against a
+# broken image and proves nothing. Any check that this still works has to pull
+# enough of a real video to need a second range request — see the smoke test
+# in `deploy/homebox/README.md`.
+#
+# `COPY --from` a pinned upstream image rather than the release zip: Debian
+# slim ships no `unzip`, and installing one to unpack a single binary means
+# carrying it in the image or a second layer to drop it again. Digest-pinned
+# because `bin-2.9.5` is a mutable tag, and a runtime that silently changes
+# under a rebuild is exactly the class of surprise the yt-dlp pin exists to
+# prevent.
+COPY --from=denoland/deno:bin-2.9.5@sha256:0d1262facd139e815217c001945eb822c7a78584cf660142c34a6b53effec1aa \
+     /deno /usr/local/bin/deno
 
 # Unprivileged, and with a home directory: yt-dlp writes a cache there, and
 # without one it falls back to paths that do not exist in this image.

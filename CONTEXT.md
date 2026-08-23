@@ -1133,6 +1133,29 @@ Recorded so they are not re-litigated.
    weekly. Pinned in an image, extraction silently stops until rebuild. Needs either
    update-on-start or scheduled rebuilds, plus a health check that distinguishes "no
    jobs queued" from "every job failing at download".
+
+   **This came due on 2026-08-21, and the prediction above got the shape wrong.** Every
+   `download` job began failing with `unable to download video data: HTTP Error 403:
+   Forbidden`. The cause was not a stale pin: the 2026.07.04 binary in the running
+   container and the newest release both reproduced it identically. YouTube now signs
+   media URLs with an `n` parameter that must be descrambled by executing a function
+   from the player's own JavaScript, and yt-dlp needs a JS engine to do it. With none
+   present it requests the stream with the scrambled value; YouTube serves the first
+   chunk and 403s every range request after it. The worker image now carries `deno`
+   (`worker/Dockerfile`), which yt-dlp finds on PATH with no flag.
+
+   Two things worth keeping from the diagnosis. **The failure does not look like a
+   signature problem** — the download starts, reports a true size and a healthy rate,
+   and dies partway in, which reads as a network fault or an IP block. And **a
+   `--test` download proves nothing**, because 10 KiB is one range request: the broken
+   image passes that check, which is why the smoke test in
+   [`deploy/homebox/README.md`](../deploy/homebox/README.md) pulls far enough to force
+   a second one. Measured on the box, same video and flags: 403 at 0.6% of 1.65 GiB
+   without a runtime, 30.9% and climbing with one.
+
+   The debt itself is unchanged and still open — a pinned runtime plus a pinned
+   downloader is still a thing that stops working silently, and the health check that
+   would have said so in minutes rather than on a report still does not exist.
 9. The OTLP gating is click-ops by decision (§6), so it is reproducible only from the
    runbook. Nothing enforces that the runbook stays true — if the policy is edited in
    the dashboard, this repo will not notice.
