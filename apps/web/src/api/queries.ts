@@ -375,6 +375,12 @@ export function useCreateDryRun(classId: number) {
 
 export const publicFrameKey = ["public", "frame"] as const;
 
+function fetchPublicFrame(excludeId: number | undefined) {
+  const path =
+    excludeId === undefined ? "/api/public/frame" : `/api/public/frame?exclude=${excludeId}`;
+  return apiFetch(path, PublicFrame);
+}
+
 /**
  * One frame for a visitor with no account (M14.2; M18, plan §C's `exclude`).
  *
@@ -385,14 +391,15 @@ export const publicFrameKey = ["public", "frame"] as const;
  * submitted.
  *
  * `exclude` is read off the cache rather than threaded through as a hook
- * argument: `PublicVerify.nextFrame()` already asks for a new frame with
- * `queryClient.refetchQueries({ queryKey: publicFrameKey })`, and a refetch
- * runs `queryFn` again while the previous response is still sitting in the
- * cache — `getQueryData` at that moment *is* "the frame currently on
- * screen." Reaching into the cache here means the exclusion follows from the
- * refetch that was already the right trigger for "show me another one,"
- * rather than adding a second thing (a hook argument, a ref) that has to be
- * kept in step with what `<img>` is actually displaying.
+ * argument: `PublicVerify.advance()` already asks for a new frame with
+ * `queryClient.refetchQueries({ queryKey: publicFrameKey })` when there is no
+ * prefetched one ready, and a refetch runs `queryFn` again while the
+ * previous response is still sitting in the cache — `getQueryData` at that
+ * moment *is* "the frame currently on screen." Reaching into the cache here
+ * means the exclusion follows from the refetch that was already the right
+ * trigger for "show me another one," rather than adding a second thing (a
+ * hook argument, a ref) that has to be kept in step with what `<img>` is
+ * actually displaying.
  */
 export function usePublicFrame() {
   const queryClient = useQueryClient();
@@ -401,10 +408,35 @@ export function usePublicFrame() {
     queryKey: publicFrameKey,
     queryFn: () => {
       const current = queryClient.getQueryData<z.infer<typeof PublicFrame>>(publicFrameKey);
-      const path =
-        current === undefined ? "/api/public/frame" : `/api/public/frame?exclude=${current.id}`;
-      return apiFetch(path, PublicFrame);
+      return fetchPublicFrame(current?.id);
     },
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/**
+ * The frame after `currentId`, fetched in the background (M23 plan §C).
+ *
+ * At roughly three boxes a frame, a fast visitor needs a new frame every
+ * three swipes — which approaches `/api/public/frame`'s own 20-per-60s limit
+ * from the other side. Prefetching hides the latency without raising the
+ * request count: the same frames are fetched, just earlier, while the
+ * visitor is still occupied deciding the one on screen.
+ *
+ * Keyed on `currentId` rather than sharing `publicFrameKey` — promoting this
+ * into "the current frame" has to be a deliberate act (`PublicVerify.advance()`
+ * calling `setQueryData(publicFrameKey, ...)`), not something that happens
+ * the instant this background fetch resolves. Sharing the key would swap the
+ * visible frame out from under a visitor mid-decision the moment the
+ * prefetch landed — exactly the failure plan §B4 documents for locking the
+ * layout to the viewport, one layer up: something the visitor did not ask
+ * for happening underneath their thumb.
+ */
+export function usePrefetchNextPublicFrame(currentId: number | undefined) {
+  return useQuery({
+    queryKey: ["public", "frame", "next", currentId],
+    queryFn: () => fetchPublicFrame(currentId),
+    enabled: currentId !== undefined,
     staleTime: Number.POSITIVE_INFINITY,
   });
 }

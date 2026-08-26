@@ -1,0 +1,59 @@
+/*
+ * The handful of things Tailwind utilities don't reach for `/verify`'s swipe
+ * (M23, plan §B) — a keyframe animation, a pseudo-element, and the
+ * `prefers-reduced-motion` query that turns both off. Everything else about
+ * this screen is ordinary utility classes in `PublicVerify.tsx`; this file
+ * exists only for the parts that need one.
+ */
+
+/*
+ * A brief scale-in whenever the active claim changes (plan §A1) — the fix
+ * for two proposals sharing pixel-identical geometry. Retriggered by giving
+ * the tag a `key` on the active prediction id, so React remounts the node
+ * and the animation restarts; nothing here has to detect "did the label
+ * change" itself.
+ */
+@keyframes swipe-tag-pop {
+  0% {
+    transform: scale(0.82);
+    opacity: 0.3;
+  }
+  60% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.swipe-tag-pop {
+  animation: swipe-tag-pop 0.26s ease-out;
+}
+
+/* A dashed strike through a rejected box, distinguishing "ruled out" from
+   "not yet decided" at a glance even under the same dimmed opacity. */
+.swipe-box-rejected::after {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto 0;
+  height: 1px;
+  background: var(--color-failed);
+  opacity: 0.85;
+}
+
+/*
+ * Plan §B3: drop the tag's pop-in under reduced motion. (The frame's own
+ * drag tracking and release transition are gated in `PublicVerify.tsx`
+ * itself, by reading the same media query in JS — the transform is written
+ * imperatively there, and an inline style always wins over a plain
+ * stylesheet rule, so a CSS override of that specific property would need
+ * `!important` to have any effect at all. This rule needs none: it is the
+ * only place `.swipe-tag-pop`'s `animation` is set outside its base
+ * keyframe declaration above, and ordinary cascade order already wins.)
+ */
+@media (prefers-reduced-motion: reduce) {
+  .swipe-tag-pop {
+    animation: none;
+  }
+}
