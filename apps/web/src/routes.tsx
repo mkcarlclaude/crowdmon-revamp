@@ -10,19 +10,26 @@ import { AdminVerifyPage } from "./pages/admin/Verify";
 import { AdminVideoDetailPage } from "./pages/admin/VideoDetail";
 import { AdminVideosPage } from "./pages/admin/Videos";
 import { Contribute } from "./pages/Contribute";
+import { Demo } from "./pages/Demo";
 import { Home } from "./pages/Home";
-import { Verify } from "./pages/Verify";
 
 /**
- * `/`, `/verify` and everything under `/admin`, and none of it is hidden.
+ * `/`, `/demo` and everything under `/admin`, and none of it is hidden.
  *
  * CONTEXT.md §Q19: the admin bundle is assumed public. Client-side routing
  * sends no request when navigating here from a loaded page, so nothing that
  * inspects HTTP paths can gate it. Every `/api/admin/*` endpoint verifies the
- * caller independently — that is the gate, not this table. `/verify` (M14)
- * has no gate to speak of: it is the public surface, and `/api/public/*`
- * carries its own bounds (a curated pool, rate limiting) rather than an
- * identity check.
+ * caller independently — that is the gate, not this table. `/demo` (M14,
+ * renamed from `/verify` in M24) has no gate to speak of: it is the public
+ * surface, and `/api/public/*` carries its own bounds (a curated pool, rate
+ * limiting) rather than an identity check.
+ *
+ * `/verify` is kept as a redirect (M24, plan §B1) rather than deleted — it
+ * is linked from the landing page's own history, from this repo's docs, and
+ * from anywhere a stranger has already pasted the old URL. `<Navigate>`
+ * fires client-side, after the SPA shell has already loaded; `public/_headers`
+ * carries this path's own `noindex` so a crawler does not index the redirect
+ * stub itself.
  *
  * `/admin/login` sits outside `AdminLayout` rather than as one of its
  * children: it is the one screen a browser reaches *before* `AdminLayout`'s
@@ -44,7 +51,8 @@ export function App() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
-      <Route path="/verify" element={<Verify />} />
+      <Route path="/demo" element={<Demo />} />
+      <Route path="/verify" element={<Navigate to="/demo" replace />} />
       <Route path="/contribute" element={<Contribute />} />
       <Route path="/admin/login" element={<AdminLoginPage />} />
       <Route path="/admin" element={<AdminLayout />}>

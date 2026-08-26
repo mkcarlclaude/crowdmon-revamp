@@ -47,9 +47,9 @@ const GITHUB = "https://github.com/mkcarlclaude/crowdmon-revamp";
  * reasoning for why that link can't be a `fetch`: a redirect chain to
  * Google has to leave this origin, which only a real navigation can do. The
  * primary CTA now points at `/contribute` rather than the anonymous demo;
- * `/verify` stays reachable and stays labelled as a demo everywhere it
- * appears, so a visitor never discovers only after signing up that what
- * they already clicked through didn't count.
+ * `/demo` (renamed from `/verify` in M24, plan §B) stays reachable and stays
+ * labelled as a demo everywhere it appears, so a visitor never discovers
+ * only after signing up that what they already clicked through didn't count.
  */
 export function Home() {
   useEffect(() => {
@@ -159,7 +159,7 @@ export function Home() {
                 <Link className="btn btn-w btn-lg" to="/contribute">
                   Start contributing <span className="ar">→</span>
                 </Link>
-                <Link className="btn btn-ghost btn-lg" to="/verify">
+                <Link className="btn btn-ghost btn-lg" to="/demo">
                   Try the anonymous demo
                 </Link>
               </div>
@@ -392,7 +392,7 @@ export function Home() {
           One real frame, the detector's real output, three buttons. About ten seconds, no account.
         </p>
         <div className="row">
-          <Link className="btn btn-ink btn-lg" to="/verify">
+          <Link className="btn btn-ink btn-lg" to="/demo">
             Try the demo <span className="ar">→</span>
           </Link>
           <a className="btn btn-line btn-lg" href={GITHUB}>
@@ -417,7 +417,7 @@ export function Home() {
               <h4>Product</h4>
               <ul>
                 <li>
-                  <Link to="/verify">Demo</Link>
+                  <Link to="/demo">Demo</Link>
                 </li>
                 <li>
                   <Link to="/contribute">Contribute</Link>

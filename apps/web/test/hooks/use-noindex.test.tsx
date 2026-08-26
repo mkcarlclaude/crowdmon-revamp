@@ -8,10 +8,12 @@ function Probe() {
 }
 
 /**
- * M20 plan §A4: `/` stopped carrying a static `noindex` tag, so `/verify`
- * and `/admin` need a per-route way to keep the one they had before. This
- * is that mechanism's own test — `index-html.test.ts` covers the static
- * shell it replaced for `/`.
+ * M20 plan §A4: `/` stopped carrying a static `noindex` tag, so every other
+ * route needed a per-route way to keep the one they had before. This is
+ * that mechanism's own test — `index-html.test.ts` covers the static shell
+ * it replaced for `/`. `/admin` and `/contribute` still call this hook;
+ * `/demo` stopped in M24 (plan §B2) because the page itself is now
+ * deliberately indexable — see `use-noindex.ts`'s own comment.
  */
 describe("useNoindex", () => {
   it("adds a robots noindex meta tag while mounted", () => {

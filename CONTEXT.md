@@ -465,6 +465,45 @@ authenticated path where throughput matters — and the public endpoints are rat
 with the pages carrying `noindex`. The difference between the sample and the dataset is
 then a schema flag, not a paragraph explaining why this gallery is a different gallery.
 
+**Amended in M24 (plan §B2): the third bound is `noimageindex`, not a page-level
+`noindex` — and the page (renamed `/verify` → `/demo`) is now deliberately indexable.**
+The blanket `noindex` was doing less work than it looked. Nothing about it was ever
+"there is a set of image URLs a crawler could enumerate" — that gap was already closed
+by the other two bounds, the curated pool and the one-signed-URL-per-request shape. What
+a page-level `noindex` actually prevented was Googlebot indexing the *page*, which is a
+SEO decision with no licensing content to it: the real distribution channel for a niche
+project is a pasted link (§Q11), not search ranking, so there was nothing to lose by
+making the page findable.
+
+**What still has to be bounded is the frame bytes, not the page**, because a JS-executing
+crawler can fetch and cache an image's bytes independently of whether the page that
+served it is indexed — and that cached copy outlives the signed URL's 15-minute expiry.
+That is the literal mechanism by which a frame from copyrighted game footage could reach
+image search, and it is what `X-Robots-Tag: noimageindex` on `/demo` targets: the page is
+discoverable and shareable, the images inside it are not eligible for image search
+regardless. The bound `/demo` now rests on is therefore: the curated `public_sample`
+pool (no enumerable surface to begin with), one short-lived signed URL per request (a
+15-minute window before any cached reference dies), the existing rate limit (bounding how
+much of the pool a single caller can walk), and `noimageindex` (closing the one channel
+that survives all three — a crawler's own image cache).
+
+**Why this is not a weakening.** Every mechanism the original three bounds relied on is
+still in force; only the *label* on one of them changed, from a control that suppressed
+something with no licensing content (page discoverability) to one that suppresses the
+thing that actually mattered (image indexability). Swapping `noindex` for `noimageindex`
+narrows what is blocked, not what is protected — the frames are exactly as hard to
+enumerate, exactly as short-lived, and exactly as rate-limited as before.
+
+**What would make it a weakening**, so a later reader can tell the difference: dropping
+`noimageindex` itself (the one mechanism actually doing the licensing work); widening the
+public pool's selection criteria until `public_sample` stops being a small, hand-chosen
+set and starts approaching "most images" (reopening enumeration in effect, even if the
+flag mechanism is unchanged); lengthening the signed URL's TTL enough that a crawler's
+ordinary re-crawl cadence could plausibly refresh a stale cached copy from a still-valid
+link; or relaxing the rate limit enough that a single caller could walk a meaningful
+fraction of the pool in one sitting. None of those shipped in M24 — the page got more
+visible, the images did not.
+
 ---
 
 ## 5. The flywheel
@@ -859,6 +898,29 @@ browses images by class or exposes the dataset as a collection, the wider pool b
 `/contribute` is gated behind a named account rather than open to anyone the way
 `/verify`'s curated pool is, and the eval/public pool split §Q25 established is
 untouched by any of it.
+
+**Amended in M24 (plan §§A–C): `/verify` renamed to `/demo`, and `/contribute` loses
+`allowAdjust`.** The rename is cosmetic — same curated pool, same `source = 'anon'`,
+still never a label — but it frees `/verify` to become a plain redirect and lets `/demo`
+carry the indexing posture §Q25's own M24 amendment describes. The tier table above this
+paragraph is otherwise untouched: `admin` still outranks `trusted user`, which still
+outranks nothing, and none of the four refused subsystems (consensus resolution,
+agreement scoring, trust weighting, inter-rater reliability) reopen.
+
+**What does change is `allowAdjust` itself — dropped for the `contribute` mount,
+reversing the sentence above.** M20's reasoning was that a trusted contributor's ruling
+is a label, so refusing them the one action that corrects a box's geometry made their
+signal weaker than it needed to be. M24 reverses the trade: every geometric correction
+now comes from an admin on `/admin/verify`, and a contributor sees only accept/reject,
+delivered as a swipe rather than a click. The reason is the interaction, not the tier —
+adjust is drawing a box, the hardest gesture in the app and the worst fit for a thumb,
+and the swipe surface `/demo` validated in M23 has no drawing surface to attach it to.
+**This is UI-only, deliberately reversible:** `submitContributeVerdictsHandler` still
+accepts an `adjust` verdict and `CreateVerdictsRequest`'s schema still carries the
+adjusted-coordinate fields; nothing was narrowed at the API layer, only at the mount that
+calls it. A contributor's `accept`/`reject` still ranks exactly as `WINNING_VERDICT`
+described above — this amendment changes what a contributor's client can *express*, not
+where their verdict lands in that ordering.
 
 ### Admin dashboard (Q19)
 

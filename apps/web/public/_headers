@@ -1,53 +1,57 @@
-# The real noindex control for /verify and /admin — not src/hooks/use-noindex.ts.
+# The real noindex/noimageindex control for /demo, /verify and /admin — not
+# src/hooks/use-noindex.ts.
 #
 # `index.html`'s old blanket `<meta name="robots" content="noindex">` covered
 # every route in the one static document Workers static assets serves for
 # all of them. M20 plan §A4 made `/` indexable, which meant that tag could no
 # longer live in the shared shell at all. A React-injected <meta> tag
 # (use-noindex.ts) only exists after the bundle has loaded and run — a
-# crawler that does not execute JavaScript never sees it. `/verify`'s
-# noindex is not a cosmetic SEO preference: CONTEXT.md §Q25 names it as one
-# of the three bounds that keep the public verification page structurally
-# distinct from the "public browsable gallery of labelled crops" CONTEXT.md
-# §Q11 rejected on *licensing* grounds — republishing frames from
-# copyrighted game footage at scale. A non-JS crawler indexing /verify
-# unopposed would be exactly that exposure.
+# crawler that does not execute JavaScript never sees it.
 #
 # This file is read by Cloudflare Workers static assets (same format as
 # Pages' `_headers`) and applies to *asset* responses only — never to
 # responses your own Worker code generates. That is exactly right here:
 # apps/api/wrangler.toml's `run_worker_first` covers only `/api/*`,
-# `/health` and `/openapi.json`, so `/verify` and everything under `/admin`
-# are asset responses, resolved by the [assets] binding before any Worker
-# code runs, and this file's rules apply to them.
+# `/health` and `/openapi.json`, so `/demo`, `/verify` and everything under
+# `/admin` are asset responses, resolved by the [assets] binding before any
+# Worker code runs, and this file's rules apply to them.
 #
-# UNRESOLVED, DOCUMENTED RATHER THAN GUESSED: `not_found_handling =
-# "single-page-application"` means a request for `/verify` is *served*
-# `/index.html`'s bytes with a 200. Cloudflare's docs describe that as the
-# request being "rewritten to /index.html" but do not state, anywhere I
-# could find, whether `_headers` path matching happens against the
-# original incoming path (`/verify` — matches the rule below) or the
-# resolved/rewritten one (`/index.html` — would not match this rule, and
-# would also wrongly blanket `/`, which is meant to be indexed). The rules
-# below assume matching happens on the original request path, which is the
-# standard, documented use of `_headers` for SPA routes elsewhere in
-# Cloudflare's ecosystem — but this has not been confirmed against this
-# specific deploy. Verify post-deploy with:
+# CONFIRMED AGAINST PRODUCTION 2026-08-21: `_headers` path matching is on the
+# *original* incoming request path, not the SPA-rewritten one —
+# `not_found_handling = "single-page-application"` serves `/index.html`'s
+# bytes for an unmatched path, but the header rule still keyed off what the
+# browser actually requested:
 #
-#   curl -sI https://crowdmon.mkcarl.com/verify | grep -i x-robots-tag
-#   curl -sI https://crowdmon.mkcarl.com/admin/dashboard | grep -i x-robots-tag
-#   curl -sI https://crowdmon.mkcarl.com/ | grep -i x-robots-tag   # must be empty
+#   /verify          → x-robots-tag: noindex     (rule applied)
+#   /admin/dashboard → x-robots-tag: noindex     (rule applied)
+#   /                → absent                    (correctly not matched)
 #
-# If the header is missing on the first two or present on the third, this
-# file's matching assumption is wrong and the fallback is a
-# `run_worker_first` entry in apps/api/wrangler.toml — an apps/api change,
-# out of scope for this PR and blocked on section C merging first.
+# That is the standard, documented use of `_headers` for SPA routes
+# elsewhere in Cloudflare's ecosystem, and it is now settled rather than
+# assumed — no `run_worker_first` fallback is needed.
 #
-# `use-noindex.ts` stays wired into these same routes regardless: defense
-# in depth for crawlers that do execute JavaScript, not the primary control.
+# `use-noindex.ts` stays wired into `/admin` and `/contribute` regardless:
+# defense in depth for crawlers that do execute JavaScript, not the primary
+# control. `/demo` does not call it (M24, plan §B2) — see that page's own
+# comment and `CONTEXT.md` §Q25's amendment for why dropping the page-level
+# `noindex` there is not the same as dropping the bound it used to carry.
 #
 # Rules may contain only a single splat (`*`) each.
 
+# M24, plan §B2: `/demo` (renamed from `/verify`) is indexable — the page,
+# not the frames. `noimageindex` keeps Googlebot's own image cache (which
+# outlives a frame's short-lived signed URL, and is the actual path by which
+# a copyrighted frame could reach image search) out of image search while
+# leaving the page itself discoverable and shareable.
+/demo
+  X-Robots-Tag: noimageindex
+
+# The old path, kept working as a redirect (`routes.tsx`) rather than
+# deleted — it is linked from the landing page's own history, this repo's
+# docs, and anywhere a stranger already pasted the old URL. `noindex`, not
+# `noimageindex`: this path now serves nothing but a client-side redirect,
+# and a crawler that does not execute JavaScript would otherwise index a
+# blank shell as if it were its own page.
 /verify
   X-Robots-Tag: noindex
 

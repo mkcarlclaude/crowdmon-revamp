@@ -1,8 +1,10 @@
 /*
- * The handful of things Tailwind utilities don't reach for `/verify`'s swipe
- * (M23, plan §B) — a keyframe animation, a pseudo-element, and the
+ * The handful of things Tailwind utilities don't reach for the swipe card
+ * (M23, plan §B; moved from `PublicVerify.css` in M24, plan §C, when
+ * `SwipeCard.tsx` split out as the component both `/demo` and `/contribute`
+ * mount) — a keyframe animation, a pseudo-element, and the
  * `prefers-reduced-motion` query that turns both off. Everything else about
- * this screen is ordinary utility classes in `PublicVerify.tsx`; this file
+ * this screen is ordinary utility classes in `SwipeCard.tsx`; this file
  * exists only for the parts that need one.
  */
 
@@ -44,7 +46,7 @@
 
 /*
  * Plan §B3: drop the tag's pop-in under reduced motion. (The frame's own
- * drag tracking and release transition are gated in `PublicVerify.tsx`
+ * drag tracking and release transition are gated in `SwipeCard.tsx`
  * itself, by reading the same media query in JS — the transform is written
  * imperatively there, and an inline style always wins over a plain
  * stylesheet rule, so a CSS override of that specific property would need

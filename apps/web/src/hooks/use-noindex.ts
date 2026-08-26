@@ -5,26 +5,28 @@ import { useEffect } from "react";
  * calling component is mounted, and removes it on unmount.
  *
  * **This is defense in depth, not the control.** The real one is
- * `apps/web/public/_headers`, which sets `X-Robots-Tag: noindex` on the
- * same routes at the HTTP layer — a header a non-JS crawler sees on the raw
- * response, before any bundle loads. This hook only exists after React has
- * mounted, so a crawler that never executes JavaScript never sees it. That
- * distinction matters here specifically: `/verify`'s `noindex` is one of
- * three bounds (CONTEXT.md §Q25) that keep the public verification page
+ * `apps/web/public/_headers`, which sets `X-Robots-Tag` on the same routes
+ * at the HTTP layer — a header a non-JS crawler sees on the raw response,
+ * before any bundle loads. This hook only exists after React has mounted,
+ * so a crawler that never executes JavaScript never sees it.
+ *
+ * **`/demo` does not call this anymore (M24, plan §B2).** It used to be one
+ * of three bounds (CONTEXT.md §Q25) keeping the public verification page
  * distinct from the "public browsable gallery" §Q11 rejected on licensing
- * grounds, and a non-JS crawler is exactly the gap a JS-only tag would
- * leave open. See `_headers`' own comment for what is and is not confirmed
- * about how it applies under this app's SPA fallback routing.
+ * grounds — but the page itself is now deliberately indexable; what stays
+ * out of image search is the *frames*, via `_headers`' `X-Robots-Tag:
+ * noimageindex` on that route, which this JS-only hook could never express
+ * (there is no `content="noimageindex"` meta equivalent worth relying on
+ * for a document-level tag). `/admin` and `/contribute` still call it: both
+ * are signed-in personal surfaces never meant to be crawled at all, which
+ * has nothing to do with `/demo`'s reasoning and didn't change with it.
  *
  * One `index.html` serves every route (M5.1's single-origin SPA), so before
  * M20 plan §A there was no per-route *document* to carry a static tag — the
- * whole shell carried one blanket `noindex`, covering `/verify` and
- * `/admin` along with `/`. Plan §A4 makes `/` indexable (the real
- * distribution channel is a pasted link, and a search index finding the
- * landing page is fine) while `/verify` keeps `noindex` for the reason
- * above and `/admin` keeps it because it was never meant to be crawled
- * either — reasons that have nothing to do with `/` and don't move just
- * because `/` stopped needing the same tag.
+ * whole shell carried one blanket `noindex`, covering every route including
+ * `/`. Plan §A4 made `/` indexable; `/admin` and `/contribute` keep this
+ * hook because they were never meant to be crawled, independent of whatever
+ * `/demo` or `/` are doing.
  */
 export function useNoindex() {
   useEffect(() => {

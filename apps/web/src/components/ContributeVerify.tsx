@@ -5,55 +5,80 @@ import {
   useContributeBatch,
   useSubmitContributeVerdicts,
 } from "../api/queries";
+import { SwipeCard } from "./SwipeCard";
+import type { StagedRuling } from "./swipe-verify-reducer";
 import { Button } from "./ui/button";
-import { VerificationCard } from "./VerificationCard";
 
 /**
- * The contributor mount of the verification component (M20, plan §B4) — the
- * third mount `VerificationCard` was built for from the start (M13.1's own
- * comment). Structurally this is `LabellingSession` (the admin mount) over a
- * different pool: same local "which frames has this session finished with"
- * bookkeeping, same one-refresh-per-frame image-error handling, because both
- * are "walk a batch that drains" sessions and only the endpoints and the two
- * capabilities below differ.
+ * The contributor mount of the swipe component (M20; rebuilt on `SwipeCard`
+ * in M24, plan §C). Structurally the batch-walking half of what
+ * `LabellingSession` (the admin mount) still does over `VerificationCard` —
+ * "walk a batch that drains, one frame at a time" — over a different pool
+ * and a different endpoint, the same "one interaction, several mounts"
+ * shape M13.1 established.
  *
- * `allowAdjust` stays the default `true` — plan §B4's table gives a
- * contributor's ruling the same weight an admin's carries, unlike the
- * anonymous mount. `onReportMissing` is left off entirely: naming a class
- * from the roster is an authoring act, admin-only (plan §B4,
- * `admin-verdicts.ts`'s own comment on `createMissingReportHandler`), and
- * there is no public class roster this component could offer contributors
- * anyway.
+ * **No adjust (M24, plan §C1 — reverses M20 plan §B4).** M20 gave a
+ * contributor the adjust tool on the reasoning that their verdicts are
+ * labels, so a tier that could only say "wrong" was the weakest signal
+ * available. That is reversed now: every geometric correction comes from an
+ * admin on `/admin/verify`. **This is UI-only.**
+ * `submitContributeVerdictsHandler` still accepts `adjust` and
+ * `CreateVerdictsRequest`'s schema still carries the coordinate fields —
+ * this component simply never sends one, the same posture `PublicVerify`
+ * already takes (`SwipeCard` never had an adjust gesture at all). Nothing
+ * here narrows the API, which is what keeps the trade reversible.
+ *
+ * **The data shape differs from `/demo`'s, and this is the easier half of
+ * it (plan §C2).** `/api/public/frame` returns one frame; `/api/contribute/batch`
+ * returns `CONTRIBUTE_BATCH_SIZE` (20) with a `remaining` count. That is a
+ * better fit for `SwipeCard`, not a worse one: the batch is already a queue
+ * to walk, so there is no prefetch to write (unlike `PublicVerify`'s
+ * `usePrefetchNextPublicFrame`) — advancing to the next frame in an
+ * already-fetched batch is synchronous, local state, and only the batch
+ * itself needs a network round trip. `frameIndex` is that walk: it never
+ * decreases, and reaching the end of `batch.data.images` is what triggers
+ * `nextBatch()`, mirroring the old per-box `ContributeVerify`'s own
+ * "batch done" screen.
  */
 export function ContributeVerify() {
   const queryClient = useQueryClient();
   const batch = useContributeBatch();
   const submit = useSubmitContributeVerdicts();
 
-  const [ruled, setRuled] = useState<ReadonlySet<number>>(new Set());
-  const [done, setDone] = useState<ReadonlySet<number>>(new Set());
+  const [frameIndex, setFrameIndex] = useState(0);
   const [refreshedFor, setRefreshedFor] = useState<ReadonlySet<number>>(new Set());
   const [brokenFrames, setBrokenFrames] = useState<ReadonlySet<number>>(new Set());
 
-  const remainingFrames = (batch.data?.images ?? [])
-    .filter((image) => !done.has(image.id))
-    .map((image) => ({
-      ...image,
-      predictions: image.predictions.filter((box) => !ruled.has(box.id)),
-    }))
-    .filter((image) => image.predictions.length > 0);
+  const images = batch.data?.images ?? [];
+  const frame = images[frameIndex];
 
-  const frame = remainingFrames[0];
-
-  const consumed = (batch.data?.images.length ?? 0) - remainingFrames.length;
-  const stillWaiting = Math.max(0, (batch.data?.remaining ?? 0) - consumed);
+  // `remaining` is the whole unruled pool, not just this batch — the same
+  // count `ContributeBatch.remaining` always carried. Subtracting what this
+  // sitting has already consumed (`frameIndex`, since each index only
+  // advances once its frame's rulings are on the server) gives "still
+  // waiting, beyond what I've already done," matching the old component's
+  // own arithmetic.
+  const stillWaiting = Math.max(0, (batch.data?.remaining ?? 0) - frameIndex);
 
   async function nextBatch() {
     await queryClient.refetchQueries({ queryKey: contributeBatchKey });
-    setRuled(new Set());
-    setDone(new Set());
+    setFrameIndex(0);
     setRefreshedFor(new Set());
     setBrokenFrames(new Set());
+  }
+
+  function handleComplete(rulings: StagedRuling[]) {
+    if (!frame) return;
+    // A frame with no proposed boxes cannot occur here —
+    // `CONTRIBUTOR_UNRULED_BOX` only selects images with at least one
+    // unruled box — but guard the same way `PublicVerify` does rather than
+    // assume the API's own invariant forever.
+    if (rulings.length === 0) return;
+
+    submit.mutate(
+      { imageId: frame.id, verdicts: rulings },
+      { onSuccess: () => setFrameIndex((current) => current + 1) },
+    );
   }
 
   if (batch.isPending) return <p className="text-sm">Loading frames…</p>;
@@ -90,7 +115,7 @@ export function ContributeVerify() {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-muted-foreground">
-        <span className="font-mono">{remainingFrames.length}</span> in this batch,{" "}
+        <span className="font-mono">{images.length - frameIndex}</span> in this batch,{" "}
         <span className="font-mono">{stillWaiting}</span> in the pool · {frame.video_id} @{" "}
         {frame.timestamp_seconds}s
       </p>
@@ -101,23 +126,17 @@ export function ContributeVerify() {
         </p>
       )}
 
-      <VerificationCard
+      {submit.isError && (
+        <p role="alert" className="text-sm text-destructive">
+          {submit.error.message}
+        </p>
+      )}
+
+      <SwipeCard
         key={frame.id}
         frame={frame}
         busy={submit.isPending}
-        onSubmit={(verdicts) =>
-          submit.mutate(
-            { imageId: frame.id, verdicts },
-            {
-              onSuccess: () =>
-                setRuled((seen) => {
-                  const next = new Set(seen);
-                  for (const ruling of verdicts) next.add(ruling.prediction_id);
-                  return next;
-                }),
-            },
-          )
-        }
+        onSubmit={handleComplete}
         onImageError={() => {
           if (refreshedFor.has(frame.id)) {
             setBrokenFrames((seen) => new Set(seen).add(frame.id));
@@ -127,12 +146,6 @@ export function ContributeVerify() {
           void queryClient.invalidateQueries({ queryKey: contributeBatchKey });
         }}
       />
-
-      {submit.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          {submit.error.message}
-        </p>
-      )}
     </div>
   );
 }

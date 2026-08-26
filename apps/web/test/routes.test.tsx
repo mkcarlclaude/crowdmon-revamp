@@ -53,6 +53,14 @@ function stubAuthenticated() {
   );
 }
 
+/** A fetch that never resolves — enough to prove which page mounted without needing its data. */
+function stubPendingFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise(() => {})),
+  );
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("routing", () => {
@@ -61,6 +69,24 @@ describe("routing", () => {
     // M20 plan §A: the landing page's hero headline, not a bare wordmark —
     // `test/pages/Home.test.tsx` covers everything else about this page.
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/paimon/i);
+  });
+
+  // M24, plan §B1: `/verify` is kept working as a redirect rather than
+  // deleted — it is linked from the landing page's own history, this
+  // repo's docs, and anywhere a stranger already pasted the old URL.
+  it("redirects /verify to /demo", () => {
+    stubPendingFetch();
+    renderApp("/verify");
+    // `/demo` mounts `PublicVerify`, which shows this text before its own
+    // fetch resolves — proof the redirect landed on the new route's
+    // component tree rather than a 404 or the deleted `Verify` page.
+    expect(screen.getByText(/loading a frame/i)).toBeInTheDocument();
+  });
+
+  it("mounts the public demo at /demo", () => {
+    stubPendingFetch();
+    renderApp("/demo");
+    expect(screen.getByText(/loading a frame/i)).toBeInTheDocument();
   });
 
   // M16, CONTEXT.md §Q19 amendment: `/admin` used to render a heading
