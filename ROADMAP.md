@@ -1123,7 +1123,7 @@ public detector demo · consensus resolution, agreement scoring, trust weighting
 leaderboards · 70/20/10 weighted selection · a public statistics surface · any
 measurement of detector accuracy.
 
-Training and the flywheel proper are v4 or v5, on the home box, CPU-only and slow by
+Training and the flywheel proper are v5, on the home box, CPU-only and slow by
 choice — `CONTEXT.md` §Q21 records the trap that will eat a multi-day run and the two
 ways out. The operational debt in `CONTEXT.md` §9 stays debt, including yt-dlp
 freshness, which was considered for v2 and left out to keep the sentence honest.
@@ -1314,3 +1314,128 @@ production screen, which proved the write path and nothing about the gesture, be
 CDP mouse events do not start native drag-and-drop and neither does jsdom. Both fixes'
 tests assert the attributes that keep the browser out of the way rather than replaying a
 drag — a replay passes on the broken code.
+
+---
+
+# v4 — The public product
+
+*v3 made `/admin` a real dashboard. v4 makes the rest of the site a real product:
+somebody who is not the author can land on it, understand it, sign in, and contribute
+labels that reach a dataset.*
+
+Numbered v4 because v3 was the admin restructure and this is plainly a different thing.
+Training keeps v5 — `CONTEXT.md` §Q21, §12 and `PRD.md` were amended to match, since
+three documents said "v4 or v5" for training while this work was also calling itself v4.
+
+## M20 — Contributor accounts
+
+*Goal: a stranger can hold an identity, and a trusted one's verdicts become labels.*
+*Plan: `docs/superpowers/plans/2026-08-16-landing-page-and-contributor-accounts.md`.*
+
+### [§B — Google OAuth, sessions, a third verdict source](https://github.com/mkcarlclaude/crowdmon-revamp/pull/158)
+- Migration 0012: `users` (identity is `google_sub`, never `email` — an address can be
+  reassigned), `sessions` (opaque revocable ids, not JWTs, so logout actually revokes),
+  and `verdicts.source` widened to admit `'user'` via a table rebuild
+- OAuth in the Worker: state, PKCE, `iss`/`aud`/`email_verified` verified against
+  Google's JWKS, and a **hardcoded** post-login redirect — §Q19 records this repo
+  shipping the open-redirect bug once already
+- `requireUser` beside `requireAccess`, never composed. Disjoint prefixes, and an admin
+  is not automatically a contributor
+- Applied to production 2026-08-21. The rebuild was verified **row-identical** against
+  pre/post dumps — 300 rows, 282 `admin` + 18 `anon` — because `vitest-pool-workers`
+  applies migrations to an empty database and structurally cannot prove the copy step
+  preserves live rows
+
+### [§C — Contributed verdicts become labels](https://github.com/mkcarlclaude/crowdmon-revamp/pull/160)
+- `WINNING_VERDICT` replaces `LATEST_ADMIN_VERDICT`: one ordered scalar subquery, admin
+  rank 0, trusted user rank 1, `anon` never
+- `DEFAULT_INCLUSION_POLICY` restated to match. Old `snapshots` rows keep their old
+  string and stay accurate about how they were built
+- Measured rather than assumed: both snapshot queries together read 19,357 rows before
+  and 27,673 after (+43%), from a temp B-tree the `CASE` ranking forces. A candidate
+  index was tried, produced an identical plan, and was left out rather than shipped as
+  dead weight
+- **This reversed §7's "two tiers, nothing in between."** What keeps consensus
+  resolution, agreement scoring, trust weighting and inter-rater reliability out is that
+  the ordering is total and static — there is never a tie to arbitrate, and trust is one
+  boolean an admin sets on a person, not a score derived from agreement
+
+### [§A — The landing page](https://github.com/mkcarlclaude/crowdmon-revamp/pull/159)
+- The settled design ported to `/`, self-hosted Cabinet Grotesk and Satoshi, real
+  detections at their real 0.10–0.20 confidences including the wrong ones
+- The shell's blanket `noindex` came out and became a per-route concern
+
+## M21 — `X-Robots-Tag` as the real control
+
+Folded into M20 §A's review rather than shipped separately, recorded because the bug is
+instructive: replacing the shell's blanket `noindex` with a React-injected `<meta>` tag
+silently weakened it, since a crawler that does not execute JavaScript never sees an
+injected tag. `public/_headers` now carries the header. §Q25 counts that among the bounds
+keeping the public verification page distinct from the gallery §Q11 rejected on licensing
+grounds — so it was a licensing control, not an SEO nit.
+
+## M22 — yt-dlp gets a JavaScript engine
+
+Not planned. A production incident on 2026-08-21, when every `download` job began failing
+with `HTTP Error 403: Forbidden`
+([#161](https://github.com/mkcarlclaude/crowdmon-revamp/pull/161)).
+
+**The obvious diagnosis was wrong**, which is why it is here. yt-dlp was seven weeks
+stale and §9.8 predicts exactly this failure from exactly that cause — but the pinned
+binary and the newest release reproduced the 403 identically. YouTube signs media URLs
+with an `n` parameter that must be descrambled by executing player JavaScript; with no JS
+engine present the first chunk arrives and every subsequent range request is refused.
+`deno` in the worker image fixes it. §9.8 also records the second trap: a `--test`
+download is one range request and passes against a broken image.
+
+## M23 — One box, one swipe
+
+*Goal: `/verify` stops being the desktop component on a phone.*
+*Plan: `docs/superpowers/plans/2026-08-26-swipe-verification-on-mobile.md`.
+Prototype: `design/swipe-prototype`.*
+[#163](https://github.com/mkcarlclaude/crowdmon-revamp/pull/163). Frontend only.
+
+Every gesture constant was measured against a thumb across four prototype rounds, and
+each replaced something that read fine in prose:
+
+- the swipe surface is the whole stage, not the frame — a one-handed thumb lives in the
+  lower third of the screen
+- the axis lock is `|dx| > |dy| * 0.7`, not a 45° cutoff — a thumb swipe arcs 30–40° off
+  horizontal, and real swipes were being dropped as scrolls
+- the claim rides on the active rectangle — proposals here routinely share
+  pixel-identical geometry, so dimming a sibling underneath conveys nothing
+- undo is a button, after two hidden variants nobody found
+
+Swipes are buffered and flushed one batch per frame: `verdicts` is append-only so a
+mis-swipe written immediately is permanent, and one request per swipe would hit the
+20-per-60s limit inside half a minute of ordinary use.
+
+## M24 — Desktop, `/demo`, and the contributor swipe
+
+*Plan: `docs/superpowers/plans/2026-08-27-desktop-demo-rename-and-contribute-swipe.md`.*
+[#165](https://github.com/mkcarlclaude/crowdmon-revamp/pull/165),
+[#166](https://github.com/mkcarlclaude/crowdmon-revamp/pull/166).
+
+- **Desktop.** M23 shipped `w-full` with no breakpoint above `sm:`, so a 1920px monitor
+  rendered a frame taller than the viewport. Capped at 720px **by width** — never
+  `max-height` with `object-contain`, which letterboxes the image inside its container
+  and silently desyncs every box from what it describes
+- **`/verify` → `/demo`**, old path kept as a redirect, with `noimageindex` instead of
+  `noindex`: the page is meant to be found, the frames on it are not
+- **`/contribute` gets the swipe and loses adjust**, reversing M20 §B4. UI-only — the API
+  still accepts `adjust`, which is what keeps it reversible
+- **SEO hygiene.** `robots.txt` and `sitemap.xml` were answering with the SPA shell and a
+  200. `/admin`, `/contribute` and `/verify` are deliberately **not** disallowed in
+  robots.txt: a blocked path is never fetched, so its `noindex` is never seen
+
+## Open at the close of v4
+
+- **The Turnstile widget.** Server verification is deployed and no-ops without a secret;
+  the browser half needs a decision on getting a site key into a statically built SPA
+- **iOS Safari's edge-swipe** on `/demo` — no device available
+- **Prerendering the landing page.** Feasible, and not what §Q11 rejected (that was SSR)
+  — but Google already executes JavaScript, so the beneficiaries are the engines that
+  matter least. Parked pending Search Console
+- **`/demo` and `/contribute` have not been driven by a human** on a real monitor or a
+  real phone. Everything a machine can check passes
+

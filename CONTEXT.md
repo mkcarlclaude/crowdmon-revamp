@@ -59,7 +59,7 @@ topology, self-managed auth and the Go worker all remain primary.
 | Home server | `carls-ubuntu`, Ubuntu 26.04, i5-7200U (2c/4t), 12GB RAM, 413GB free, GeForce 940MX 2GB (unusable for training), always-on, AC powered |
 | Tailnet | Tailscale mesh, `tailscaled` running (address kept out of this repo) |
 | Laptop | MacBook Air M4, 16GB, arm64 — **dev/coding only**, explicitly not a training box |
-| Training | Kaggle free GPU (30h/wk, T4/P100 16GB) primary, Colab fallback. **Amended for v2 (§12):** training moves onto the home box in v4/v5 — CPU-only, days per run, and acceptable because nothing waits on it |
+| Training | Kaggle free GPU (30h/wk, T4/P100 16GB) primary, Colab fallback. **Amended for v2 (§12):** training moves onto the home box in v5 — CPU-only, days per run, and acceptable because nothing waits on it |
 | Cloud | Cloudflare — Workers, Pages, D1, R2, Access, cloudflared |
 | Domain | `mkcarl.com` (Grafana already at `grafana.mkcarl.com`) |
 
@@ -638,7 +638,7 @@ mixes the frozen evaluation pool into training and replaces the honest metric wi
 leaky one.
 
 **Amended in v2 (§12): the handoff is to the home box, not to Kaggle.** Training runs on
-`carls-ubuntu` from v4, CPU-only and measured in days, which is affordable precisely
+`carls-ubuntu` from v5, CPU-only and measured in days, which is affordable precisely
 because nothing waits on it. Half of this section's reasoning retires with the notebook —
 the box holds R2 credentials already, so "no standing credentials in an ephemeral
 environment" no longer applies. The other half survives on its own merits and is what v2
@@ -653,7 +653,7 @@ training job on the box will be another job kind on the same queue, which is the
 but the deploy timer pulls a new image and restarts the container, killing a multi-day run
 silently and handing it to the reaper to burn attempts 2 and 3 against `MAX_ATTEMPTS`. The
 fix is checkpoint-and-resume, or pausing the update timer while a training job is held.
-Nothing to build before v4.
+Nothing to build before v5.
 
 ---
 
