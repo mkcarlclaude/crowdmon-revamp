@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The two indexable URLs, and there are only two on purpose.
+
+  /admin, /contribute and /verify all carry `X-Robots-Tag: noindex` (see
+  `_headers`), so listing them here would be telling a crawler to index pages
+  the same deployment tells it not to. /demo is indexable but carries
+  `noimageindex`: the page is meant to be found, the frames on it are not
+  (CONTEXT.md §Q25).
+
+  No `lastmod`. A date that has to be edited by hand is a date that will be
+  wrong, and a wrong one is worse than none.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://crowdmon.mkcarl.com/</loc>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://crowdmon.mkcarl.com/demo</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+</urlset>

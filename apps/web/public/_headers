@@ -55,6 +55,9 @@
 /verify
   X-Robots-Tag: noindex
 
+/contribute
+  X-Robots-Tag: noindex
+
 /admin
   X-Robots-Tag: noindex
 

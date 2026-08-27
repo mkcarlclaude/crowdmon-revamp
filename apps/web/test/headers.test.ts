@@ -59,3 +59,62 @@ describe("public/_headers", () => {
     }
   });
 });
+
+describe("robots.txt and sitemap.xml", () => {
+  const readPublic = (name: string) =>
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "public", name), "utf8");
+
+  /**
+   * Both files exist because without them the SPA fallback answers
+   * `/robots.txt` and `/sitemap.xml` with `index.html` and a 200 — not a
+   * 404, which a crawler would handle cleanly, but a malformed document
+   * every crawler is free to interpret its own way.
+   */
+  it("serves a real robots.txt that declares the sitemap", () => {
+    const robots = readPublic("robots.txt");
+    expect(robots).toMatch(/^User-agent: \*$/m);
+    expect(robots).toMatch(/^Sitemap: https:\/\/crowdmon\.mkcarl\.com\/sitemap\.xml$/m);
+    expect(robots).toMatch(/^Disallow: \/api\/$/m);
+  });
+
+  /**
+   * The interaction that gets this wrong everywhere: a path blocked by
+   * robots.txt is never fetched, so its `X-Robots-Tag: noindex` is never
+   * seen, and the URL can still be listed from an external link. Disallow
+   * and noindex pull against each other and noindex is the one that
+   * actually removes a page — so every noindexed path here must stay
+   * crawlable.
+   */
+  it("does not disallow the paths that rely on a noindex header", () => {
+    const robots = readPublic("robots.txt");
+    for (const path of ["/admin", "/contribute", "/verify", "/demo"]) {
+      expect(robots).not.toMatch(new RegExp(`^Disallow: ${path}`, "m"));
+    }
+  });
+
+  it("lists exactly the two indexable URLs in the sitemap", () => {
+    const sitemap = readPublic("sitemap.xml");
+    const locs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+    expect(locs).toEqual([
+      "https://crowdmon.mkcarl.com/",
+      "https://crowdmon.mkcarl.com/demo",
+    ]);
+  });
+
+  /**
+   * A sitemap advertising a page the same deployment tells crawlers not to
+   * index is a deployment arguing with itself, and the rename to `/demo` is
+   * exactly the kind of change that would leave one behind.
+   */
+  it("never lists a path that carries a noindex header", () => {
+    const sitemap = readPublic("sitemap.xml");
+    for (const path of ["/admin", "/contribute", "/verify"]) {
+      expect(sitemap).not.toContain(`https://crowdmon.mkcarl.com${path}`);
+    }
+  });
+
+  it("keeps /contribute on a header rule, not just the injected meta tag", () => {
+    const headers = readPublic("_headers");
+    expect(headers).toMatch(/^\/contribute\n\s+X-Robots-Tag: noindex$/m);
+  });
+});
