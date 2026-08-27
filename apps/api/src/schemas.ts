@@ -1144,29 +1144,39 @@ export const CreatePrelabelRequest = z
       .optional()
       .openapi({ example: [7, 12, 19] }),
     count: z.int().positive().max(MAX_SAMPLED_IMAGES_PER_JOB).optional().openapi({ example: 50 }),
-    strategy: z.literal("random").optional(),
+    // Two server-side draws over the same un-sampled remainder, and the
+    // difference between them is which side of the train/eval line the frames
+    // land on forever (M25, plan §A). `random` keeps feeding the frozen
+    // evaluation pool; `diverse` is the pHash farthest-point draw
+    // (`src/selection.ts`) that gives `splitFor()` something to route into
+    // `train`, which before M25 it had literally never had. `uncertain`, the
+    // third leg CONTEXT.md §Q16 names, is deliberately absent: its band is
+    // specified at ~0.3–0.6 and this detector's confidences sit at 0.10–0.20,
+    // so it would select nothing. It waits for a trained model to say where
+    // the band is (M27).
+    strategy: z.enum(["random", "diverse"]).optional(),
   })
   .superRefine((body, ctx) => {
     const handPicked = body.image_ids !== undefined;
-    const randomDraw = body.count !== undefined || body.strategy !== undefined;
-    if (handPicked === randomDraw) {
+    const serverDraw = body.count !== undefined || body.strategy !== undefined;
+    if (handPicked === serverDraw) {
       ctx.addIssue({
         code: "custom",
         message:
-          "give exactly one of image_ids, or {count, strategy:'random'}, never both and never neither",
+          "give exactly one of image_ids, or {count, strategy:'random'|'diverse'}, never both and never neither",
         path: ["image_ids"],
       });
       return;
     }
     // Caught separately from the check above so a caller who sent `count`
     // but forgot `strategy` (or the reverse) sees "you are missing half of
-    // the random mode" rather than the more confusing "you gave neither
-    // mode" — `randomDraw` above is deliberately true the moment *either*
+    // the server-draw mode" rather than the more confusing "you gave neither
+    // mode" — `serverDraw` above is deliberately true the moment *either*
     // field is present, exactly so this branch can tell the two apart.
-    if (randomDraw && (body.count === undefined || body.strategy !== "random")) {
+    if (serverDraw && (body.count === undefined || body.strategy === undefined)) {
       ctx.addIssue({
         code: "custom",
-        message: "the random draw needs both count and strategy:'random'",
+        message: "a server-side draw needs both count and strategy",
         path: ["strategy"],
       });
     }
@@ -1189,7 +1199,7 @@ export const PrelabelJob = z
   .object({
     job_id: z.int().positive().openapi({ example: 87 }),
     video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
-    selection_reason: z.enum(["random", "manual"]).openapi({ example: "manual" }),
+    selection_reason: z.enum(["random", "manual", "diverse"]).openapi({ example: "manual" }),
     images: z.int().nonnegative().openapi({ example: 24 }),
   })
   .openapi("PrelabelJob");

@@ -276,6 +276,108 @@ func TestBuildRoutesManualSelectionToTrainAndRandomToEval(t *testing.T) {
 	}
 }
 
+// TestBuildRoutesDiverseSelectionToTrain is M25's whole claim, and the plan
+// says so in as many words: "A test that a `diverse` image lands in the train
+// split of a built snapshot. That is the milestone's whole claim, and it is
+// one `splitFor()` call away from being provable."
+//
+// Worth its own test rather than a third image in the one above, because it
+// is asserting something different. That test proves `splitFor` distinguishes
+// two reasons; this one proves the *specific* string the M25 selector writes
+// (`apps/api/src/selection.ts`, stamped by `createPrelabelHandler` and
+// `reportPredictionsHandler`) is routed to train — a typo anywhere along that
+// chain would still route to train here, since "not random" is the whole
+// rule, but this test is where the value is spelled out in Go so that a
+// rename on the TypeScript side has a place to fail.
+//
+// Measured against production on 2026-08-27, before M25: 1,013 sampled
+// images, every one of them `random`, and a snapshot built that day would
+// have contained zero train-split images. That is what this test exists to
+// stop being true.
+func TestBuildRoutesDiverseSelectionToTrain(t *testing.T) {
+	fake := &fakeS3{}
+	b := snapshot.Builder{Client: fake, Bucket: "crowdmon-frames"}
+
+	source := queue.SnapshotSource{
+		Images: []queue.SnapshotImage{
+			{
+				// Unchanged and non-negotiable: the frozen evaluation pool
+				// (CONTEXT.md §Q16). M25 adds a selector beside this one, it
+				// does not touch this one.
+				Key:              "frames/dQw4w9WgXcQ/00000.000.jpg",
+				VideoID:          "dQw4w9WgXcQ",
+				TimestampSeconds: 0,
+				SelectionReason:  strPtr("random"),
+				Labels:           []queue.SnapshotLabel{{ClassName: "Paimon", XMax: 0.5, YMax: 0.5}},
+			},
+			{
+				// The pHash farthest-point draw (M25, plan §A): biased on
+				// purpose, which is exactly what makes it training data.
+				Key:              "frames/dQw4w9WgXcQ/00099.000.jpg",
+				VideoID:          "dQw4w9WgXcQ",
+				TimestampSeconds: 99,
+				SelectionReason:  strPtr("diverse"),
+				Labels:           []queue.SnapshotLabel{{ClassName: "Paimon", XMax: 0.3, YMax: 0.3}},
+			},
+		},
+	}
+
+	artifact, err := b.Build(t.Context(), "snapshots/job-250", source)
+	if err != nil {
+		t.Fatalf("Build() returned an unexpected error: %v", err)
+	}
+	if artifact.ImageCount != 2 {
+		t.Fatalf("ImageCount = %d, want 2", artifact.ImageCount)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+
+	var decoded struct {
+		Images []struct {
+			R2Key string `json:"r2_key"`
+			Split string `json:"split"`
+		} `json:"images"`
+	}
+	body, err := readAll(fake.puts[0].Body)
+	if err != nil {
+		t.Fatalf("reading the manifest body: %v", err)
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decoding the manifest: %v", err)
+	}
+
+	splitByKey := map[string]string{}
+	for _, image := range decoded.Images {
+		splitByKey[image.R2Key] = image.Split
+	}
+
+	if got := splitByKey["frames/dQw4w9WgXcQ/00099.000.jpg"]; got != "train" {
+		t.Errorf("diverse image split = %q, want train — this is the whole of M25", got)
+	}
+	if got := splitByKey["frames/dQw4w9WgXcQ/00000.000.jpg"]; got != "eval" {
+		t.Errorf("random image split = %q, want eval — adding a selector must not thaw the frozen pool", got)
+	}
+
+	// The count, not just the routing: a manifest that admitted the diverse
+	// image and quietly dropped the random one would satisfy both checks
+	// above and still be a snapshot with no evaluation set.
+	trains, evals := 0, 0
+	for _, image := range decoded.Images {
+		switch image.Split {
+		case "train":
+			trains++
+		case "eval":
+			evals++
+		default:
+			t.Errorf("image %s carries split %q, which is neither train nor eval", image.R2Key, image.Split)
+		}
+	}
+	if trains != 1 || evals != 1 {
+		t.Errorf("manifest has %d train and %d eval images, want 1 of each", trains, evals)
+	}
+}
+
 // The first copy failure has to cancel the rest and name the key it happened
 // on, matching frames.Uploader.Upload's own guarantee — a partial copy is
 // safe to retry only because the caller can tell what broke.

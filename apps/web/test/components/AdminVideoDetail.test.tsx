@@ -421,6 +421,52 @@ describe("AdminVideoDetailPage", () => {
       );
     });
 
+    // M25, plan §A. The third draw, and the one whose request body decides
+    // whether the frames land in train or in the permanently frozen eval
+    // pool. The assertion that matters is `strategy: "diverse"` — a control
+    // that silently sent `random` would look identical on screen, queue a
+    // real job, and quietly add nothing to the training set at all.
+    it("queues a diverse draw with the typed count, distinct from the random request shape", async () => {
+      const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "/api/admin/videos/dQw4w9WgXcQ/prelabel") {
+          return Promise.resolve(json(prelabelJob({ selection_reason: "diverse", images: 40 })));
+        }
+        return Promise.resolve(json(page()));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderPage();
+
+      const countInput = await screen.findByRole("spinbutton", {
+        name: "how many un-sampled frames to draw by pHash diversity",
+      });
+      fireEvent.change(countInput, { target: { value: "40" } });
+
+      await userEvent.click(screen.getByRole("button", { name: "Diversify un-sampled" }));
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/admin/videos/dQw4w9WgXcQ/prelabel",
+          expect.objectContaining({
+            method: "POST",
+            body: JSON.stringify({ count: 40, strategy: "diverse" }),
+          }),
+        ),
+      );
+    });
+
+    // Each control names the split it writes into, because the split is
+    // permanent and nothing on this page shows it after the fact. A colour
+    // alone would not survive an operator who cannot see colour.
+    it("names the split each draw lands in", async () => {
+      stubVideo();
+      renderPage();
+
+      expect(await screen.findByText(/random draw → evaluation data/)).toBeInTheDocument();
+      expect(screen.getByText(/pHash farthest-point → training data/)).toBeInTheDocument();
+    });
+
     it("shows the verification pool's remaining count from labelling stats", async () => {
       const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input.toString();

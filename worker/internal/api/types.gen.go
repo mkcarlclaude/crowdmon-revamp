@@ -183,12 +183,15 @@ func (e ContributeBatchUrlMode) Valid() bool {
 
 // Defines values for CreatePrelabelRequestStrategy.
 const (
-	CreatePrelabelRequestStrategyRandom CreatePrelabelRequestStrategy = "random"
+	CreatePrelabelRequestStrategyDiverse CreatePrelabelRequestStrategy = "diverse"
+	CreatePrelabelRequestStrategyRandom  CreatePrelabelRequestStrategy = "random"
 )
 
 // Valid indicates whether the value is a known member of the CreatePrelabelRequestStrategy enum.
 func (e CreatePrelabelRequestStrategy) Valid() bool {
 	switch e {
+	case CreatePrelabelRequestStrategyDiverse:
+		return true
 	case CreatePrelabelRequestStrategyRandom:
 		return true
 	default:
@@ -297,13 +300,16 @@ func (e LabellingBatchUrlMode) Valid() bool {
 
 // Defines values for PrelabelJobSelectionReason.
 const (
-	PrelabelJobSelectionReasonManual PrelabelJobSelectionReason = "manual"
-	PrelabelJobSelectionReasonRandom PrelabelJobSelectionReason = "random"
+	PrelabelJobSelectionReasonDiverse PrelabelJobSelectionReason = "diverse"
+	PrelabelJobSelectionReasonManual  PrelabelJobSelectionReason = "manual"
+	PrelabelJobSelectionReasonRandom  PrelabelJobSelectionReason = "random"
 )
 
 // Valid indicates whether the value is a known member of the PrelabelJobSelectionReason enum.
 func (e PrelabelJobSelectionReason) Valid() bool {
 	switch e {
+	case PrelabelJobSelectionReasonDiverse:
+		return true
 	case PrelabelJobSelectionReasonManual:
 		return true
 	case PrelabelJobSelectionReasonRandom:
@@ -2030,18 +2036,18 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
 	ListAdminVideoImages(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePrelabelWithBody Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+	// CreatePrelabelWithBody Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set
 	//
-	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass, and lands in the frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point draw over that same remainder (stamps `diverse`, and lands in the train split). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
 	CreatePrelabelWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreatePrelabel Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+	// CreatePrelabel Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set
 	//
-	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass, and lands in the frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point draw over that same remainder (stamps `diverse`, and lands in the train split). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2821,9 +2827,9 @@ func (c *Client) ListAdminVideoImages(ctx context.Context, id string, params *Li
 	return c.Client.Do(req)
 }
 
-// CreatePrelabelWithBody Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+// CreatePrelabelWithBody Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set
 //
-// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass, and lands in the frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point draw over that same remainder (stamps `diverse`, and lands in the train split). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2840,9 +2846,9 @@ func (c *Client) CreatePrelabelWithBody(ctx context.Context, id string, contentT
 	return c.Client.Do(req)
 }
 
-// CreatePrelabel Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+// CreatePrelabel Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set
 //
-// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass, and lands in the frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point draw over that same remainder (stamps `diverse`, and lands in the train split). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -5739,18 +5745,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
 	ListAdminVideoImagesWithResponse(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*ListAdminVideoImagesResponse, error)
 
-	// CreatePrelabelWithBodyWithResponse Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+	// CreatePrelabelWithBodyWithResponse Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set
 	//
-	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass, and lands in the frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point draw over that same remainder (stamps `diverse`, and lands in the train split). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/admin/videos/{id}/prelabel (the `CreatePrelabel` operationId).
 	CreatePrelabelWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePrelabelResponse, error)
 
-	// CreatePrelabelWithResponse Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+	// CreatePrelabelWithResponse Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set
 	//
-	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+	// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass, and lands in the frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point draw over that same remainder (stamps `diverse`, and lands in the train split). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -9152,9 +9158,9 @@ func (c *ClientWithResponses) ListAdminVideoImagesWithResponse(ctx context.Conte
 	return ParseListAdminVideoImagesResponse(rsp)
 }
 
-// CreatePrelabelWithBodyWithResponse Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+// CreatePrelabelWithBodyWithResponse Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set
 //
-// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass, and lands in the frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point draw over that same remainder (stamps `diverse`, and lands in the train split). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -9167,9 +9173,9 @@ func (c *ClientWithResponses) CreatePrelabelWithBodyWithResponse(ctx context.Con
 	return ParseCreatePrelabelResponse(rsp)
 }
 
-// CreatePrelabelWithResponse Queue a supplementary prelabel pass over a hand-picked or randomised frame set
+// CreatePrelabelWithResponse Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set
 //
-// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
+// Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass, and lands in the frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point draw over that same remainder (stamps `diverse`, and lands in the train split). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

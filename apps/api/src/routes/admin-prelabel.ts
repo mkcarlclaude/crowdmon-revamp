@@ -2,6 +2,7 @@ import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import type { AppEnv } from "../bindings";
 import { chunkForBinding, placeholders } from "../d1";
 import { AdminVideoIdParam, CreatePrelabelRequest, errorResponse, PrelabelJob } from "../schemas";
+import { MAX_DIVERSE_CANDIDATES, selectDiverse } from "../selection";
 import { currentTraceparent } from "../tracing";
 
 /**
@@ -20,16 +21,28 @@ import { currentTraceparent } from "../tracing";
  * about that pass, and this route adds work on top of it rather than
  * replacing anything `completeJobHandler`'s auto-enqueue does.
  *
- * **The two modes stamp two different `selection_reason` values, and that
- * distinction is the entire point.** `CONTEXT.md` §Q16: `random` images form
- * a permanent evaluation pool excluded from training forever, and an image
- * can never be retro-declared unbiased once it is chosen some other way. A
- * hand-picked set is a biased sample by construction, so it stamps `manual`
- * — a value outside `splitFor`'s (`worker/internal/snapshot/builder.go`)
- * one-line rule only in name, since anything that is not `random` already
- * lands in `train`. A random draw over the not-yet-sampled remainder is
- * still an unbiased draw over what is left, so it keeps writing `random` and
- * lands in `eval`, same as the automatic first pass always has.
+ * **The modes stamp different `selection_reason` values, and that distinction
+ * is the entire point.** `CONTEXT.md` §Q16: `random` images form a permanent
+ * evaluation pool excluded from training forever, and an image can never be
+ * retro-declared unbiased once it is chosen some other way. A hand-picked set
+ * is a biased sample by construction, so it stamps `manual` — a value outside
+ * `splitFor`'s (`worker/internal/snapshot/builder.go`) one-line rule only in
+ * name, since anything that is not `random` already lands in `train`. A
+ * random draw over the not-yet-sampled remainder is still an unbiased draw
+ * over what is left, so it keeps writing `random` and lands in `eval`, same
+ * as the automatic first pass always has.
+ *
+ * **M25 (plan §A) adds a third: `diverse`, and it is the reason this route
+ * now matters for something other than refilling a queue.** Until it landed,
+ * every one of the 1,013 sampled images in production carried `random` and a
+ * snapshot therefore yielded an evaluation set and **zero** training images —
+ * `manual` was the only path to a train-split row, and it requires a human to
+ * pick every id by hand. `diverse` is the same server-side draw as `random`
+ * over the same un-sampled remainder, ordered by pHash farthest-point
+ * distance instead of `RANDOM()` (`src/selection.ts`), and it stamps a value
+ * `splitFor` routes to `train` without a line of change on the Go side. It is
+ * a biased selection *on purpose* — that is what makes it training data and
+ * what keeps it out of the frozen pool.
  *
  * **The write-once guard lives in the same migration as the index it
  * replaces (0011), and this route is the reason.** Before this route
@@ -51,17 +64,26 @@ interface CandidateImageRow {
   selection_reason: string | null;
 }
 
+/** What the `diverse` draw reads: `selectDiverse`'s `DiverseCandidate`, row-shaped. */
+interface CandidateHashRow {
+  id: number;
+  phash: string;
+}
+
 export const createPrelabelRoute = createRoute({
   method: "post",
   path: "/api/admin/videos/{id}/prelabel",
   operationId: "createPrelabel",
   tags: ["admin"],
-  summary: "Queue a supplementary prelabel pass over a hand-picked or randomised frame set",
+  summary: "Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set",
   description:
     "Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one " +
-    "video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, " +
+    "video — `image_ids` for a hand-picked set (stamps `manual`), `{count, " +
     "strategy:'random'}` for a server-drawn random sample of the not-yet-sampled " +
-    "remainder (stamps `random`, same as the automatic first pass). One `batch()`: the " +
+    "remainder (stamps `random`, same as the automatic first pass, and lands in the " +
+    "frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point " +
+    "draw over that same remainder (stamps `diverse`, and lands in the train split). " +
+    "One `batch()`: the " +
     "job and its `prelabel_images` rows are written atomically, so the claim handler can " +
     "never observe a prelabel job whose selection is half-written. Requires a Cloudflare " +
     "Access assertion.",
@@ -104,7 +126,7 @@ export const createPrelabelHandler: RouteHandler<typeof createPrelabelRoute, App
   // reason: `CreatePrelabelRequest`'s `superRefine` already guarantees
   // exactly one mode, so there is no third case to unify against.
   let imageIds: number[];
-  let selectionReason: "random" | "manual";
+  let selectionReason: "random" | "manual" | "diverse";
 
   if (body.image_ids !== undefined) {
     selectionReason = "manual";
@@ -153,6 +175,58 @@ export const createPrelabelHandler: RouteHandler<typeof createPrelabelRoute, App
     }
 
     imageIds = requested;
+  } else if (body.strategy === "diverse") {
+    selectionReason = "diverse";
+    const count = body.count as number;
+
+    // The un-sampled remainder, read whole rather than drawn in SQL: unlike
+    // the random arm below, this selection is a function of every candidate's
+    // relationship to every other one, and SQLite has no `popcount` to
+    // express a Hamming distance with. `ORDER BY timestamp_seconds` rather
+    // than `RANDOM()` for the reason `worker/internal/sample` gives at
+    // length: nothing about this draw is random, and a stable order is what
+    // makes "the same video, twice, picks the same frames" true — including
+    // `selectDiverse`'s one arbitrary choice, the first pick on a video with
+    // no reference set, which lands on the earliest frame rather than
+    // whatever SQLite shuffled to the top that time.
+    const [candidateRows, referenceRows] = await c.env.DB.batch<CandidateHashRow>([
+      c.env.DB.prepare(
+        `SELECT id, phash FROM images
+          WHERE video_id = ? AND selection_reason IS NULL
+          ORDER BY timestamp_seconds LIMIT ?`,
+      ).bind(videoId, MAX_DIVERSE_CANDIDATES),
+      // What this draw must be *unlike*: the frames of this video an earlier
+      // pass already sampled, whether or not an admin has ruled on them yet.
+      // Deliberately not "already *labelled*" in the narrow sense of carrying
+      // a verdict — a frame sitting in the verification queue is redundant
+      // work just as surely as one already ruled on, and waiting for it to be
+      // ruled on before this selector will avoid its neighbours would make
+      // the queue's own backlog a source of duplicate frames in the queue.
+      //
+      // Scoped to this video, like every other query in this handler. Two
+      // different videos of the same game do share near-duplicate frames
+      // (menus, loading screens), so a cross-video reference set would be
+      // strictly better — and it is unbounded in a way this one is not, since
+      // it grows with every pass over every video while `selectDiverse` is
+      // linear in it. Per-video is what M25 can show it needs; the day the
+      // frames coming back are visibly cross-video duplicates is the day to
+      // pay for the global read.
+      c.env.DB.prepare(
+        `SELECT id, phash FROM images
+          WHERE video_id = ? AND selection_reason IS NOT NULL
+          LIMIT ?`,
+      ).bind(videoId, MAX_DIVERSE_CANDIDATES),
+    ]);
+
+    imageIds = selectDiverse({
+      candidates: candidateRows?.results ?? [],
+      reference: (referenceRows?.results ?? []).map((row) => row.phash),
+      budget: count,
+    }).map((candidate) => candidate.id);
+
+    if (imageIds.length === 0) {
+      return c.json({ error: `${videoId} has no un-sampled frames left to draw from` }, 400);
+    }
   } else {
     selectionReason = "random";
     const count = body.count as number;
