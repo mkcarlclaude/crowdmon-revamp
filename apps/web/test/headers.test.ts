@@ -95,10 +95,7 @@ describe("robots.txt and sitemap.xml", () => {
   it("lists exactly the two indexable URLs in the sitemap", () => {
     const sitemap = readPublic("sitemap.xml");
     const locs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
-    expect(locs).toEqual([
-      "https://crowdmon.mkcarl.com/",
-      "https://crowdmon.mkcarl.com/demo",
-    ]);
+    expect(locs).toEqual(["https://crowdmon.mkcarl.com/", "https://crowdmon.mkcarl.com/demo"]);
   });
 
   /**
