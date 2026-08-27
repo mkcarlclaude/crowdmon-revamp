@@ -1,0 +1,22 @@
+# Before this file existed, a request for /robots.txt returned the SPA shell with
+# a 200 — `not_found_handling = "single-page-application"` serves index.html for
+# any unmatched path. Google parses that, finds no valid directives and falls
+# back to allow-all, so nothing was broken; but a malformed robots.txt is handled
+# differently by different crawlers, and there was nowhere to declare a sitemap.
+#
+# **/admin, /contribute and /verify are deliberately NOT disallowed here.** They
+# each carry `X-Robots-Tag: noindex` from `_headers`, and a crawler that is
+# blocked by robots.txt never fetches the page and therefore never sees that
+# header — it can still list the bare URL if it finds a link from somewhere else.
+# Disallow and noindex pull against each other; noindex is the one that actually
+# removes a page, so these paths stay crawlable precisely so the directive lands.
+#
+# /api/ is disallowed because it is not content. /api/public/frame in particular
+# mints a short-lived signed R2 URL per request behind a rate limit (CONTEXT.md
+# §Q25), and there is no reason to spend either on a crawler.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://crowdmon.mkcarl.com/sitemap.xml

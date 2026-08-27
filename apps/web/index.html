@@ -5,6 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>crowdmon — teaching a computer to see a video game</title>
     <!--
+      `description` is a different tag from `og:description` below and is read
+      by a different consumer: search engines use this one for the snippet,
+      link-preview crawlers use the Open Graph one. Having only the OG tag left
+      Google to invent a snippet from rendered content, which on an SPA means
+      whatever survives its JavaScript pass.
+
+      There is deliberately no canonical link element here. One shell serves every
+      route (M5.1), so a canonical in this file would apply to `/demo` as well
+      and declare it a duplicate of `/` — actively worse than having none. With
+      two indexable URLs and no duplicate content, a per-route injected
+      canonical would buy nothing for the complexity.
+    -->
+    <meta
+      name="description"
+      content="A detector's real guesses on real game footage, and the human verdicts that turn them into a labelled dataset. Built and run by one person on a home server."
+    />
+    <!--
       The v2 public surface is the landing page at `/` plus an OG card
       (CONTEXT.md §Q11, M20 plan §A4). These tags live in the static shell
       rather than being injected by React because the real distribution

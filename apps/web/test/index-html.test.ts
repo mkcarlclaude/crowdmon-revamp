@@ -48,4 +48,24 @@ describe("index.html", () => {
     expect(html).not.toMatch(/href="https?:\/\/[^"]*font[^"]*"/i);
     expect(html).not.toMatch(/rel="preconnect"/i);
   });
+
+  /**
+   * `description` and `og:description` are different tags read by different
+   * consumers — search engines take the snippet from this one, link-preview
+   * crawlers from the Open Graph one. The shell shipped with only the latter,
+   * which left Google to invent a snippet out of whatever survived its
+   * JavaScript pass on a client-rendered page.
+   */
+  it("carries a meta description distinct from the Open Graph one", () => {
+    expect(html).toMatch(/<meta\s+name="description"/);
+  });
+
+  /**
+   * One shell serves every route (M5.1), so a canonical here would apply to
+   * `/demo` too and declare it a duplicate of `/`. Absent is correct; wrong
+   * is worse than missing.
+   */
+  it("has no canonical link, because one shell cannot canonicalise two routes", () => {
+    expect(html).not.toMatch(/rel="canonical"/);
+  });
 });
