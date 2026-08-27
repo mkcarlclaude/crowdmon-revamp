@@ -1439,3 +1439,61 @@ mis-swipe written immediately is permanent, and one request per swipe would hit 
 - **`/demo` and `/contribute` have not been driven by a human** on a real monitor or a
   real phone. Everything a machine can check passes
 
+# v5 — Training
+
+*v4 made the site a product. v5 makes the flywheel turn: a training set, a measurement to
+beat, and a model trained on the home box (`CONTEXT.md` §Q21) that is measurably better
+than the zero-shot detector it replaces.*
+
+## M25 — A training set that exists
+
+*Goal: a snapshot stops yielding zero train-split images.*
+*Plan: `docs/superpowers/plans/2026-08-27-train-split-sampling.md`.
+Design record: `CONTEXT.md` §Q16's M25 amendment.*
+
+The finding, measured against a production export on 2026-08-27: 18,952 images, 1,013
+sampled, **every one of them `selection_reason = 'random'`**. `splitFor()` routes `random`
+to eval and everything else to train, so a snapshot built that day gave 125 eval labels
+and **nothing to train on**. Not a bug — v2's acceptance run recorded it as expected — and
+not fixable by relabelling, since §Q16 makes the frozen pool permanent.
+
+- **`diverse` lands, as the third `selection_reason` and a third server-side draw on
+  `POST /api/admin/videos/{id}/prelabel`.** Greedy farthest-point over the pHash column
+  §Q12 already stores, per video, computed in the API. No schema change: `selection_reason`
+  is free text (migration 0001) and `splitFor()` already routed "not random" to train, so
+  the Go side needed one test and no code
+- **Every pick joins the set the next pick is measured against**, which is the whole
+  algorithm. A selector maximising distance from the *reference* set alone scores every
+  near-duplicate of the farthest frame identically well and returns the budget filled with
+  one shot — a failure that completes, stamps its rows, and looks like success
+- **`uncertain` is deferred past M27, and the reason is in the data.** §Q16 fixes its band
+  at ~0.3–0.6; this detector's confidences sit at **0.10–0.20**, so the band selects
+  nothing. The number was written before the model existed. It waits for a trained model to
+  say where the band actually is
+- **Hamming distance is 64-bit and neither obvious way of writing it works.** JavaScript's
+  bitwise operators truncate to 32 bits, so `popcount(a ^ b)` over `Number` compares half
+  a hash and calls two frames identical when they differ only in the high word.
+  `BigInt` is correct and, re-parsing both hex strings per comparison, **5.6 seconds** at
+  the worst per-video size — a Worker request that dies rather than one that is slow. Two
+  32-bit halves parsed once, SWAR popcount: 34ms, same answers. The tests could not tell
+  the two apart, because a unit test's pool is a dozen frames and a real one is thousands
+
+Open at the close of M25:
+
+- **No `diverse` pass has been run against production**, so the plan's fourth verification
+  item — export the database and check by hand that the drawn set is not visibly
+  near-duplicate frames — is outstanding. Selection *quality* is not unit-testable; the
+  failure mode is a sampler that "works" and returns 200 shots of the same loading screen,
+  and only a person looking at the frames can rule it out
+- **The class roster disagrees with the labels.** Only Paimon and Hu Tao are `active`, yet
+  the 125 labels are 118 Paimon and 7 Raiden Shogun — and Raiden, with 233 candidate
+  predictions, is switched off. Somebody has to decide which characters v5 trains on and
+  switch the roster to match. The plan wanted this settled *before* the budget was chosen;
+  it was not, and the 400 above should be revisited once the roster is
+- **The per-video budget is a starting value, not a bound.** 400 is the number the admin
+  control starts from, and `MAX_SAMPLED_IMAGES_PER_JOB` (1,000) is the only ceiling the
+  API enforces per request. What actually bounds repeated passes is that each one drains
+  the pool it draws from — a sampled frame carries a `selection_reason` and stops being a
+  candidate — so a video converges on its own frame count rather than growing without
+  limit. That is a weaker guarantee than a cumulative cap, and enough while the governor
+  is verification throughput

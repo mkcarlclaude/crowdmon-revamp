@@ -597,6 +597,44 @@ policy vs. a human's own judgement) rather than a fourth rung on the same 70/20/
 rule was already "`random` → eval, everything else → train," and `manual` is simply the
 first value other than `random` that rule has ever actually had to route.
 
+**Amended again in M25 (plan §A): `diverse` ships, `uncertain` is deferred past M27, and
+the 70/20/10 weighting does not land.** The v2 amendment above said the mix arrives "in
+v4 with the training it exists to serve." Half of it does. The reason the other half does
+not is in the data rather than in the schedule.
+
+Measured against a production export on 2026-08-27: 18,952 images extracted, 1,013 of
+them sampled, and **every single one carrying `selection_reason = 'random'`**. Under this
+section's own non-negotiable rule that is 1,013 evaluation images and **zero** training
+images — a snapshot built that day yielded 125 eval labels and nothing to train on. It
+could not be fixed by relabelling, because this section forbids exactly that: those 95
+labelled images *are* the frozen instrument, and training on them destroys the
+measurement the mAP chart depends on. So the train split was not small, it was empty, and
+M25 exists to give it a first row.
+
+- **`diverse` is what M25 builds**, because it is the leg that needs nothing that does not
+  exist yet: pHash is already on every image (§Q12), so the selector needs no confidence
+  signal, no trained model and no metric. Greedy farthest-point from what an earlier pass
+  already sampled, per video, computed in the API at enqueue time
+  (`apps/api/src/selection.ts`). It stamps a value `splitFor` already routes to `train`.
+- **`uncertain` cannot be built yet, and the band is why.** This section fixes it at a
+  confidence of ~0.3–0.6, chosen to stay off the bottom of the range where an
+  open-vocabulary detector mostly finds empty frames. **This detector's confidences sit at
+  0.10–0.20.** A 0.3–0.6 band selects nothing at all — the number was written before the
+  model existed and describes a different model. What unblocks it is M27: a trained model
+  whose confidence actually ranks informativeness, and a band derived from its measured
+  distribution rather than asserted in advance. The v2 amendment already predicted this in
+  its own words ("uncertainty sampling has no job while a zero-shot model pre-labels
+  uniformly and nothing is being measured"); it stays true one milestone longer than that
+  amendment expected.
+- **`random` is untouched.** Adding a selector that writes into train must not give any
+  path to rewriting a row that already reads `random`. The write-once guard in
+  `reportPredictionsHandler` (`AND selection_reason IS NULL`) is what holds that, and M25
+  tests it against a `diverse` job specifically.
+
+So the 70/20/10 in this section's first line is not what M25 ships and should not be read
+as a description of the system. What ships is a `diverse`/`random` split with no
+weighting, chosen per pass by whoever queues it.
+
 ### Model registry (Q17)
 
 Models land at versioned R2 paths (`models/v{n}/`). A `model_versions` table records

@@ -564,11 +564,12 @@ export function useAdminVideoDetail(videoId: string) {
 
 /**
  * Queues an on-demand supplementary prelabel pass over one video (M17, plan
- * §B) — `VideoDetail`'s two actions, "prelabel selected" (`image_ids`) and
- * "randomise N un-sampled" (`{count, strategy:'random'}`), share this one
+ * §B) — `VideoDetail`'s three actions, "prelabel selected" (`image_ids`),
+ * "randomise N un-sampled" (`{count, strategy:'random'}`) and "diversify N
+ * un-sampled" (`{count, strategy:'diverse'}`, M25 plan §A), share this one
  * mutation because they share everything downstream of the request body:
- * `CreatePrelabelRequest`'s own `superRefine` is what tells the two modes
- * apart, not two different hooks here.
+ * `CreatePrelabelRequest`'s own `superRefine` is what tells the modes
+ * apart, not three different hooks here.
  *
  * Invalidates `jobsKeyPrefix`, `useCreateDryRun`'s own idiom — the queue is
  * where the job this just created shows up. The *prefix*, not one status's

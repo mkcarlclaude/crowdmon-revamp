@@ -21,6 +21,26 @@ const PAGE_SIZE = 24;
 const DEFAULT_RANDOM_COUNT = 20;
 
 /**
+ * The "diversify N" input's starting value (M25, plan §A4), and it is
+ * deliberately twenty times the random default rather than the same number.
+ *
+ * The arithmetic it comes from, measured on the 2026-08-27 production export:
+ * 1,013 sampled images produced 580 verdicts and 125 labels across 95 images,
+ * so roughly one sampled frame in ten ends up carrying a label, at about 1.3
+ * labels each. The train split starts at **zero**, and M27 needs a training
+ * set big enough that a first fine-tune is worth running at all. 400 frames
+ * per video across the handful of videos in the corpus is a few hundred train
+ * labels — a real starting set, not a demo.
+ *
+ * It is not larger because the governor here is verification throughput, not
+ * extraction: an admin has to rule on every one of these by hand, and an
+ * enormous unlabelled pool is a queue nobody works through rather than
+ * progress. `MAX_SAMPLED_IMAGES_PER_JOB` (1,000) is the hard ceiling the API
+ * enforces; this is the number a session should actually start from.
+ */
+const DEFAULT_DIVERSE_COUNT = 400;
+
+/**
  * `verdict_state`'s colour and label, reusing the same three hues `JobList`
  * already assigns per-status rather than inventing a fourth palette: "no
  * predictions" is a fact, not a warning, so it borrows the muted text
@@ -229,11 +249,15 @@ function VideoHeader({ detail }: { detail: AdminVideoDetailRow }) {
  * **On-demand supplementary prelabel (M17, plan §B).** This grid is already
  * the selection surface `admin-prelabel.ts`'s own module comment assumes —
  * an operator looking at frames and deciding what to look at next — so the
- * refill controls live here rather than on a page of their own. Two actions,
- * deliberately not styled or worded alike: "prelabel selected" writes
- * `manual` and lands a hand-picked frame in the permanent *train* split;
- * "randomise N un-sampled" writes `random` and lands in the permanent *eval*
- * split, same as the automatic first pass always has. CONTEXT.md §Q16 is
+ * refill controls live here rather than on a page of their own. Three
+ * actions since M25, deliberately not styled or worded alike: "prelabel
+ * selected" writes `manual` and lands a hand-picked frame in the permanent
+ * *train* split; "randomise N un-sampled" writes `random` and lands in the
+ * permanent *eval* split, same as the automatic first pass always has; and
+ * "diversify N un-sampled" (M25, plan §A) writes `diverse` — a pHash
+ * farthest-point draw over the same remainder, landing in *train*, which is
+ * the control that makes a non-empty training set reachable without a human
+ * naming every id. CONTEXT.md §Q16 is
  * why that distinction cannot be allowed to look like two colours of the
  * same button — an image can never be retro-declared unbiased once it is
  * chosen the wrong way, and the split it lands in is invisible on this
@@ -247,6 +271,7 @@ export function AdminVideoDetailPage() {
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [randomCount, setRandomCount] = useState(DEFAULT_RANDOM_COUNT);
+  const [diverseCount, setDiverseCount] = useState(DEFAULT_DIVERSE_COUNT);
 
   const detail = useAdminVideoDetail(videoId);
   const images = useAdminVideoImages(videoId, { limit: PAGE_SIZE, offset });
@@ -274,6 +299,11 @@ export function AdminVideoDetailPage() {
   function randomiseUnsampled() {
     if (randomCount < 1) return;
     createPrelabel.mutate({ count: randomCount, strategy: "random" });
+  }
+
+  function diversifyUnsampled() {
+    if (diverseCount < 1) return;
+    createPrelabel.mutate({ count: diverseCount, strategy: "diverse" });
   }
 
   return (
@@ -363,6 +393,41 @@ export function AdminVideoDetailPage() {
             </div>
             <span className="text-xs text-muted-foreground">
               random draw → evaluation data (stays unbiased)
+            </span>
+          </div>
+
+          {/* M25, plan §A. The third control, worded like the other two and
+              for the same reason: the split a frame lands in is permanent and
+              invisible on this screen once the job finishes, so each button
+              states its own consequence in text rather than relying on a
+              colour or a position. This one is the reason the train split
+              stops being empty — every image in production before M25 was
+              drawn `random` and went to eval, so the only route into training
+              data was hand-picking each id. */}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1.5">
+              <input
+                type="number"
+                min={1}
+                value={diverseCount}
+                onChange={(event) =>
+                  setDiverseCount(Math.max(1, Number.parseInt(event.target.value, 10) || 1))
+                }
+                aria-label="how many un-sampled frames to draw by pHash diversity"
+                className="h-8 w-16 rounded-md border border-input bg-background px-2 text-sm"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={createPrelabel.isPending}
+                onClick={diversifyUnsampled}
+              >
+                Diversify un-sampled
+              </Button>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              pHash farthest-point → training data (biased on purpose, CONTEXT.md §Q16)
             </span>
           </div>
         </div>

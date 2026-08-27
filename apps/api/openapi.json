@@ -1855,7 +1855,8 @@
             "type": "string",
             "enum": [
               "random",
-              "manual"
+              "manual",
+              "diverse"
             ],
             "example": "manual"
           },
@@ -1900,7 +1901,8 @@
           "strategy": {
             "type": "string",
             "enum": [
-              "random"
+              "random",
+              "diverse"
             ]
           }
         }
@@ -4556,8 +4558,8 @@
         "tags": [
           "admin"
         ],
-        "summary": "Queue a supplementary prelabel pass over a hand-picked or randomised frame set",
-        "description": "Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), or `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.",
+        "summary": "Queue a supplementary prelabel pass over a hand-picked, random or diverse frame set",
+        "description": "Enqueues a `prelabel` job over an explicit set of not-yet-sampled frames from one video — `image_ids` for a hand-picked set (stamps `manual`), `{count, strategy:'random'}` for a server-drawn random sample of the not-yet-sampled remainder (stamps `random`, same as the automatic first pass, and lands in the frozen eval split), or `{count, strategy:'diverse'}` for a pHash farthest-point draw over that same remainder (stamps `diverse`, and lands in the train split). One `batch()`: the job and its `prelabel_images` rows are written atomically, so the claim handler can never observe a prelabel job whose selection is half-written. Requires a Cloudflare Access assertion.",
         "parameters": [
           {
             "schema": {
@@ -4592,7 +4594,7 @@
             }
           },
           "400": {
-            "description": "A malformed body, an image already carrying a selection_reason, or a random draw with nothing left to sample",
+            "description": "A malformed body, an image already carrying a selection_reason, or a server-side draw with nothing left to sample",
             "content": {
               "application/json": {
                 "schema": {
