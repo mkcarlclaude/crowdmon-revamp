@@ -1112,28 +1112,34 @@ export const ListDryRunsQuery = z.object({
  * What queuing an on-demand supplementary prelabel pass takes (M17, plan
  * §B) — `POST /api/admin/videos/{id}/prelabel`.
  *
- * Two modes, `CreateDryRunRequest`'s idiom above: exactly one of `image_ids`
- * (hand-pick specific frames) or `{count, strategy: "random"}` (let the
- * server draw `count` frames at random from the video's not-yet-sampled
- * remainder), enforced by the `superRefine` below rather than a
- * discriminated union — the two modes share nothing else worth naming twice,
- * and a discriminant tag would be one more thing a caller has to think
- * about for no benefit to either runtime.
+ * Two shapes, `CreateDryRunRequest`'s idiom above: exactly one of `image_ids`
+ * (hand-pick specific frames) or `{count, strategy}` (let the server draw
+ * `count` frames from the video's not-yet-sampled remainder), enforced by the
+ * `superRefine` below rather than a discriminated union — the two share
+ * nothing else worth naming twice, and a discriminant tag would be one more
+ * thing a caller has to think about for no benefit to either runtime.
  *
- * `strategy` is a literal `"random"` rather than a boolean, on purpose, even
- * though v2 has exactly one drawing strategy. §Q16's weighted mix
- * (`uncertain`/`diverse`) is v4-scoped, not deleted, and a boolean here would
- * have to become a string the day that lands — the same reason `strategy` is
- * spelled out rather than inferred from "not `image_ids`".
+ * `strategy` was a literal `"random"` through M17 rather than a boolean, on
+ * purpose, even though v2 had exactly one drawing strategy: §Q16's weighted
+ * mix was scoped later, not deleted, and a boolean would have had to become a
+ * string the day it landed. **M25 (plan §A) is that day** — `strategy` is now
+ * `"random" | "diverse"`, and the field needed widening rather than
+ * replacing. §Q16's third leg, `uncertain`, is deliberately not here: its band
+ * is specified at ~0.3–0.6 and this detector's confidences sit at 0.10–0.20,
+ * so it would select nothing at all until a trained model says where the band
+ * really is (M27).
  *
- * `image_ids` chooses `manual`; `{count, strategy: "random"}` chooses
- * `random`. That distinction is CONTEXT.md §Q16's non-negotiable rule made
- * concrete at the one place it can be gotten wrong: a hand-picked frame is a
- * biased sample by construction, and stamping it `random` would silently
- * pollute the permanent, frozen evaluation pool the mAP chart depends on
- * being unbiased (see the plan's "Contradictions" §2). A random draw over the
- * *remainder* is still an unbiased draw over whatever is left to draw from,
- * so it keeps `random`'s meaning rather than needing a third value.
+ * **Each shape chooses a `selection_reason`, and that is the one thing here
+ * that can be gotten irreversibly wrong.** `image_ids` chooses `manual`,
+ * `strategy: "random"` chooses `random`, `strategy: "diverse"` chooses
+ * `diverse` — and `splitFor()` (`worker/internal/snapshot/builder.go`) reads
+ * `random` as the permanently frozen evaluation pool and everything else as
+ * training data. CONTEXT.md §Q16's non-negotiable rule is made concrete right
+ * here: a hand-picked or diversity-drawn frame is a biased sample by
+ * construction, and stamping either `random` would silently pollute the pool
+ * the mAP chart depends on being unbiased (the M17 plan's "Contradictions"
+ * §2). A random draw over the *remainder* is still an unbiased draw over
+ * whatever is left, so it keeps `random`'s meaning.
  */
 export const CreatePrelabelRequest = z
   .object({

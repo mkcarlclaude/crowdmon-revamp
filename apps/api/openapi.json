@@ -4594,7 +4594,7 @@
             }
           },
           "400": {
-            "description": "A malformed body, an image already carrying a selection_reason, or a random draw with nothing left to sample",
+            "description": "A malformed body, an image already carrying a selection_reason, or a server-side draw with nothing left to sample",
             "content": {
               "application/json": {
                 "schema": {

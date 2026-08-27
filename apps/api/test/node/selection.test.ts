@@ -35,6 +35,37 @@ describe("hammingDistance", () => {
     expect(hammingDistance(phash(0n), phash(1n << 31n))).toBe(1);
   });
 
+  // The bit-counting inside `hammingDistance` is SWAR — branchless, and
+  // exactly the kind of code that is off by one bit for one input class and
+  // right for every case a hand-written test happens to pick. This pins it
+  // against the naive definition (Go's `popcount` in
+  // `worker/internal/frames/frames.go`, transcribed) over hashes spanning the
+  // full 64-bit range, so the optimisation cannot drift from the definition
+  // it replaced.
+  it("agrees with a naive bit count across the whole 64-bit range", () => {
+    function naive(a: string, b: string): number {
+      let diff = BigInt(`0x${a}`) ^ BigInt(`0x${b}`);
+      let bits = 0;
+      while (diff !== 0n) {
+        diff &= diff - 1n;
+        bits++;
+      }
+      return bits;
+    }
+
+    // A deterministic spread rather than `Math.random()`: a property test
+    // that fails only on some runs is a test nobody can act on.
+    const hashes = Array.from({ length: 200 }, (_, i) =>
+      ((BigInt(i) * 0x9e3779b97f4a7c15n) & 0xffffffffffffffffn).toString(16).padStart(16, "0"),
+    );
+
+    for (const a of hashes) {
+      for (const b of hashes) {
+        expect(hammingDistance(a, b)).toBe(naive(a, b));
+      }
+    }
+  });
+
   it("is symmetric", () => {
     expect(hammingDistance("0f0f0f0f0f0f0f0f", "00ff00ff00ff00ff")).toBe(
       hammingDistance("00ff00ff00ff00ff", "0f0f0f0f0f0f0f0f"),

@@ -97,8 +97,8 @@ export const createPrelabelRoute = createRoute({
       content: { "application/json": { schema: PrelabelJob } },
     },
     400: errorResponse(
-      "A malformed body, an image already carrying a selection_reason, or a random draw " +
-        "with nothing left to sample",
+      "A malformed body, an image already carrying a selection_reason, or a server-side " +
+        "draw with nothing left to sample",
     ),
     401: errorResponse("Missing or invalid Access assertion"),
     403: errorResponse("A verified identity that is not an administrator"),
@@ -119,12 +119,12 @@ export const createPrelabelHandler: RouteHandler<typeof createPrelabelRoute, App
 
   if (!video) return c.json({ error: `no video with id ${videoId}` }, 404);
 
-  // The two modes converge here: whichever the caller gave, this block's job
-  // is to arrive at `imageIds` (the rows `prelabel_images` will carry) and
-  // `selectionReason` (what this job's report will stamp onto every one of
-  // them) — `createDryRunHandler`'s own two-`if`-arms shape, for the same
+  // The three modes converge here: whichever the caller gave, this block's
+  // job is to arrive at `imageIds` (the rows `prelabel_images` will carry)
+  // and `selectionReason` (what this job's report will stamp onto every one
+  // of them) — `createDryRunHandler`'s own if-arms shape, for the same
   // reason: `CreatePrelabelRequest`'s `superRefine` already guarantees
-  // exactly one mode, so there is no third case to unify against.
+  // exactly one mode, so there is no fourth case to unify against.
   let imageIds: number[];
   let selectionReason: "random" | "manual" | "diverse";
 
@@ -223,10 +223,6 @@ export const createPrelabelHandler: RouteHandler<typeof createPrelabelRoute, App
       reference: (referenceRows?.results ?? []).map((row) => row.phash),
       budget: count,
     }).map((candidate) => candidate.id);
-
-    if (imageIds.length === 0) {
-      return c.json({ error: `${videoId} has no un-sampled frames left to draw from` }, 400);
-    }
   } else {
     selectionReason = "random";
     const count = body.count as number;
@@ -247,15 +243,22 @@ export const createPrelabelHandler: RouteHandler<typeof createPrelabelRoute, App
       .all<{ id: number }>();
 
     imageIds = results.map((row) => row.id);
+  }
 
-    if (imageIds.length === 0) {
-      return c.json({ error: `${videoId} has no un-sampled frames left to draw from` }, 400);
-    }
-    // Fewer than `count` available is not an error: a pool of 30 un-sampled
-    // frames answering a request for 50 with "here are the 30 I have" is a
-    // more useful response than a 400 that makes the caller re-ask for the
-    // exact remaining size, which they would have to query for separately
-    // to learn in the first place.
+  // Both server-side draws can come back empty — every frame of this video
+  // has already been sampled by an earlier pass — and neither can enqueue a
+  // job over nothing. Checked once here rather than in each arm: the
+  // hand-picked arm cannot reach it (`image_ids` carries `.min(1)`, and an
+  // id that does not resolve already returned 404 above), so one check after
+  // the branch covers exactly the two cases that need it.
+  //
+  // Fewer than `count` is *not* an error, which is why this tests for empty
+  // rather than short: a pool of 30 un-sampled frames answering a request for
+  // 50 with "here are the 30 I have" is more useful than a 400 that makes the
+  // caller re-ask for the exact remaining size, which they would have to
+  // query separately to learn in the first place.
+  if (imageIds.length === 0) {
+    return c.json({ error: `${videoId} has no un-sampled frames left to draw from` }, 400);
   }
 
   const traceparent = currentTraceparent();
