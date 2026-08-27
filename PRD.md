@@ -43,7 +43,7 @@ real-time model the foundation model cannot be.
 | **Free tier only** | No Cloudflare Queues, no Workers Paid plan. Queue is a D1 table. |
 | **Cloud survives home downtime** | Pull topology. Home is never a synchronous dependency. |
 | **YouTube blocks datacenter IPs** | Extraction must run from the home connection. |
-| **No GPU worth training on at home** | Training is manual and batch. Auto-retrain is ruled out by physics, not preference. **Amended for v2:** training moves to the home box in v4/v5 rather than Kaggle — CPU-only and slow by choice, which is affordable because nothing waits on it. See §9. |
+| **No GPU worth training on at home** | Training is manual and batch. Auto-retrain is ruled out by physics, not preference. **Amended for v2:** training moves to the home box in v5 rather than Kaggle — CPU-only and slow by choice, which is affordable because nothing waits on it. See §9. |
 | **Open-ended timeline, burnout is real** | Every milestone must be independently shippable and a valid stopping point. |
 
 ## 4. v1 scope — delivered

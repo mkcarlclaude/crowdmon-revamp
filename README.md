@@ -22,8 +22,17 @@ in the browser — is the workload that generates signal worth observing.
 > was accepted on its mechanisms rather than on an actual reboot, which `ROADMAP.md`
 > records as such.
 >
-> Next is v2: the ML flywheel — annotation, bootstrap, training, the in-browser demo —
-> which v1 excluded on purpose. Nothing in v1's decisions blocks it.
+> **v3 and v4 have shipped since.** v3 turned `/admin` into a real dashboard
+> (M16–M19). v4 made the rest of the site a product: contributor accounts with Google
+> OAuth, a trusted contributor's verdicts entering dataset snapshots, the landing page,
+> and a one-decision-at-a-time swipe interface for `/demo` and `/contribute`. Neither
+> has a falsifiable done-claim of its own — v1's eight criteria and v2's one sentence
+> are the two that were written to be checkable, and `ROADMAP.md` carries the rest.
+>
+> Next is **v5: training** — the half of the flywheel that has never run. The platform
+> produces labelled data and nothing yet consumes it. `CONTEXT.md` §Q21 records the
+> trap waiting there: a multi-day run on the box is another job on the same queue, and
+> the deploy timer will restart the container out from under it.
 
 ## Documents
 
