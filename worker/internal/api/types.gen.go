@@ -663,6 +663,9 @@ type AdminVideoImage struct {
 	// Sampled Example: false
 	Sampled bool `json:"sampled"`
 
+	// SelectionReason Example: diverse
+	SelectionReason *string `json:"selection_reason"`
+
 	// TimestampSeconds Example: 42
 	TimestampSeconds float32 `json:"timestamp_seconds"`
 
@@ -1641,8 +1644,9 @@ type ListVerdictsParamsVerdict1 = []VerdictKind
 
 // ListAdminVideoImagesParams defines parameters for ListAdminVideoImages.
 type ListAdminVideoImagesParams struct {
-	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit           *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset          *int    `form:"offset,omitempty" json:"offset,omitempty"`
+	SelectionReason *string `form:"selection_reason,omitempty" json:"selection_reason,omitempty"`
 }
 
 // GoogleAuthCallbackParams defines parameters for GoogleAuthCallback.
@@ -2031,7 +2035,7 @@ type ClientInterface interface {
 
 	// ListAdminVideoImages One video's frames, with prediction counts and verdict state
 	//
-	// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.
+	// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. `selection_reason` filters to one slice — any value the column holds (`random`, `manual`, `diverse`), or `none` for frames no pass has claimed; `total` follows the filter so pagination stays correct. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
 	ListAdminVideoImages(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2812,7 +2816,7 @@ func (c *Client) GetAdminVideoDetail(ctx context.Context, id string, reqEditors 
 
 // ListAdminVideoImages One video's frames, with prediction counts and verdict state
 //
-// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.
+// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. `selection_reason` filters to one slice — any value the column holds (`random`, `manual`, `diverse`), or `none` for frames no pass has claimed; `total` follows the filter so pagination stays correct. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/videos/{id}/images (the `ListAdminVideoImages` operationId).
 func (c *Client) ListAdminVideoImages(ctx context.Context, id string, params *ListAdminVideoImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4431,6 +4435,18 @@ func NewListAdminVideoImagesRequest(server string, id string, params *ListAdminV
 
 		}
 
+		if params.SelectionReason != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "selection_reason", *params.SelectionReason, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -5738,7 +5754,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListAdminVideoImagesWithResponse One video's frames, with prediction counts and verdict state
 	//
-	// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.
+	// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. `selection_reason` filters to one slice — any value the column holds (`random`, `manual`, `diverse`), or `none` for frames no pass has claimed; `total` follows the filter so pagination stays correct. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -9145,7 +9161,7 @@ func (c *ClientWithResponses) GetAdminVideoDetailWithResponse(ctx context.Contex
 
 // ListAdminVideoImagesWithResponse One video's frames, with prediction counts and verdict state
 //
-// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.
+// Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. `selection_reason` filters to one slice — any value the column holds (`random`, `manual`, `diverse`), or `none` for frames no pass has claimed; `total` follows the filter so pagination stays correct. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //

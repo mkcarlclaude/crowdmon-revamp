@@ -58,6 +58,9 @@ function frame(over: Partial<Record<string, unknown>> = {}) {
     // frame — required on `AdminVideoImage` since migration 0011, unused by
     // this picker.
     sampled: false,
+    // Required-nullable on the wire since M25.1, so a fixture omitting it
+    // fails the response schema and the grid silently renders nothing.
+    selection_reason: null,
     ...over,
   };
 }

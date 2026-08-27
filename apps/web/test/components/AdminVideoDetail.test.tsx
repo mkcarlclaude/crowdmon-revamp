@@ -45,6 +45,9 @@ function image(over: Partial<Record<string, unknown>> = {}) {
     // frame (`images.selection_reason IS NOT NULL`) — the multi-select
     // grid's own reason for disabling its checkbox.
     sampled: false,
+    // M25.1: the reason itself, beside the boolean. Null for a frame no pass
+    // has claimed, which is what `sampled: false` above means.
+    selection_reason: null,
     ...over,
   };
 }
@@ -372,7 +375,12 @@ describe("AdminVideoDetailPage", () => {
       // page a second query: a blanket mock answers `/api/admin/videos/{id}`
       // with a frame page, and the header's own parse failure is then the
       // only thing this test sees.
-      stubVideo({}, { images: [image({ sampled: true })] });
+      // `sampled: true` with a null reason is a state production cannot
+      // produce — the boolean *is* `selection_reason !== null` — so the
+      // fixture names a reason (M25.1). The subject here is still the
+      // disabled checkbox; the caption assertion follows the text the tile
+      // actually renders now.
+      stubVideo({}, { images: [image({ sampled: true, selection_reason: "random" })] });
 
       renderPage();
 
@@ -380,7 +388,7 @@ describe("AdminVideoDetailPage", () => {
         name: "select frame at 1s for prelabelling",
       });
       expect(selectCheckbox).toBeDisabled();
-      expect(screen.getByText("already sampled")).toBeInTheDocument();
+      expect(screen.getByText("sampled: random")).toBeInTheDocument();
     });
 
     it("queues a random draw with the typed count, distinct from the hand-picked request shape", async () => {
@@ -465,6 +473,98 @@ describe("AdminVideoDetailPage", () => {
 
       expect(await screen.findByText(/random draw → evaluation data/)).toBeInTheDocument();
       expect(screen.getByText(/pHash farthest-point → training data/)).toBeInTheDocument();
+    });
+
+    /**
+     * M25.1. The grid is the only surface that can answer "which frames did
+     * that diverse pass draw" — the verification queue orders by `images.id`
+     * globally, so a freshly stamped set can sit behind hundreds of unrelated
+     * frames and never come up.
+     */
+    describe("the selection_reason filter", () => {
+      it("names the reason on the tile rather than only that it was sampled", async () => {
+        stubVideo({}, { images: [image({ sampled: true, selection_reason: "diverse" })] });
+
+        renderPage();
+
+        expect(await screen.findByText("sampled: diverse")).toBeInTheDocument();
+      });
+
+      it("sends the chosen reason to the API", async () => {
+        const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url.includes("/images")) return Promise.resolve(json(page()));
+          if (url.startsWith("/api/admin/labelling/stats")) {
+            return Promise.resolve(json(labellingStats(7)));
+          }
+          if (url.startsWith("/api/admin/jobs")) return Promise.resolve(json({ now: 0, jobs: [] }));
+          return Promise.resolve(json(detail()));
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        renderPage();
+
+        const select = await screen.findByLabelText("Show");
+        fireEvent.change(select, { target: { value: "diverse" } });
+
+        await waitFor(() =>
+          expect(
+            fetchMock.mock.calls.some(([input]) =>
+              String(input).includes("selection_reason=diverse"),
+            ),
+          ).toBe(true),
+        );
+      });
+
+      // Page 12 of 600 sampled frames is past the end of a filtered set of
+      // 40, so keeping the offset would answer a filter click with an empty
+      // grid — which reads as a broken filter rather than an exhausted page.
+      it("resets to the first page when the filter changes", async () => {
+        const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url.includes("/images")) return Promise.resolve(json(page({ total: 200 })));
+          if (url.startsWith("/api/admin/labelling/stats")) {
+            return Promise.resolve(json(labellingStats(7)));
+          }
+          if (url.startsWith("/api/admin/jobs")) return Promise.resolve(json({ now: 0, jobs: [] }));
+          return Promise.resolve(json(detail()));
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        renderPage();
+
+        await userEvent.click(await screen.findByRole("button", { name: /next/i }));
+        await waitFor(() =>
+          expect(fetchMock.mock.calls.some(([input]) => String(input).includes("offset=24"))).toBe(
+            true,
+          ),
+        );
+
+        fireEvent.change(screen.getByLabelText("Show"), { target: { value: "diverse" } });
+
+        await waitFor(() =>
+          expect(
+            fetchMock.mock.calls.some(
+              ([input]) =>
+                String(input).includes("selection_reason=diverse") &&
+                String(input).includes("offset=0"),
+            ),
+          ).toBe(true),
+        );
+      });
+
+      // "No frames extracted for this video" is a claim about the video. An
+      // operator told that about a video holding 2,685 frames would go
+      // looking for a broken chunk job.
+      it("blames the filter, not the video, for an empty filtered grid", async () => {
+        stubVideo({}, { images: [], total: 0 });
+
+        renderPage();
+
+        fireEvent.change(await screen.findByLabelText("Show"), { target: { value: "diverse" } });
+
+        expect(await screen.findByText("No frames match this filter.")).toBeInTheDocument();
+      });
     });
 
     it("shows the verification pool's remaining count from labelling stats", async () => {

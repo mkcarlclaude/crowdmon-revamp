@@ -191,6 +191,128 @@ describe("GET /api/admin/videos/{id}/images", () => {
     expect(res.status).toBe(400);
   });
 
+  /**
+   * M25.1. The grid stopped being only a picker when M25's `diverse` draw made
+   * "which 400 frames did that pass take" a question worth asking — and the
+   * boolean `sampled` above cannot answer it. These tests are the answer.
+   */
+  describe("the selection_reason filter", () => {
+    async function seedReasons(videoId: string) {
+      await seedVideo(videoId);
+      const random = await seedImage(videoId, 1);
+      const diverse = await seedImage(videoId, 2);
+      const manual = await seedImage(videoId, 3);
+      const unsampled = await seedImage(videoId, 4);
+      for (const [id, reason] of [
+        [random, "random"],
+        [diverse, "diverse"],
+        [manual, "manual"],
+      ] as const) {
+        await env.DB.prepare("UPDATE images SET selection_reason = ? WHERE id = ?")
+          .bind(reason, id)
+          .run();
+      }
+      return { random, diverse, manual, unsampled };
+    }
+
+    it("carries the reason itself, not only the boolean", async () => {
+      const videoId = "dQw4w9WgXcQ";
+      await seedReasons(videoId);
+
+      const res = await listImages(videoId);
+      const body = (await res.json()) as {
+        images: Array<{ timestamp_seconds: number; selection_reason: string | null }>;
+      };
+
+      const byTimestamp = new Map(
+        body.images.map((i) => [i.timestamp_seconds, i.selection_reason]),
+      );
+      expect(byTimestamp.get(1)).toBe("random");
+      expect(byTimestamp.get(2)).toBe("diverse");
+      expect(byTimestamp.get(3)).toBe("manual");
+      expect(byTimestamp.get(4)).toBeNull();
+    });
+
+    it("returns only the frames one pass drew", async () => {
+      const videoId = "dQw4w9WgXcQ";
+      await seedReasons(videoId);
+
+      const res = await listImages(videoId, "?selection_reason=diverse");
+      const body = (await res.json()) as {
+        total: number;
+        images: Array<{ timestamp_seconds: number }>;
+      };
+
+      expect(body.images.map((i) => i.timestamp_seconds)).toEqual([2]);
+      expect(body.total).toBe(1);
+    });
+
+    // `selection_reason = NULL` is NULL rather than true, so a filter that
+    // bound the value through `=` would answer this — the filter an operator
+    // reaches for most — with a silently empty grid.
+    it("answers none with the frames no pass has claimed", async () => {
+      const videoId = "dQw4w9WgXcQ";
+      await seedReasons(videoId);
+
+      const res = await listImages(videoId, "?selection_reason=none");
+      const body = (await res.json()) as {
+        total: number;
+        images: Array<{ timestamp_seconds: number; selection_reason: string | null }>;
+      };
+
+      expect(body.images.map((i) => i.timestamp_seconds)).toEqual([4]);
+      expect(body.images[0]?.selection_reason).toBeNull();
+      expect(body.total).toBe(1);
+    });
+
+    // `total` drives the page controls. If it kept describing the whole video
+    // while `offset` paginated the filtered set, the grid would offer pages
+    // that do not exist and strand the operator on an empty screen.
+    it("counts the filtered set in total, not the whole video", async () => {
+      const videoId = "dQw4w9WgXcQ";
+      await seedVideo(videoId);
+      for (let t = 0; t < 6; t++) {
+        const id = await seedImage(videoId, t);
+        if (t < 2) {
+          await env.DB.prepare("UPDATE images SET selection_reason = 'diverse' WHERE id = ?")
+            .bind(id)
+            .run();
+        }
+      }
+
+      const res = await listImages(videoId, "?selection_reason=diverse&limit=1");
+      const body = (await res.json()) as { total: number; images: unknown[] };
+
+      expect(body.total).toBe(2);
+      expect(body.images).toHaveLength(1);
+    });
+
+    it("keeps the filter scoped to this video", async () => {
+      await seedReasons("videoA");
+      await seedReasons("videoB");
+
+      const res = await listImages("videoA", "?selection_reason=diverse");
+      const body = (await res.json()) as { total: number };
+
+      expect(body.total).toBe(1);
+    });
+
+    // The column is free text on purpose (migration 0001), so an unknown
+    // value is an empty page rather than a 400 — the day a fifth selector
+    // lands, this filter shows its output without a schema change.
+    it("answers an unknown reason with an empty page rather than an error", async () => {
+      const videoId = "dQw4w9WgXcQ";
+      await seedReasons(videoId);
+
+      const res = await listImages(videoId, "?selection_reason=uncertain");
+      const body = (await res.json()) as { total: number; images: unknown[] };
+
+      expect(res.status).toBe(200);
+      expect(body.total).toBe(0);
+      expect(body.images).toHaveLength(0);
+    });
+  });
+
   it("scopes to the requested video, not every video's frames", async () => {
     await seedVideo("videoA");
     await seedVideo("videoB");

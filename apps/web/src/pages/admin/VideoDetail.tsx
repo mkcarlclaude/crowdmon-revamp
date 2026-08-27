@@ -41,6 +41,28 @@ const DEFAULT_RANDOM_COUNT = 20;
 const DEFAULT_DIVERSE_COUNT = 400;
 
 /**
+ * The `selection_reason` values the grid filter offers (M25.1).
+ *
+ * A fixed list on a column that is deliberately free text (migration 0001),
+ * which is a knowing trade: these are the four values anything actually
+ * writes today, and a `<select>` is a better control for them than a text box
+ * an operator has to spell `diverse` into correctly. The API accepts any
+ * string, so a fifth selector is visible through the URL the day it lands and
+ * needs one line here to get a menu entry — the filter degrades to "not in
+ * the dropdown yet", not to "cannot be seen at all".
+ *
+ * `""` is "no filter" rather than a missing key, because a `<select>` always
+ * has a value and the empty string is the one an unset `<option>` carries.
+ */
+const REASON_FILTERS = [
+  { value: "", label: "All frames" },
+  { value: "diverse", label: "diverse → train" },
+  { value: "random", label: "random → eval" },
+  { value: "manual", label: "manual → train" },
+  { value: "none", label: "not yet sampled" },
+] as const;
+
+/**
  * `verdict_state`'s colour and label, reusing the same three hues `JobList`
  * already assigns per-status rather than inventing a fourth palette: "no
  * predictions" is a fact, not a warning, so it borrows the muted text
@@ -269,12 +291,17 @@ export function AdminVideoDetailPage() {
   const { id } = useParams<{ id: string }>();
   const videoId = id ?? "";
   const [offset, setOffset] = useState(0);
+  const [reasonFilter, setReasonFilter] = useState("");
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [randomCount, setRandomCount] = useState(DEFAULT_RANDOM_COUNT);
   const [diverseCount, setDiverseCount] = useState(DEFAULT_DIVERSE_COUNT);
 
   const detail = useAdminVideoDetail(videoId);
-  const images = useAdminVideoImages(videoId, { limit: PAGE_SIZE, offset });
+  const images = useAdminVideoImages(videoId, {
+    limit: PAGE_SIZE,
+    offset,
+    reason: reasonFilter || undefined,
+  });
   const setPublicSample = useSetPublicSample();
   const stats = useLabellingStats();
   const createPrelabel = useCreatePrelabel(videoId);
@@ -323,11 +350,42 @@ export function AdminVideoDetailPage() {
       )}
       {detail.data && <VideoHeader detail={detail.data} />}
 
-      {images.data && images.data.total > 0 && (
-        <p className="text-sm text-muted-foreground">
-          {offset + 1}–{Math.min(offset + PAGE_SIZE, images.data.total)} of {images.data.total}
-        </p>
-      )}
+      {/* M25.1. `diversifyUnsampled` below stamps 400 frames in one click and
+          the grid could not previously say which 400 — `selection_reason` was
+          flattened to a boolean on the wire, and the verification queue walks
+          `images.id` globally, so a freshly drawn set can sit behind hundreds
+          of unrelated frames and never surface. This filter is how an
+          operator looks at what a pass actually drew.
+
+          Resetting `offset` on change is load-bearing, not tidiness: page 12
+          of 600 sampled frames is past the end of a filtered set of 40, and
+          keeping the offset would answer a filter click with an empty grid —
+          which reads as "the filter is broken". */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="reason-filter" className="text-sm text-muted-foreground">
+          Show
+        </label>
+        <select
+          id="reason-filter"
+          value={reasonFilter}
+          onChange={(event) => {
+            setReasonFilter(event.target.value);
+            setOffset(0);
+          }}
+          className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+        >
+          {REASON_FILTERS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        {images.data && images.data.total > 0 && (
+          <p className="text-sm text-muted-foreground">
+            {offset + 1}–{Math.min(offset + PAGE_SIZE, images.data.total)} of {images.data.total}
+          </p>
+        )}
+      </div>
 
       <div className="flex flex-wrap items-start justify-between gap-4 rounded-lg border border-border bg-card p-3">
         {/* `pool.images_remaining` is `labellingStatsHandler`'s own drain-and-
@@ -459,8 +517,17 @@ export function AdminVideoDetailPage() {
           {images.error.message}
         </p>
       )}
+      {/* Two different facts, and conflating them would be a real
+          misreport: "no frames extracted" is a claim about the video, and
+          after M25.1 an empty grid is far more often a claim about the
+          filter. An operator told the video has no frames when it has 2,685
+          of them would go looking for a broken chunk job. */}
       {images.data && images.data.images.length === 0 && (
-        <p className="text-sm text-muted-foreground">No frames extracted for this video yet.</p>
+        <p className="text-sm text-muted-foreground">
+          {reasonFilter
+            ? "No frames match this filter."
+            : "No frames extracted for this video yet."}
+        </p>
       )}
 
       {images.data && images.data.images.length > 0 && (
@@ -508,9 +575,15 @@ export function AdminVideoDetailPage() {
                   </Badge>
                 </div>
                 <div className="flex items-center justify-between gap-2">
+                  {/* Names the reason rather than the bare fact of having
+                      been sampled (M25.1). "already sampled" answered the
+                      question this grid asked when it was only a picker; once
+                      two selectors write to opposite sides of the train/eval
+                      line, which one took this frame is the thing an operator
+                      is actually looking for. */}
                   <span className="text-muted-foreground">
-                    {image.sampled
-                      ? "already sampled"
+                    {image.selection_reason
+                      ? `sampled: ${image.selection_reason}`
                       : `${image.predictions} ${image.predictions === 1 ? "prediction" : "predictions"}`}
                   </span>
                   {/* Same shape as `LabellingSession`'s own public-sample

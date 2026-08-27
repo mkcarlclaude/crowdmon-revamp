@@ -2228,9 +2228,30 @@ export const AdminVideoIdParam = z.object({
     .openapi({ param: { name: "id", in: "path" }, example: "dQw4w9WgXcQ" }),
 });
 
+/**
+ * `selection_reason` filters the grid to one slice of a video's frames — the
+ * four values `images.selection_reason` can actually hold, plus `none` for
+ * the frames no pass has claimed yet.
+ *
+ * A string rather than a `z.enum` of the real values, because
+ * `images.selection_reason` is deliberately free text (migration 0001's own
+ * comment: so a future selector needs no migration to introduce). Closing it
+ * here would mean the day a fifth selector lands, this filter silently
+ * refuses to show its output — and a screen that cannot display a category is
+ * worse than one that shows an empty page for a typo. `none` is the one
+ * reserved word, because SQL cannot bind NULL through an `=`.
+ */
+const selectionReasonParam = z
+  .string()
+  .min(1)
+  .max(50)
+  .optional()
+  .openapi({ param: { name: "selection_reason", in: "query" }, example: "diverse" });
+
 export const AdminVideoImagesQuery = z.object({
   limit: limitParam,
   offset: offsetParam,
+  selection_reason: selectionReasonParam,
 });
 
 /**
@@ -2251,10 +2272,28 @@ export const AdminVideoImagesQuery = z.object({
  * predicate `createPrelabelHandler` refuses a hand-picked selection against.
  * Added so the grid this route feeds can grey out — rather than let an
  * operator pick, and then learn from a 400 — a frame some earlier pass
- * already claimed. Deliberately a boolean, not the reason itself: which
- * value it was sampled *as* (`random` vs `manual`) is a fact about the split
- * a snapshot will use, not something this screen's selection UI has any
- * decision to make differently for.
+ * already claimed.
+ *
+ * **`selection_reason` is beside it as of M25.1, and the comment it replaces
+ * argued against exactly this.** That comment read: "Deliberately a boolean,
+ * not the reason itself: which value it was sampled *as* (`random` vs
+ * `manual`) is a fact about the split a snapshot will use, not something this
+ * screen's selection UI has any decision to make differently for." True while
+ * both non-null values meant "an earlier pass took this" and nothing else.
+ * M25 broke that premise: `diverse` and `random` are drawn by different rules
+ * and land on opposite sides of the train/eval line, so "which 400 frames did
+ * that diverse pass actually pick" became a question an operator has to be
+ * able to ask — and with the boolean it could only be answered by exporting
+ * the database. `sampled` stays rather than being derived client-side from
+ * the new field: it is what the grid's checkbox disabling reads, and that is
+ * a different question ("may I pick this?") from the new one ("how did this
+ * get here?").
+ *
+ * **Not carried into the verification UI, deliberately.** An annotator who
+ * can see that a frame belongs to the frozen evaluation pool is an annotator
+ * who can rule on eval differently from train, which is the exact bias
+ * CONTEXT.md §Q16 freezes the pool to prevent. This is an inspection surface
+ * for a grid nobody rules from, and it should stay one.
  */
 const AdminVideoImage = z
   .object({
@@ -2275,14 +2314,25 @@ const AdminVideoImage = z
       .enum(["no_predictions", "unverified", "verified"])
       .openapi({ example: "unverified" }),
     sampled: z.boolean().openapi({ example: false }),
+    // Null for a frame no pass has claimed. Free text on the wire because it
+    // is free text in the column (migration 0001) — a client rendering an
+    // unfamiliar value verbatim is the correct behaviour for a vocabulary
+    // that is meant to grow.
+    selection_reason: z.string().nullable().openapi({ example: "diverse" }),
   })
   .openapi("AdminVideoImage");
 
 /**
  * Named `AdminVideoImages`, not after the `listAdminVideoImages` operation,
- * matching `VideoImages` above. `total` is the video's whole frame count —
- * unbounded by `limit` — so the grid can render "1–50 of 2,685" without a
- * second request; `images` is the one page `limit`/`offset` selected.
+ * matching `VideoImages` above. `total` is the frame count the *current
+ * filter* admits — unbounded by `limit`, so the grid can render "1–50 of
+ * 2,685" without a second request; `images` is the one page `limit`/`offset`
+ * selected.
+ *
+ * It follows `selection_reason` (M25.1) rather than staying the video's whole
+ * count, and it has to: `offset` paginates the filtered set, so a `total`
+ * describing a larger set would render page controls for pages that do not
+ * exist and strand the operator on an empty grid.
  */
 export const AdminVideoImages = z
   .object({

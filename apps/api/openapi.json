@@ -1665,6 +1665,11 @@
           "sampled": {
             "type": "boolean",
             "example": false
+          },
+          "selection_reason": {
+            "type": "string",
+            "nullable": true,
+            "example": "diverse"
           }
         },
         "required": [
@@ -1675,7 +1680,8 @@
           "public_sample",
           "predictions",
           "verdict_state",
-          "sampled"
+          "sampled",
+          "selection_reason"
         ]
       },
       "AdminVideoDetail": {
@@ -4393,7 +4399,7 @@
           "admin"
         ],
         "summary": "One video's frames, with prediction counts and verdict state",
-        "description": "Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.",
+        "description": "Every `images` row for this video, oldest timestamp first, with how many predictions each carries and whether an admin has ruled on all of them. Unlike `listVideoImages` (`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id that does not exist: an empty page is the honest answer, the same choice `listDryRuns` makes for an unknown class. `selection_reason` filters to one slice — any value the column holds (`random`, `manual`, `diverse`), or `none` for frames no pass has claimed; `total` follows the filter so pagination stays correct. Requires a Cloudflare Access assertion.",
         "parameters": [
           {
             "schema": {
@@ -4421,6 +4427,17 @@
             },
             "required": false,
             "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 50,
+              "example": "diverse"
+            },
+            "required": false,
+            "name": "selection_reason",
             "in": "query"
           }
         ],
