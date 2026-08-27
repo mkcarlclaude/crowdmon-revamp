@@ -56,14 +56,15 @@ describe("Home", () => {
 
   it("keeps the anonymous demo reachable and honestly labelled as a demo", () => {
     renderHome();
-    // Every link to /verify says "demo" somewhere in its own text — a
-    // visitor should never discover only after signing up that what they
-    // already clicked through did not count (plan §A3).
-    const verifyLinks = screen
+    // Every link to /demo (renamed from /verify in M24, plan §B) says "demo"
+    // somewhere in its own text — a visitor should never discover only
+    // after signing up that what they already clicked through did not
+    // count (plan §A3).
+    const demoLinks = screen
       .getAllByRole("link")
-      .filter((el) => el.getAttribute("href") === "/verify");
-    expect(verifyLinks.length).toBeGreaterThan(0);
-    for (const link of verifyLinks) {
+      .filter((el) => el.getAttribute("href") === "/demo");
+    expect(demoLinks.length).toBeGreaterThan(0);
+    for (const link of demoLinks) {
       expect(link.textContent?.toLowerCase()).toMatch(/demo/);
     }
   });

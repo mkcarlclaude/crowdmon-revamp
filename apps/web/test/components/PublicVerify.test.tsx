@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -122,7 +122,10 @@ describe("PublicVerify", () => {
     render(wrap(<PublicVerify />));
 
     await screen.findByRole("img");
-    expect(screen.getByText("Paimon")).toBeInTheDocument();
+    // M24, plan §A2: the desktop panel repeats the same claim beside the
+    // rectangle it belongs to, so this scopes to the tag riding on the box
+    // rather than asserting there is exactly one "Paimon" on the page.
+    expect(within(screen.getByTestId("active-tag")).getByText("Paimon")).toBeInTheDocument();
     expect(screen.queryByText("Raiden Shogun")).not.toBeInTheDocument();
   });
 

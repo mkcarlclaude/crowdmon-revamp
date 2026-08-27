@@ -24,6 +24,14 @@ import { useNoindex } from "../hooks/use-noindex";
  * challenge is surfaced that this milestone does not settle — see the PR
  * body. A visitor who lands here signed out gets a working link, not a
  * silently broken page.
+ *
+ * **Wider than a text column, on purpose (M24, plan §C).** `ContributeVerify`
+ * now renders `SwipeCard`, which grows a second column at `lg:` (plan §A2) —
+ * a `max-w-2xl` reading-width container would starve that column down to
+ * nothing before the frame ever reached its own 720px cap. `max-w-[1200px]`
+ * matches the swipe surface's own internal cap (`SwipeCard.tsx`), so the
+ * header and trust copy above it just read a little wider than they used to
+ * rather than fighting the widget for room.
  */
 export function Contribute() {
   // A signed-in personal surface, same reasoning as `/admin` — never meant
@@ -57,35 +65,42 @@ export function Contribute() {
   const { data } = me;
 
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-6 p-8">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-semibold">Contribute</h1>
-          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Signed in as {data.display_name ?? data.email}.
-          </p>
+    <main className="mx-auto flex max-w-[1200px] flex-col gap-6 p-8">
+      {/* Kept at reading width even though the `<main>` around it now isn't
+          (M24, plan §C) — `ContributeVerify` below needs the room its own
+          two-column layout grows into at `lg:`, but a name, a count and a
+          sentence do not, and stretching them across 1200px would just make
+          them harder to read. */}
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h1 className="text-2xl font-semibold">Contribute</h1>
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+              Signed in as {data.display_name ?? data.email}.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={logout.isPending}
+            onClick={() => logout.mutate()}
+            className="rounded border border-[var(--color-border)] px-3 py-1 text-sm disabled:opacity-50"
+          >
+            {logout.isPending ? "Signing out…" : "Sign out"}
+          </button>
         </div>
-        <button
-          type="button"
-          disabled={logout.isPending}
-          onClick={() => logout.mutate()}
-          className="rounded border border-[var(--color-border)] px-3 py-1 text-sm disabled:opacity-50"
-        >
-          {logout.isPending ? "Signing out…" : "Sign out"}
-        </button>
-      </div>
 
-      {/* Honest about `trusted` rather than showing a bare count that implies
-          more than it means (plan §B5) — a contributor whose verdicts are
-          recorded but not yet promoted has no way to tell from the numbers
-          alone whether any of it is a label yet. */}
-      <p className="text-sm text-[var(--color-text-muted)]">
-        {data.frames_touched} frames · {data.verdicts.accept} accepted, {data.verdicts.adjust}{" "}
-        adjusted, {data.verdicts.reject} rejected.{" "}
-        {data.trusted
-          ? "Your verdicts can be selected as labels."
-          : "Recorded, but not yet trusted — an admin promotes accounts before their verdicts can be selected as labels."}
-      </p>
+        {/* Honest about `trusted` rather than showing a bare count that implies
+            more than it means (plan §B5) — a contributor whose verdicts are
+            recorded but not yet promoted has no way to tell from the numbers
+            alone whether any of it is a label yet. */}
+        <p className="text-sm text-[var(--color-text-muted)]">
+          {data.frames_touched} frames · {data.verdicts.accept} accepted, {data.verdicts.adjust}{" "}
+          adjusted, {data.verdicts.reject} rejected.{" "}
+          {data.trusted
+            ? "Your verdicts can be selected as labels."
+            : "Recorded, but not yet trusted — an admin promotes accounts before their verdicts can be selected as labels."}
+        </p>
+      </div>
 
       <ContributeVerify />
     </main>

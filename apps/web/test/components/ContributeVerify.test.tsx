@@ -6,14 +6,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContributeVerify } from "../../src/components/ContributeVerify";
 
 /**
- * The contributor mount (M20, plan §B4).
+ * The contributor mount (M20; rebuilt on `SwipeCard` in M24, plan §C).
  *
- * Mirrors `LabellingSession.test.tsx`'s own shape — same batch-walking
- * component, a different endpoint and a different `source` the mount never
- * has to know about (`VerificationCard`'s own "no endpoint knowledge"
- * design, M13.1). What is specific to this mount and worth its own
- * assertion: it posts to `/api/contribute/*`, not `/api/admin/*`, and it
- * offers Adjust — the one capability the anonymous mount refuses.
+ * What is specific to this mount, beyond what `PublicVerify.test.tsx` and
+ * `SwipeCard.test.tsx` already prove about the swipe interaction itself:
+ * that it posts to `/api/contribute/*`, not `/api/admin/*` or
+ * `/api/public/*`; that **adjust is gone** (M24 §C1, reversing M20 plan
+ * §B4 — `VerificationCard.test.tsx`'s own "offers Adjust" assertion no
+ * longer applies to this mount at all); that it walks a 20-frame batch one
+ * frame at a time rather than fetching per frame; and that the M23
+ * guarantees (one request per completed frame, never one per swipe) hold
+ * here exactly as they do on `/demo`.
  */
 
 function wrap(ui: ReactNode) {
@@ -28,7 +31,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const box = (id: number) => ({
+const box = (id: number, over: Record<string, unknown> = {}) => ({
   id,
   class_id: 3,
   class_name: "Paimon",
@@ -39,6 +42,7 @@ const box = (id: number) => ({
   confidence: 0.87,
   prompt_version: "2026-08-08-a",
   model_id: "owlvit-base-patch32.onnx",
+  ...over,
 });
 
 const image = (id: number, boxes = [box(id * 10)]) => ({
@@ -84,32 +88,74 @@ function stubApi({
   return fetchMock;
 }
 
+const postsTo = (fetchMock: ReturnType<typeof stubApi>) =>
+  fetchMock.mock.calls
+    .filter(([, init]) => (init as RequestInit | undefined)?.method === "POST")
+    .map(([url, init]) => [url, JSON.parse(((init as RequestInit).body as string) ?? "null")]);
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ContributeVerify", () => {
-  it("offers Adjust, unlike the anonymous mount", async () => {
+  it("offers no Adjust control — M24 §C1 dropped it, admin keeps it on /admin/verify", async () => {
     stubApi();
 
     render(wrap(<ContributeVerify />));
     await screen.findByRole("img");
 
-    expect(screen.getByRole("button", { name: /adjust paimon/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /adjust/i })).not.toBeInTheDocument();
   });
 
-  it("posts a ruling to /api/contribute, not /api/admin or /api/public", async () => {
-    const fetchMock = stubApi();
+  it("a completed frame posts once to /api/contribute, not /api/admin or /api/public", async () => {
+    const fetchMock = stubApi({ batches: [batch({ images: [image(1, [box(10), box(11)])] })] });
 
     render(wrap(<ContributeVerify />));
-    await userEvent.click(await screen.findByRole("button", { name: /accept paimon/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
+    await screen.findByRole("img");
 
-    await waitFor(() => {
-      const posts = fetchMock.mock.calls.filter(
-        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
-      );
-      expect(posts).toHaveLength(1);
-      expect(posts[0]?.[0]).toBe("/api/contribute/images/1/verdicts");
+    await userEvent.click(screen.getByRole("button", { name: /^yes/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^no/i }));
+
+    await waitFor(() =>
+      expect(postsTo(fetchMock)).toEqual([
+        [
+          "/api/contribute/images/1/verdicts",
+          {
+            verdicts: [
+              { prediction_id: 10, verdict: "accept" },
+              { prediction_id: 11, verdict: "reject" },
+            ],
+          },
+        ],
+      ]),
+    );
+
+    // Two boxes ruled is two button presses, not two requests — the same
+    // exactly-once guarantee `PublicVerify.test.tsx` proves for `/demo`.
+    const postCount = fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+    ).length;
+    expect(postCount).toBe(1);
+  });
+
+  it("walks the batch one frame at a time, client-side, with no request between frames", async () => {
+    const fetchMock = stubApi({
+      batches: [batch({ images: [image(1), image(2)], remaining: 2 })],
     });
+
+    render(wrap(<ContributeVerify />));
+    await screen.findByRole("img");
+    expect(screen.getByRole("img")).toHaveAttribute("src", image(1).url);
+
+    await userEvent.click(screen.getByRole("button", { name: /^yes/i }));
+
+    await waitFor(() => expect(screen.getByRole("img")).toHaveAttribute("src", image(2).url));
+
+    // Advancing within an already-fetched batch is local state — only the
+    // one initial batch fetch and the one verdict POST should have reached
+    // the network (plan §C2's "no prefetch is needed").
+    const batchRequests = fetchMock.mock.calls.filter(([url]) =>
+      (url as string).startsWith("/api/contribute/batch"),
+    );
+    expect(batchRequests).toHaveLength(1);
   });
 
   it("shows the next batch once the current one is finished, and 'nothing left' once the pool is empty", async () => {
@@ -118,11 +164,56 @@ describe("ContributeVerify", () => {
     });
 
     render(wrap(<ContributeVerify />));
-    await userEvent.click(await screen.findByRole("button", { name: /accept paimon/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^submit/i }));
+    await screen.findByRole("img");
+
+    await userEvent.click(screen.getByRole("button", { name: /^yes/i }));
 
     await userEvent.click(await screen.findByRole("button", { name: /check again|next batch/i }));
 
     expect(await screen.findByText(/nothing left to verify/i)).toBeInTheDocument();
+  });
+
+  describe("the M23 guarantees hold on this mount too", () => {
+    /** The whole-stage swipe surface — the element carrying the pointer handlers. */
+    function stageSurface() {
+      const img = screen.getByRole("img");
+      const stage = img.parentElement?.parentElement as HTMLElement;
+      stage.setPointerCapture = vi.fn();
+      stage.hasPointerCapture = () => false;
+      stage.releasePointerCapture = vi.fn();
+      return stage;
+    }
+
+    async function swipe(stage: HTMLElement, points: Array<{ x: number; y: number }>) {
+      const [first, ...rest] = points;
+      if (!first) throw new Error("swipe() needs at least one point");
+      await userEvent.pointer([
+        { target: stage, coords: { clientX: first.x, clientY: first.y }, keys: "[MouseLeft>]" },
+        ...rest.map((p) => ({ target: stage, coords: { clientX: p.x, clientY: p.y } })),
+        { target: stage, keys: "[/MouseLeft]" },
+      ]);
+    }
+
+    it("a gesture arcing ~52° off horizontal at its lock point still rules, once it clears the threshold", async () => {
+      const fetchMock = stubApi();
+      render(wrap(<ContributeVerify />));
+      await screen.findByRole("img");
+      const stage = stageSurface();
+
+      await swipe(stage, [
+        { x: 100, y: 100 }, // pointerdown
+        { x: 110, y: 113 }, // +10,+13 — the steep early sample that decides the axis
+        { x: 195, y: 130 }, // net dx=95 (past 72px), still well off a straight line
+      ]);
+
+      await waitFor(() =>
+        expect(postsTo(fetchMock)).toEqual([
+          [
+            "/api/contribute/images/1/verdicts",
+            { verdicts: [{ prediction_id: 10, verdict: "accept" }] },
+          ],
+        ]),
+      );
+    });
   });
 });
