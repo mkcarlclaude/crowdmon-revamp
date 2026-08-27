@@ -29,6 +29,15 @@ import {
  * needs to see which frames an earlier pass already claimed before picking
  * more, not learn it from a 400 after clicking.
  *
+ * **The `selection_reason` filter (M25.1) is what makes this screen an
+ * inspection surface and not just a picker.** M25's `diverse` draw stamps 400
+ * frames in one click, and before this filter existed there was no way to see
+ * which 400 — the grid flattened the column to a boolean, and the queue that
+ * serves frames for verification walks `images.id` globally, so a freshly
+ * drawn set could sit behind hundreds of unrelated frames and never surface.
+ * The only answer was to export the database. `?selection_reason=diverse` is
+ * that answer as a screen.
+ *
  * `verdict_state` exists because a prediction count alone cannot tell "the
  * detector found nothing here" apart from "the detector found three boxes and
  * nobody has looked at them yet" — the first needs no operator attention, the
@@ -66,6 +75,31 @@ function verdictState(
   return unruled > 0 ? "unverified" : "verified";
 }
 
+/**
+ * The value `selection_reason=` takes to mean "no pass has claimed this
+ * frame". Reserved rather than free, and the one string an operator can never
+ * use as a real selector name.
+ */
+const UNSAMPLED = "none";
+
+/**
+ * The `selection_reason` filter as a SQL fragment and its bound parameters,
+ * so the count and the page statements share one definition of what is being
+ * filtered rather than two that can drift.
+ *
+ * Returns a fragment that begins with ` AND` (or is empty), meant to be
+ * appended to an existing `WHERE i.video_id = ?`. That shape rather than a
+ * standalone predicate because both callers already have that first
+ * condition and neither can ever omit it — this route is per-video by
+ * definition, and a fragment that could be used without it would be a
+ * fragment that could accidentally read another video's frames.
+ */
+function reasonFilter(reason: string | undefined): { clause: string; params: string[] } {
+  if (reason === undefined) return { clause: "", params: [] };
+  if (reason === UNSAMPLED) return { clause: " AND i.selection_reason IS NULL", params: [] };
+  return { clause: " AND i.selection_reason = ?", params: [reason] };
+}
+
 /** The shape D1 returns for the join in `listAdminVideoImages`. */
 interface AdminVideoImageRow {
   id: number;
@@ -89,7 +123,10 @@ export const listAdminVideoImagesRoute = createRoute({
     "(`/api/videos/{video_id}/images`), this route needs no worker lease — it is a browser " +
     "read behind Cloudflare Access, not a sampler's candidate pool. No 404 for a video id " +
     "that does not exist: an empty page is the honest answer, the same choice " +
-    "`listDryRuns` makes for an unknown class. Requires a Cloudflare Access assertion.",
+    "`listDryRuns` makes for an unknown class. `selection_reason` filters to one slice — " +
+    "any value the column holds (`random`, `manual`, `diverse`), or `none` for frames no " +
+    "pass has claimed; `total` follows the filter so pagination stays correct. " +
+    "Requires a Cloudflare Access assertion.",
   request: { params: AdminVideoIdParam, query: AdminVideoImagesQuery },
   responses: {
     200: {
@@ -108,7 +145,20 @@ export const listAdminVideoImagesHandler: RouteHandler<
   AppEnv
 > = async (c) => {
   const { id } = c.req.valid("param");
-  const { limit, offset } = c.req.valid("query");
+  const { limit, offset, selection_reason: reason } = c.req.valid("query");
+
+  // The filter is one SQL fragment and one bound-parameter list, built once
+  // and spliced into both statements below, so the count and the page can
+  // never disagree about what they are describing — a `total` computed over a
+  // wider set than the page would render page controls for pages that do not
+  // exist.
+  //
+  // `none` is a reserved value rather than another `= ?`, because SQL has no
+  // way to match NULL through equality: `selection_reason = NULL` is NULL,
+  // which is not true, so binding it would silently return an empty grid for
+  // the one filter an operator reaches for most (`which frames are still
+  // free to sample?`).
+  const { clause, params } = reasonFilter(reason);
 
   // Two statements in one batch rather than a single query with a window
   // function: D1 is SQLite, which has no cheap "total rows regardless of
@@ -116,7 +166,10 @@ export const listAdminVideoImagesHandler: RouteHandler<
   // just runs that second pass explicitly instead of pretending one query
   // could do it.
   const [totalResult, pageResult] = await c.env.DB.batch<{ total: number } | AdminVideoImageRow>([
-    c.env.DB.prepare("SELECT COUNT(*) AS total FROM images WHERE video_id = ?").bind(id),
+    c.env.DB.prepare(`SELECT COUNT(*) AS total FROM images i WHERE i.video_id = ?${clause}`).bind(
+      id,
+      ...params,
+    ),
     c.env.DB.prepare(
       `SELECT i.id, i.r2_key, i.timestamp_seconds, i.public_sample, i.selection_reason,
               (SELECT COUNT(*) FROM predictions p WHERE p.image_id = i.id) AS predictions,
@@ -127,10 +180,10 @@ export const listAdminVideoImagesHandler: RouteHandler<
                           WHERE v.prediction_id = p.id AND v.source = 'admin')
               ) AS unruled
          FROM images i
-        WHERE i.video_id = ?
+        WHERE i.video_id = ?${clause}
         ORDER BY i.timestamp_seconds
         LIMIT ? OFFSET ?`,
-    ).bind(id, limit ?? ADMIN_PAGE_LIMIT_DEFAULT, offset ?? 0),
+    ).bind(id, ...params, limit ?? ADMIN_PAGE_LIMIT_DEFAULT, offset ?? 0),
   ]);
 
   const total = (totalResult?.results[0] as { total: number } | undefined)?.total ?? 0;
@@ -160,6 +213,7 @@ export const listAdminVideoImagesHandler: RouteHandler<
         predictions: row.predictions,
         verdict_state: verdictState(row.predictions, row.unruled),
         sampled: row.selection_reason !== null,
+        selection_reason: row.selection_reason,
       })),
       url_mode: mode,
       expires_at: expiresAt,

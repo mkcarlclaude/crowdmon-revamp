@@ -505,9 +505,22 @@ export function useCreateSnapshot() {
 
 export const adminVideoImagesKeyPrefix = ["admin", "video-images"] as const;
 
-/** One page of one video's frames, so two pages of the same video get their own cache entry. */
-export const adminVideoImagesKey = (videoId: string, limit: number, offset: number) =>
-  [...adminVideoImagesKeyPrefix, videoId, limit, offset] as const;
+/**
+ * One page of one video's frames, so two pages of the same video get their own
+ * cache entry.
+ *
+ * `reason` is part of the key (M25.1), not merely part of the URL: two
+ * filters over the same video at the same offset are two different pages, and
+ * omitting it would serve the unfiltered page from cache the instant an
+ * operator picks a filter — the failure would look like "the filter does
+ * nothing", which is the hardest kind to attribute.
+ */
+export const adminVideoImagesKey = (
+  videoId: string,
+  limit: number,
+  offset: number,
+  reason?: string,
+) => [...adminVideoImagesKeyPrefix, videoId, limit, offset, reason ?? null] as const;
 
 /**
  * One video's frames, with prediction counts and verdict state, paginated
@@ -527,15 +540,22 @@ export const adminVideoImagesKey = (videoId: string, limit: number, offset: numb
  */
 export function useAdminVideoImages(
   videoId: string,
-  { limit, offset }: { limit: number; offset: number },
+  { limit, offset, reason }: { limit: number; offset: number; reason?: string },
 ) {
   return useQuery({
-    queryKey: adminVideoImagesKey(videoId, limit, offset),
-    queryFn: () =>
-      apiFetch(
-        `/api/admin/videos/${encodeURIComponent(videoId)}/images?limit=${limit}&offset=${offset}`,
+    queryKey: adminVideoImagesKey(videoId, limit, offset, reason),
+    queryFn: () => {
+      // Built with `URLSearchParams` rather than string concatenation now
+      // that a caller-supplied value goes into the query string: a reason is
+      // free text on the wire (the column is free text in D1), so it has to
+      // be escaped rather than trusted to be URL-safe.
+      const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+      if (reason) query.set("selection_reason", reason);
+      return apiFetch(
+        `/api/admin/videos/${encodeURIComponent(videoId)}/images?${query}`,
         AdminVideoImages,
-      ),
+      );
+    },
     enabled: Boolean(videoId),
   });
 }
