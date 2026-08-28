@@ -2799,3 +2799,64 @@ export const GroundTruthPool = z
     total: z.int().nonnegative().openapi({ example: 95 }),
   })
   .openapi("GroundTruthPool");
+
+/**
+ * `GET /api/admin/eval-source`'s payload (#177, M26.3) — everything
+ * `worker/cmd/eval` scores: the frozen pool's ground truth, model-
+ * independent, and the predictions being measured against it, with
+ * confidence.
+ *
+ * Deliberately not the existing `snapshotSourceRoute` extended, and not the
+ * manifest `snapshot`s write to R2. That endpoint's labels are
+ * `WINNING_VERDICT`-derived (`routes/jobs.ts`) — a subset of the detector's
+ * own output, which is exactly the bias this milestone exists to remove —
+ * and it is also the one path `worker/cmd/snapshot` uses to build *training*
+ * datasets. Widening it to carry ground truth and refuse on incomplete
+ * annotation would mean an unrelated training-snapshot rebuild starts
+ * failing because the eval pool's labelling sitting is not finished, which
+ * couples two things that do not need to be coupled — and the M26 plan is
+ * explicit that touching how the train split's labels are derived is out of
+ * scope. This route reads only `ground_truth`, `ground_truth_exhaustive` and
+ * `predictions`, restricted to the frozen pool and to active classes, and
+ * `snapshotSourceHandler`'s own query is untouched by its existence.
+ *
+ * `class_name` rides on every box rather than a top-level roster the boxes
+ * index into, `ProposedBox`'s own reason: the scorer groups by class on its
+ * own and a second lookup structure buys nothing a Go binary needs.
+ */
+const EvalSourceBox = z
+  .object({
+    class_name: z.string().openapi({ example: "Paimon" }),
+    x_min: z.number().openapi({ example: 0.12 }),
+    y_min: z.number().openapi({ example: 0.2 }),
+    x_max: z.number().openapi({ example: 0.5 }),
+    y_max: z.number().openapi({ example: 0.6 }),
+  })
+  .openapi("EvalSourceBox");
+
+const EvalSourcePrediction = EvalSourceBox.extend({
+  confidence: z.number().min(0).max(1).openapi({ example: 0.14 }),
+}).openapi("EvalSourcePrediction");
+
+const EvalSourceImage = z
+  .object({
+    image_id: z.int().positive().openapi({ example: 7 }),
+    predictions: z.array(EvalSourcePrediction),
+    ground_truth: z.array(EvalSourceBox),
+  })
+  .openapi("EvalSourceImage");
+
+/**
+ * The whole frozen pool, restricted to active classes — every image
+ * `selection_reason = 'random'` names, whether or not it carries any boxes
+ * at all. A ground-truth-empty, exhaustively-marked image is a legitimate
+ * "nothing here" (migration 0014's own reasoning) and stays in the set, not
+ * because it has something to score but because a scorer computing recall
+ * needs the true negative in its denominator as much as it needs every
+ * positive.
+ */
+export const EvalSource = z
+  .object({
+    images: z.array(EvalSourceImage),
+  })
+  .openapi("EvalSource");

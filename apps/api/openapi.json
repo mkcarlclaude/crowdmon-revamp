@@ -3022,6 +3022,101 @@
           "ground_truth_count",
           "classes"
         ]
+      },
+      "EvalSource": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalSourceImage"
+            }
+          }
+        },
+        "required": [
+          "images"
+        ]
+      },
+      "EvalSourceImage": {
+        "type": "object",
+        "properties": {
+          "image_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalSourcePrediction"
+            }
+          },
+          "ground_truth": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalSourceBox"
+            }
+          }
+        },
+        "required": [
+          "image_id",
+          "predictions",
+          "ground_truth"
+        ]
+      },
+      "EvalSourcePrediction": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EvalSourceBox"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "example": 0.14
+              }
+            },
+            "required": [
+              "confidence"
+            ]
+          }
+        ]
+      },
+      "EvalSourceBox": {
+        "type": "object",
+        "properties": {
+          "class_name": {
+            "type": "string",
+            "example": "Paimon"
+          },
+          "x_min": {
+            "type": "number",
+            "example": 0.12
+          },
+          "y_min": {
+            "type": "number",
+            "example": 0.2
+          },
+          "x_max": {
+            "type": "number",
+            "example": 0.5
+          },
+          "y_max": {
+            "type": "number",
+            "example": 0.6
+          }
+        },
+        "required": [
+          "class_name",
+          "x_min",
+          "y_min",
+          "x_max",
+          "y_max"
+        ]
       }
     },
     "parameters": {}
@@ -6342,6 +6437,68 @@
           },
           "403": {
             "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/eval-source": {
+      "get": {
+        "operationId": "getEvalSource",
+        "tags": [
+          "admin"
+        ],
+        "summary": "The frozen pool's ground truth and predictions, for the scorer",
+        "description": "Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.",
+        "responses": {
+          "200": {
+            "description": "The eval pool's ground truth and predictions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "At least one active class is not yet marked exhaustively annotated on at least one pool image — named in the message, up to a limit",
             "content": {
               "application/json": {
                 "schema": {

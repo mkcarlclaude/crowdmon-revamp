@@ -1043,6 +1043,59 @@ type ErrorResponse struct {
 	Issues *[]ValidationIssue `json:"issues,omitempty"`
 }
 
+// EvalSource defines model for EvalSource.
+type EvalSource struct {
+	Images []EvalSourceImage `json:"images"`
+}
+
+// EvalSourceBox defines model for EvalSourceBox.
+type EvalSourceBox struct {
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
+}
+
+// EvalSourceImage defines model for EvalSourceImage.
+type EvalSourceImage struct {
+	GroundTruth []EvalSourceBox `json:"ground_truth"`
+
+	// ImageId Example: 7
+	ImageId     int                    `json:"image_id"`
+	Predictions []EvalSourcePrediction `json:"predictions"`
+}
+
+// EvalSourcePrediction defines model for EvalSourcePrediction.
+type EvalSourcePrediction struct {
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// Confidence Example: 0.14
+	Confidence float32 `json:"confidence"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
+}
+
 // FanOutRequest defines model for FanOutRequest.
 type FanOutRequest struct {
 	// DurationSeconds Example: 1200
@@ -2040,6 +2093,13 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
 	ListDryRuns(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetEvalSource The frozen pool's ground truth and predictions, for the scorer
+	//
+	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/eval-source (the `GetEvalSource` operationId).
+	GetEvalSource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListGroundTruthPool The frozen evaluation pool, as an annotation worklist
 	//
 	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
@@ -2668,6 +2728,23 @@ func (c *Client) CreateDryRun(ctx context.Context, id int, body CreateDryRunJSON
 // Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
 func (c *Client) ListDryRuns(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListDryRunsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetEvalSource The frozen pool's ground truth and predictions, for the scorer
+//
+// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/eval-source (the `GetEvalSource` operationId).
+func (c *Client) GetEvalSource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEvalSourceRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -3989,6 +4066,33 @@ func NewListDryRunsRequest(server string, id int, params *ListDryRunsParams) (*h
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
 		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetEvalSourceRequest constructs an http.Request for the GetEvalSource method
+func NewGetEvalSourceRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/eval-source")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -6171,6 +6275,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
 	ListDryRunsWithResponse(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*ListDryRunsResponse, error)
 
+	// GetEvalSourceWithResponse The frozen pool's ground truth and predictions, for the scorer
+	//
+	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/eval-source (the `GetEvalSource` operationId).
+	GetEvalSourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetEvalSourceResponse, error)
+
 	// ListGroundTruthPoolWithResponse The frozen evaluation pool, as an annotation worklist
 	//
 	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
@@ -7068,6 +7181,75 @@ func (r ListDryRunsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListDryRunsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetEvalSourceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EvalSource
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetEvalSourceResponse) GetJSON200() *EvalSource {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetEvalSourceResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetEvalSourceResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r GetEvalSourceResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetEvalSourceResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetEvalSourceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEvalSourceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEvalSourceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetEvalSourceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -9873,6 +10055,21 @@ func (c *ClientWithResponses) ListDryRunsWithResponse(ctx context.Context, id in
 	return ParseListDryRunsResponse(rsp)
 }
 
+// GetEvalSourceWithResponse The frozen pool's ground truth and predictions, for the scorer
+//
+// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/eval-source (the `GetEvalSource` operationId).
+func (c *ClientWithResponses) GetEvalSourceWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetEvalSourceResponse, error) {
+	rsp, err := c.GetEvalSource(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEvalSourceResponse(rsp)
+}
+
 // ListGroundTruthPoolWithResponse The frozen evaluation pool, as an annotation worklist
 //
 // Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
@@ -11053,6 +11250,60 @@ func ParseListDryRunsResponse(rsp *http.Response) (*ListDryRunsResponse, error) 
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEvalSourceResponse parses an HTTP response from a GetEvalSourceWithResponse call
+func ParseGetEvalSourceResponse(rsp *http.Response) (*GetEvalSourceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEvalSourceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EvalSource
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest ErrorResponse

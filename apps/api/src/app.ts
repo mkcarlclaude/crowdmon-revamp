@@ -20,6 +20,7 @@ import {
   listDryRunsHandler,
   listDryRunsRoute,
 } from "./routes/admin-dryruns";
+import { getEvalSourceHandler, getEvalSourceRoute } from "./routes/admin-eval";
 import {
   createGroundTruthBoxHandler,
   createGroundTruthBoxRoute,
@@ -255,6 +256,7 @@ app.openapi(deleteGroundTruthBoxRoute, deleteGroundTruthBoxHandler);
 app.openapi(setGroundTruthExhaustiveRoute, setGroundTruthExhaustiveHandler);
 app.openapi(getImageAnnotationRoute, getImageAnnotationHandler);
 app.openapi(listGroundTruthPoolRoute, listGroundTruthPoolHandler);
+app.openapi(getEvalSourceRoute, getEvalSourceHandler);
 
 // Serves the same document the build artifact contains, from the same config.
 // A deployed Worker that describes itself is worth one route: it answers "what
