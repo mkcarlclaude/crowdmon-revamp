@@ -61,6 +61,12 @@ beforeEach(async () => {
     // exercise.
     env.DB.prepare("DELETE FROM dryruns"),
     env.DB.prepare("DELETE FROM prelabel_images"),
+    // Migration 0014 (M26): `ground_truth.class_id` and
+    // `ground_truth_exhaustive.class_id` are un-cascaded references into
+    // `classes`, the same shape `predictions.class_id` has — so both need to
+    // go before `classes` below for the reason `dryruns` already documents.
+    env.DB.prepare("DELETE FROM ground_truth"),
+    env.DB.prepare("DELETE FROM ground_truth_exhaustive"),
     env.DB.prepare("DELETE FROM images"),
     env.DB.prepare("DELETE FROM chunks"),
     env.DB.prepare("DELETE FROM jobs"),

@@ -892,6 +892,24 @@ type CreateDryRunRequest struct {
 	VideoId *string `json:"video_id,omitempty"`
 }
 
+// CreateGroundTruthBoxRequest defines model for CreateGroundTruthBoxRequest.
+type CreateGroundTruthBoxRequest struct {
+	// ClassId Example: 1
+	ClassId int `json:"class_id"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
+}
+
 // CreateMissingReportRequest defines model for CreateMissingReportRequest.
 type CreateMissingReportRequest struct {
 	// ClassId Example: 3
@@ -1043,6 +1061,97 @@ type FanOutRequest struct {
 	WorkerId string `json:"worker_id"`
 }
 
+// GroundTruthBox defines model for GroundTruthBox.
+type GroundTruthBox struct {
+	// AnnotatorId Example: admin@example.com
+	AnnotatorId string `json:"annotator_id"`
+
+	// ClassId Example: 1
+	ClassId int `json:"class_id"`
+
+	// ClassName Example: Paimon
+	ClassName string `json:"class_name"`
+
+	// CreatedAt Example: 1754099000
+	CreatedAt int `json:"created_at"`
+
+	// Id Example: 1
+	Id int `json:"id"`
+
+	// ImageId Example: 7
+	ImageId int `json:"image_id"`
+
+	// XMax Example: 0.5
+	XMax float32 `json:"x_max"`
+
+	// XMin Example: 0.12
+	XMin float32 `json:"x_min"`
+
+	// YMax Example: 0.6
+	YMax float32 `json:"y_max"`
+
+	// YMin Example: 0.2
+	YMin float32 `json:"y_min"`
+}
+
+// GroundTruthBoxDeleted defines model for GroundTruthBoxDeleted.
+type GroundTruthBoxDeleted struct {
+	// Id Example: 1
+	Id int `json:"id"`
+}
+
+// GroundTruthClassState defines model for GroundTruthClassState.
+type GroundTruthClassState struct {
+	// ClassId Example: 1
+	ClassId int `json:"class_id"`
+
+	// Exhaustive Example: false
+	Exhaustive bool `json:"exhaustive"`
+
+	// Name Example: Paimon
+	Name string `json:"name"`
+}
+
+// GroundTruthExhaustive defines model for GroundTruthExhaustive.
+type GroundTruthExhaustive struct {
+	// ClassId Example: 1
+	ClassId int `json:"class_id"`
+
+	// Exhaustive Example: true
+	Exhaustive bool `json:"exhaustive"`
+
+	// ImageId Example: 7
+	ImageId int `json:"image_id"`
+}
+
+// GroundTruthPool defines model for GroundTruthPool.
+type GroundTruthPool struct {
+	Images []GroundTruthPoolImage `json:"images"`
+
+	// Total Example: 95
+	Total int `json:"total"`
+}
+
+// GroundTruthPoolImage defines model for GroundTruthPoolImage.
+type GroundTruthPoolImage struct {
+	Classes []GroundTruthClassState `json:"classes"`
+
+	// GroundTruthCount Example: 2
+	GroundTruthCount int `json:"ground_truth_count"`
+
+	// Id Example: 7
+	Id int `json:"id"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// TimestampSeconds Example: 42
+	TimestampSeconds float32 `json:"timestamp_seconds"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
+}
+
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	// Environment Example: production
@@ -1061,6 +1170,28 @@ type HealthResponseStatus string
 type HeartbeatRequest struct {
 	// WorkerId Example: carls-ubuntu-1
 	WorkerId string `json:"worker_id"`
+}
+
+// ImageAnnotation defines model for ImageAnnotation.
+type ImageAnnotation struct {
+	Classes     []GroundTruthClassState `json:"classes"`
+	GroundTruth []GroundTruthBox        `json:"ground_truth"`
+
+	// ImageId Example: 7
+	ImageId     int           `json:"image_id"`
+	Predictions []ProposedBox `json:"predictions"`
+
+	// R2Key Example: frames/dQw4w9WgXcQ/00042.000.jpg
+	R2Key string `json:"r2_key"`
+
+	// TimestampSeconds Example: 42
+	TimestampSeconds float32 `json:"timestamp_seconds"`
+
+	// Url Example: https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…
+	Url string `json:"url"`
+
+	// VideoId Example: dQw4w9WgXcQ
+	VideoId string `json:"video_id"`
 }
 
 // ImageFrame defines model for ImageFrame.
@@ -1443,6 +1574,15 @@ type ReportSnapshotRequest struct {
 	WorkerId string `json:"worker_id"`
 }
 
+// SetGroundTruthExhaustiveRequest defines model for SetGroundTruthExhaustiveRequest.
+type SetGroundTruthExhaustiveRequest struct {
+	// ClassId Example: 1
+	ClassId int `json:"class_id"`
+
+	// Exhaustive Example: true
+	Exhaustive bool `json:"exhaustive"`
+}
+
 // Snapshot defines model for Snapshot.
 type Snapshot struct {
 	// CreatedAt Example: 1754099000
@@ -1614,6 +1754,12 @@ type ListDryRunsParams struct {
 	ImageId *int `form:"image_id,omitempty" json:"image_id,omitempty"`
 }
 
+// ListGroundTruthPoolParams defines parameters for ListGroundTruthPool.
+type ListGroundTruthPoolParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // GetImageParams defines parameters for GetImage.
 type GetImageParams struct {
 	Key string `form:"key" json:"key"`
@@ -1700,6 +1846,12 @@ type UpdateClassJSONRequestBody = UpdateClassRequest
 
 // CreateDryRunJSONRequestBody defines body for CreateDryRun for application/json ContentType.
 type CreateDryRunJSONRequestBody = CreateDryRunRequest
+
+// CreateGroundTruthBoxJSONRequestBody defines body for CreateGroundTruthBox for application/json ContentType.
+type CreateGroundTruthBoxJSONRequestBody = CreateGroundTruthBoxRequest
+
+// SetGroundTruthExhaustiveJSONRequestBody defines body for SetGroundTruthExhaustive for application/json ContentType.
+type SetGroundTruthExhaustiveJSONRequestBody = SetGroundTruthExhaustiveRequest
 
 // CreateMissingReportJSONRequestBody defines body for CreateMissingReport for application/json ContentType.
 type CreateMissingReportJSONRequestBody = CreateMissingReportRequest
@@ -1888,12 +2040,69 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
 	ListDryRuns(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListGroundTruthPool The frozen evaluation pool, as an annotation worklist
+	//
+	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/ground-truth/pool (the `ListGroundTruthPool` operationId).
+	ListGroundTruthPool(ctx context.Context, params *ListGroundTruthPoolParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteGroundTruthBox Undo a mis-drawn ground-truth box
+	//
+	// The one DELETE `ground_truth` permits — see this file's own module comment for why a hand-drawn box is corrected by removal and redrawing rather than by an UPDATE this schema does not have. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with DELETE /api/admin/ground-truth/{id} (the `DeleteGroundTruthBox` operationId).
+	DeleteGroundTruthBox(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetImage One frame's bytes, by R2 key
 	//
 	// Streams an object out of the frames bucket for an admin screen to render. Requires a Cloudflare Access assertion — the bucket stays private and there is no way to enumerate it through this route.
 	//
 	// Corresponds with GET /api/admin/image (the `GetImage` operationId).
 	GetImage(ctx context.Context, params *GetImageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetImageAnnotation One frame's predictions and ground truth together — the annotation surface's read path
+	//
+	// What #176's drawing surface needs for one image: every prediction the detector made on it (so an annotator sees what was already found and does not redraw it by hand), every ground-truth box already drawn, and whether each active class is marked exhaustively annotated on this frame. Unlike `labellingBatch`, predictions here are not filtered to unruled ones — this screen is not a verification queue, and an annotator comparing against the detector's output needs to see all of it. Requires a Cloudflare Access assertion.
+	//
+	// Corresponds with GET /api/admin/images/{id}/ground-truth (the `GetImageAnnotation` operationId).
+	GetImageAnnotation(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateGroundTruthBoxWithBody Draw a ground-truth box no model proposed
+	//
+	// The capability nothing else in the app has (#176): a box that exists because an annotator looked at the frame, not because a prediction was there to rule on. `annotator_id` is read off the Access assertion, never the body, matching every other admin write in this repo. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/admin/images/{id}/ground-truth (the `CreateGroundTruthBox` operationId).
+	CreateGroundTruthBoxWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateGroundTruthBox Draw a ground-truth box no model proposed
+	//
+	// The capability nothing else in the app has (#176): a box that exists because an annotator looked at the frame, not because a prediction was there to rule on. `annotator_id` is read off the Access assertion, never the body, matching every other admin write in this repo. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/admin/images/{id}/ground-truth (the `CreateGroundTruthBox` operationId).
+	CreateGroundTruthBox(ctx context.Context, id int, body CreateGroundTruthBoxJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetGroundTruthExhaustiveWithBody Record that every instance of one class has been found on this image, or retract it
+	//
+	// The fact migration 0014's `ground_truth_exhaustive` exists to hold: zero ground-truth boxes for (image, class) is ambiguous on its own — nobody has looked, or somebody looked and there is genuinely nothing there — and the scorer (#177) refuses to run on a pair this endpoint has not marked. `exhaustive: true` upserts the fact with the caller's identity and the current time; `exhaustive: false` retracts it, for an annotator revisiting a frame who realises the earlier pass was not actually complete. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/admin/images/{id}/ground-truth/exhaustive (the `SetGroundTruthExhaustive` operationId).
+	SetGroundTruthExhaustiveWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetGroundTruthExhaustive Record that every instance of one class has been found on this image, or retract it
+	//
+	// The fact migration 0014's `ground_truth_exhaustive` exists to hold: zero ground-truth boxes for (image, class) is ambiguous on its own — nobody has looked, or somebody looked and there is genuinely nothing there — and the scorer (#177) refuses to run on a pair this endpoint has not marked. `exhaustive: true` upserts the fact with the caller's identity and the current time; `exhaustive: false` retracts it, for an annotator revisiting a frame who realises the earlier pass was not actually complete. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/admin/images/{id}/ground-truth/exhaustive (the `SetGroundTruthExhaustive` operationId).
+	SetGroundTruthExhaustive(ctx context.Context, id int, body SetGroundTruthExhaustiveJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateMissingReportWithBody Report an object the detector never proposed
 	//
@@ -2469,6 +2678,40 @@ func (c *Client) ListDryRuns(ctx context.Context, id int, params *ListDryRunsPar
 	return c.Client.Do(req)
 }
 
+// ListGroundTruthPool The frozen evaluation pool, as an annotation worklist
+//
+// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/ground-truth/pool (the `ListGroundTruthPool` operationId).
+func (c *Client) ListGroundTruthPool(ctx context.Context, params *ListGroundTruthPoolParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListGroundTruthPoolRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteGroundTruthBox Undo a mis-drawn ground-truth box
+//
+// The one DELETE `ground_truth` permits — see this file's own module comment for why a hand-drawn box is corrected by removal and redrawing rather than by an UPDATE this schema does not have. Requires a Cloudflare Access assertion.
+//
+// Corresponds with DELETE /api/admin/ground-truth/{id} (the `DeleteGroundTruthBox` operationId).
+func (c *Client) DeleteGroundTruthBox(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteGroundTruthBoxRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetImage One frame's bytes, by R2 key
 //
 // Streams an object out of the frames bucket for an admin screen to render. Requires a Cloudflare Access assertion — the bucket stays private and there is no way to enumerate it through this route.
@@ -2476,6 +2719,99 @@ func (c *Client) ListDryRuns(ctx context.Context, id int, params *ListDryRunsPar
 // Corresponds with GET /api/admin/image (the `GetImage` operationId).
 func (c *Client) GetImage(ctx context.Context, params *GetImageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetImageRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetImageAnnotation One frame's predictions and ground truth together — the annotation surface's read path
+//
+// What #176's drawing surface needs for one image: every prediction the detector made on it (so an annotator sees what was already found and does not redraw it by hand), every ground-truth box already drawn, and whether each active class is marked exhaustively annotated on this frame. Unlike `labellingBatch`, predictions here are not filtered to unruled ones — this screen is not a verification queue, and an annotator comparing against the detector's output needs to see all of it. Requires a Cloudflare Access assertion.
+//
+// Corresponds with GET /api/admin/images/{id}/ground-truth (the `GetImageAnnotation` operationId).
+func (c *Client) GetImageAnnotation(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetImageAnnotationRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateGroundTruthBoxWithBody Draw a ground-truth box no model proposed
+//
+// The capability nothing else in the app has (#176): a box that exists because an annotator looked at the frame, not because a prediction was there to rule on. `annotator_id` is read off the Access assertion, never the body, matching every other admin write in this repo. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/admin/images/{id}/ground-truth (the `CreateGroundTruthBox` operationId).
+func (c *Client) CreateGroundTruthBoxWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateGroundTruthBoxRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateGroundTruthBox Draw a ground-truth box no model proposed
+//
+// The capability nothing else in the app has (#176): a box that exists because an annotator looked at the frame, not because a prediction was there to rule on. `annotator_id` is read off the Access assertion, never the body, matching every other admin write in this repo. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/admin/images/{id}/ground-truth (the `CreateGroundTruthBox` operationId).
+func (c *Client) CreateGroundTruthBox(ctx context.Context, id int, body CreateGroundTruthBoxJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateGroundTruthBoxRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetGroundTruthExhaustiveWithBody Record that every instance of one class has been found on this image, or retract it
+//
+// The fact migration 0014's `ground_truth_exhaustive` exists to hold: zero ground-truth boxes for (image, class) is ambiguous on its own — nobody has looked, or somebody looked and there is genuinely nothing there — and the scorer (#177) refuses to run on a pair this endpoint has not marked. `exhaustive: true` upserts the fact with the caller's identity and the current time; `exhaustive: false` retracts it, for an annotator revisiting a frame who realises the earlier pass was not actually complete. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/admin/images/{id}/ground-truth/exhaustive (the `SetGroundTruthExhaustive` operationId).
+func (c *Client) SetGroundTruthExhaustiveWithBody(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetGroundTruthExhaustiveRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetGroundTruthExhaustive Record that every instance of one class has been found on this image, or retract it
+//
+// The fact migration 0014's `ground_truth_exhaustive` exists to hold: zero ground-truth boxes for (image, class) is ambiguous on its own — nobody has looked, or somebody looked and there is genuinely nothing there — and the scorer (#177) refuses to run on a pair this endpoint has not marked. `exhaustive: true` upserts the fact with the caller's identity and the current time; `exhaustive: false` retracts it, for an annotator revisiting a frame who realises the earlier pass was not actually complete. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/admin/images/{id}/ground-truth/exhaustive (the `SetGroundTruthExhaustive` operationId).
+func (c *Client) SetGroundTruthExhaustive(ctx context.Context, id int, body SetGroundTruthExhaustiveJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetGroundTruthExhaustiveRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3663,6 +3999,106 @@ func NewListDryRunsRequest(server string, id int, params *ListDryRunsParams) (*h
 	return req, nil
 }
 
+// NewListGroundTruthPoolRequest constructs an http.Request for the ListGroundTruthPool method
+func NewListGroundTruthPoolRequest(server string, params *ListGroundTruthPoolParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/ground-truth/pool")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteGroundTruthBoxRequest constructs an http.Request for the DeleteGroundTruthBox method
+func NewDeleteGroundTruthBoxRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/ground-truth/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetImageRequest constructs an http.Request for the GetImage method
 func NewGetImageRequest(server string, params *GetImageParams) (*http.Request, error) {
 	var err error
@@ -3709,6 +4145,134 @@ func NewGetImageRequest(server string, params *GetImageParams) (*http.Request, e
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewGetImageAnnotationRequest constructs an http.Request for the GetImageAnnotation method
+func NewGetImageAnnotationRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/images/%s/ground-truth", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateGroundTruthBoxRequest calls the generic CreateGroundTruthBox builder with application/json body
+func NewCreateGroundTruthBoxRequest(server string, id int, body CreateGroundTruthBoxJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateGroundTruthBoxRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateGroundTruthBoxRequestWithBody constructs an http.Request for the CreateGroundTruthBox method, with any body, and a specified content type
+func NewCreateGroundTruthBoxRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/images/%s/ground-truth", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSetGroundTruthExhaustiveRequest calls the generic SetGroundTruthExhaustive builder with application/json body
+func NewSetGroundTruthExhaustiveRequest(server string, id int, body SetGroundTruthExhaustiveJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetGroundTruthExhaustiveRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSetGroundTruthExhaustiveRequestWithBody constructs an http.Request for the SetGroundTruthExhaustive method, with any body, and a specified content type
+func NewSetGroundTruthExhaustiveRequestWithBody(server string, id int, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/images/%s/ground-truth/exhaustive", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -5607,6 +6171,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
 	ListDryRunsWithResponse(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*ListDryRunsResponse, error)
 
+	// ListGroundTruthPoolWithResponse The frozen evaluation pool, as an annotation worklist
+	//
+	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/ground-truth/pool (the `ListGroundTruthPool` operationId).
+	ListGroundTruthPoolWithResponse(ctx context.Context, params *ListGroundTruthPoolParams, reqEditors ...RequestEditorFn) (*ListGroundTruthPoolResponse, error)
+
+	// DeleteGroundTruthBoxWithResponse Undo a mis-drawn ground-truth box
+	//
+	// The one DELETE `ground_truth` permits — see this file's own module comment for why a hand-drawn box is corrected by removal and redrawing rather than by an UPDATE this schema does not have. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/admin/ground-truth/{id} (the `DeleteGroundTruthBox` operationId).
+	DeleteGroundTruthBoxWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*DeleteGroundTruthBoxResponse, error)
+
 	// GetImageWithResponse One frame's bytes, by R2 key
 	//
 	// Streams an object out of the frames bucket for an admin screen to render. Requires a Cloudflare Access assertion — the bucket stays private and there is no way to enumerate it through this route.
@@ -5615,6 +6197,51 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/admin/image (the `GetImage` operationId).
 	GetImageWithResponse(ctx context.Context, params *GetImageParams, reqEditors ...RequestEditorFn) (*GetImageResponse, error)
+
+	// GetImageAnnotationWithResponse One frame's predictions and ground truth together — the annotation surface's read path
+	//
+	// What #176's drawing surface needs for one image: every prediction the detector made on it (so an annotator sees what was already found and does not redraw it by hand), every ground-truth box already drawn, and whether each active class is marked exhaustively annotated on this frame. Unlike `labellingBatch`, predictions here are not filtered to unruled ones — this screen is not a verification queue, and an annotator comparing against the detector's output needs to see all of it. Requires a Cloudflare Access assertion.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/admin/images/{id}/ground-truth (the `GetImageAnnotation` operationId).
+	GetImageAnnotationWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetImageAnnotationResponse, error)
+
+	// CreateGroundTruthBoxWithBodyWithResponse Draw a ground-truth box no model proposed
+	//
+	// The capability nothing else in the app has (#176): a box that exists because an annotator looked at the frame, not because a prediction was there to rule on. `annotator_id` is read off the Access assertion, never the body, matching every other admin write in this repo. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/images/{id}/ground-truth (the `CreateGroundTruthBox` operationId).
+	CreateGroundTruthBoxWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGroundTruthBoxResponse, error)
+
+	// CreateGroundTruthBoxWithResponse Draw a ground-truth box no model proposed
+	//
+	// The capability nothing else in the app has (#176): a box that exists because an annotator looked at the frame, not because a prediction was there to rule on. `annotator_id` is read off the Access assertion, never the body, matching every other admin write in this repo. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/admin/images/{id}/ground-truth (the `CreateGroundTruthBox` operationId).
+	CreateGroundTruthBoxWithResponse(ctx context.Context, id int, body CreateGroundTruthBoxJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGroundTruthBoxResponse, error)
+
+	// SetGroundTruthExhaustiveWithBodyWithResponse Record that every instance of one class has been found on this image, or retract it
+	//
+	// The fact migration 0014's `ground_truth_exhaustive` exists to hold: zero ground-truth boxes for (image, class) is ambiguous on its own — nobody has looked, or somebody looked and there is genuinely nothing there — and the scorer (#177) refuses to run on a pair this endpoint has not marked. `exhaustive: true` upserts the fact with the caller's identity and the current time; `exhaustive: false` retracts it, for an annotator revisiting a frame who realises the earlier pass was not actually complete. Requires a Cloudflare Access assertion.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/admin/images/{id}/ground-truth/exhaustive (the `SetGroundTruthExhaustive` operationId).
+	SetGroundTruthExhaustiveWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetGroundTruthExhaustiveResponse, error)
+
+	// SetGroundTruthExhaustiveWithResponse Record that every instance of one class has been found on this image, or retract it
+	//
+	// The fact migration 0014's `ground_truth_exhaustive` exists to hold: zero ground-truth boxes for (image, class) is ambiguous on its own — nobody has looked, or somebody looked and there is genuinely nothing there — and the scorer (#177) refuses to run on a pair this endpoint has not marked. `exhaustive: true` upserts the fact with the caller's identity and the current time; `exhaustive: false` retracts it, for an annotator revisiting a frame who realises the earlier pass was not actually complete. Requires a Cloudflare Access assertion.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/admin/images/{id}/ground-truth/exhaustive (the `SetGroundTruthExhaustive` operationId).
+	SetGroundTruthExhaustiveWithResponse(ctx context.Context, id int, body SetGroundTruthExhaustiveJSONRequestBody, reqEditors ...RequestEditorFn) (*SetGroundTruthExhaustiveResponse, error)
 
 	// CreateMissingReportWithBodyWithResponse Report an object the detector never proposed
 	//
@@ -6447,6 +7074,137 @@ func (r ListDryRunsResponse) ContentType() string {
 	return ""
 }
 
+type ListGroundTruthPoolResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GroundTruthPool
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListGroundTruthPoolResponse) GetJSON200() *GroundTruthPool {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListGroundTruthPoolResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListGroundTruthPoolResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListGroundTruthPoolResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListGroundTruthPoolResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListGroundTruthPoolResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListGroundTruthPoolResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListGroundTruthPoolResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteGroundTruthBoxResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GroundTruthBoxDeleted
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteGroundTruthBoxResponse) GetJSON200() *GroundTruthBoxDeleted {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteGroundTruthBoxResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteGroundTruthBoxResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteGroundTruthBoxResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteGroundTruthBoxResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteGroundTruthBoxResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteGroundTruthBoxResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteGroundTruthBoxResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteGroundTruthBoxResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetImageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6510,6 +7268,227 @@ func (r GetImageResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetImageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetImageAnnotationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ImageAnnotation
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetImageAnnotationResponse) GetJSON200() *ImageAnnotation {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetImageAnnotationResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetImageAnnotationResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetImageAnnotationResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetImageAnnotationResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetImageAnnotationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetImageAnnotationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetImageAnnotationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetImageAnnotationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateGroundTruthBoxResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *GroundTruthBox
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateGroundTruthBoxResponse) GetJSON201() *GroundTruthBox {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateGroundTruthBoxResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateGroundTruthBoxResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateGroundTruthBoxResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateGroundTruthBoxResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CreateGroundTruthBoxResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateGroundTruthBoxResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateGroundTruthBoxResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateGroundTruthBoxResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateGroundTruthBoxResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetGroundTruthExhaustiveResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GroundTruthExhaustive
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ErrorResponse
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorResponse
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetGroundTruthExhaustiveResponse) GetJSON200() *GroundTruthExhaustive {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetGroundTruthExhaustiveResponse) GetJSON400() *ErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetGroundTruthExhaustiveResponse) GetJSON401() *ErrorResponse {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetGroundTruthExhaustiveResponse) GetJSON403() *ErrorResponse {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetGroundTruthExhaustiveResponse) GetJSON404() *ErrorResponse {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetGroundTruthExhaustiveResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SetGroundTruthExhaustiveResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetGroundTruthExhaustiveResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetGroundTruthExhaustiveResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetGroundTruthExhaustiveResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -8894,6 +9873,36 @@ func (c *ClientWithResponses) ListDryRunsWithResponse(ctx context.Context, id in
 	return ParseListDryRunsResponse(rsp)
 }
 
+// ListGroundTruthPoolWithResponse The frozen evaluation pool, as an annotation worklist
+//
+// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/ground-truth/pool (the `ListGroundTruthPool` operationId).
+func (c *ClientWithResponses) ListGroundTruthPoolWithResponse(ctx context.Context, params *ListGroundTruthPoolParams, reqEditors ...RequestEditorFn) (*ListGroundTruthPoolResponse, error) {
+	rsp, err := c.ListGroundTruthPool(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListGroundTruthPoolResponse(rsp)
+}
+
+// DeleteGroundTruthBoxWithResponse Undo a mis-drawn ground-truth box
+//
+// The one DELETE `ground_truth` permits — see this file's own module comment for why a hand-drawn box is corrected by removal and redrawing rather than by an UPDATE this schema does not have. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/admin/ground-truth/{id} (the `DeleteGroundTruthBox` operationId).
+func (c *ClientWithResponses) DeleteGroundTruthBoxWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*DeleteGroundTruthBoxResponse, error) {
+	rsp, err := c.DeleteGroundTruthBox(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteGroundTruthBoxResponse(rsp)
+}
+
 // GetImageWithResponse One frame's bytes, by R2 key
 //
 // Streams an object out of the frames bucket for an admin screen to render. Requires a Cloudflare Access assertion — the bucket stays private and there is no way to enumerate it through this route.
@@ -8907,6 +9916,81 @@ func (c *ClientWithResponses) GetImageWithResponse(ctx context.Context, params *
 		return nil, err
 	}
 	return ParseGetImageResponse(rsp)
+}
+
+// GetImageAnnotationWithResponse One frame's predictions and ground truth together — the annotation surface's read path
+//
+// What #176's drawing surface needs for one image: every prediction the detector made on it (so an annotator sees what was already found and does not redraw it by hand), every ground-truth box already drawn, and whether each active class is marked exhaustively annotated on this frame. Unlike `labellingBatch`, predictions here are not filtered to unruled ones — this screen is not a verification queue, and an annotator comparing against the detector's output needs to see all of it. Requires a Cloudflare Access assertion.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/admin/images/{id}/ground-truth (the `GetImageAnnotation` operationId).
+func (c *ClientWithResponses) GetImageAnnotationWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetImageAnnotationResponse, error) {
+	rsp, err := c.GetImageAnnotation(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetImageAnnotationResponse(rsp)
+}
+
+// CreateGroundTruthBoxWithBodyWithResponse Draw a ground-truth box no model proposed
+//
+// The capability nothing else in the app has (#176): a box that exists because an annotator looked at the frame, not because a prediction was there to rule on. `annotator_id` is read off the Access assertion, never the body, matching every other admin write in this repo. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/images/{id}/ground-truth (the `CreateGroundTruthBox` operationId).
+func (c *ClientWithResponses) CreateGroundTruthBoxWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGroundTruthBoxResponse, error) {
+	rsp, err := c.CreateGroundTruthBoxWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateGroundTruthBoxResponse(rsp)
+}
+
+// CreateGroundTruthBoxWithResponse Draw a ground-truth box no model proposed
+//
+// The capability nothing else in the app has (#176): a box that exists because an annotator looked at the frame, not because a prediction was there to rule on. `annotator_id` is read off the Access assertion, never the body, matching every other admin write in this repo. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/admin/images/{id}/ground-truth (the `CreateGroundTruthBox` operationId).
+func (c *ClientWithResponses) CreateGroundTruthBoxWithResponse(ctx context.Context, id int, body CreateGroundTruthBoxJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGroundTruthBoxResponse, error) {
+	rsp, err := c.CreateGroundTruthBox(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateGroundTruthBoxResponse(rsp)
+}
+
+// SetGroundTruthExhaustiveWithBodyWithResponse Record that every instance of one class has been found on this image, or retract it
+//
+// The fact migration 0014's `ground_truth_exhaustive` exists to hold: zero ground-truth boxes for (image, class) is ambiguous on its own — nobody has looked, or somebody looked and there is genuinely nothing there — and the scorer (#177) refuses to run on a pair this endpoint has not marked. `exhaustive: true` upserts the fact with the caller's identity and the current time; `exhaustive: false` retracts it, for an annotator revisiting a frame who realises the earlier pass was not actually complete. Requires a Cloudflare Access assertion.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/admin/images/{id}/ground-truth/exhaustive (the `SetGroundTruthExhaustive` operationId).
+func (c *ClientWithResponses) SetGroundTruthExhaustiveWithBodyWithResponse(ctx context.Context, id int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetGroundTruthExhaustiveResponse, error) {
+	rsp, err := c.SetGroundTruthExhaustiveWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetGroundTruthExhaustiveResponse(rsp)
+}
+
+// SetGroundTruthExhaustiveWithResponse Record that every instance of one class has been found on this image, or retract it
+//
+// The fact migration 0014's `ground_truth_exhaustive` exists to hold: zero ground-truth boxes for (image, class) is ambiguous on its own — nobody has looked, or somebody looked and there is genuinely nothing there — and the scorer (#177) refuses to run on a pair this endpoint has not marked. `exhaustive: true` upserts the fact with the caller's identity and the current time; `exhaustive: false` retracts it, for an annotator revisiting a frame who realises the earlier pass was not actually complete. Requires a Cloudflare Access assertion.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/admin/images/{id}/ground-truth/exhaustive (the `SetGroundTruthExhaustive` operationId).
+func (c *ClientWithResponses) SetGroundTruthExhaustiveWithResponse(ctx context.Context, id int, body SetGroundTruthExhaustiveJSONRequestBody, reqEditors ...RequestEditorFn) (*SetGroundTruthExhaustiveResponse, error) {
+	rsp, err := c.SetGroundTruthExhaustive(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetGroundTruthExhaustiveResponse(rsp)
 }
 
 // CreateMissingReportWithBodyWithResponse Report an object the detector never proposed
@@ -9982,6 +11066,107 @@ func ParseListDryRunsResponse(rsp *http.Response) (*ListDryRunsResponse, error) 
 	return response, nil
 }
 
+// ParseListGroundTruthPoolResponse parses an HTTP response from a ListGroundTruthPoolWithResponse call
+func ParseListGroundTruthPoolResponse(rsp *http.Response) (*ListGroundTruthPoolResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListGroundTruthPoolResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GroundTruthPool
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteGroundTruthBoxResponse parses an HTTP response from a DeleteGroundTruthBoxWithResponse call
+func ParseDeleteGroundTruthBoxResponse(rsp *http.Response) (*DeleteGroundTruthBoxResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteGroundTruthBoxResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GroundTruthBoxDeleted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetImageResponse parses an HTTP response from a GetImageWithResponse call
 func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -9996,6 +11181,182 @@ func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetImageAnnotationResponse parses an HTTP response from a GetImageAnnotationWithResponse call
+func ParseGetImageAnnotationResponse(rsp *http.Response) (*GetImageAnnotationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetImageAnnotationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImageAnnotation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateGroundTruthBoxResponse parses an HTTP response from a CreateGroundTruthBoxWithResponse call
+func ParseCreateGroundTruthBoxResponse(rsp *http.Response) (*CreateGroundTruthBoxResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateGroundTruthBoxResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest GroundTruthBox
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetGroundTruthExhaustiveResponse parses an HTTP response from a SetGroundTruthExhaustiveWithResponse call
+func ParseSetGroundTruthExhaustiveResponse(rsp *http.Response) (*SetGroundTruthExhaustiveResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetGroundTruthExhaustiveResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GroundTruthExhaustive
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

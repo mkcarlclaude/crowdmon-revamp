@@ -2717,6 +2717,311 @@
           "adjust",
           "reject"
         ]
+      },
+      "GroundTruthBox": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "image_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "class_name": {
+            "type": "string",
+            "example": "Paimon"
+          },
+          "x_min": {
+            "type": "number",
+            "example": 0.12
+          },
+          "y_min": {
+            "type": "number",
+            "example": 0.2
+          },
+          "x_max": {
+            "type": "number",
+            "example": 0.5
+          },
+          "y_max": {
+            "type": "number",
+            "example": 0.6
+          },
+          "annotator_id": {
+            "type": "string",
+            "example": "admin@example.com"
+          },
+          "created_at": {
+            "type": "integer",
+            "example": 1754099000
+          }
+        },
+        "required": [
+          "id",
+          "image_id",
+          "class_id",
+          "class_name",
+          "x_min",
+          "y_min",
+          "x_max",
+          "y_max",
+          "annotator_id",
+          "created_at"
+        ]
+      },
+      "CreateGroundTruthBoxRequest": {
+        "type": "object",
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "x_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.12
+          },
+          "y_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.2
+          },
+          "x_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.5
+          },
+          "y_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "example": 0.6
+          }
+        },
+        "required": [
+          "class_id",
+          "x_min",
+          "y_min",
+          "x_max",
+          "y_max"
+        ]
+      },
+      "GroundTruthBoxDeleted": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "GroundTruthExhaustive": {
+        "type": "object",
+        "properties": {
+          "image_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "exhaustive": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "image_id",
+          "class_id",
+          "exhaustive"
+        ]
+      },
+      "SetGroundTruthExhaustiveRequest": {
+        "type": "object",
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "exhaustive": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "class_id",
+          "exhaustive"
+        ]
+      },
+      "ImageAnnotation": {
+        "type": "object",
+        "properties": {
+          "image_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "r2_key": {
+            "type": "string",
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "example": 42
+          },
+          "url": {
+            "type": "string",
+            "example": "https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…"
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposedBox"
+            }
+          },
+          "ground_truth": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroundTruthBox"
+            }
+          },
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroundTruthClassState"
+            }
+          }
+        },
+        "required": [
+          "image_id",
+          "video_id",
+          "r2_key",
+          "timestamp_seconds",
+          "url",
+          "predictions",
+          "ground_truth",
+          "classes"
+        ]
+      },
+      "GroundTruthClassState": {
+        "type": "object",
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 1
+          },
+          "name": {
+            "type": "string",
+            "example": "Paimon"
+          },
+          "exhaustive": {
+            "type": "boolean",
+            "example": false
+          }
+        },
+        "required": [
+          "class_id",
+          "name",
+          "exhaustive"
+        ]
+      },
+      "GroundTruthPool": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroundTruthPoolImage"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 95
+          }
+        },
+        "required": [
+          "images",
+          "total"
+        ]
+      },
+      "GroundTruthPoolImage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "example": 7
+          },
+          "video_id": {
+            "type": "string",
+            "example": "dQw4w9WgXcQ"
+          },
+          "r2_key": {
+            "type": "string",
+            "example": "frames/dQw4w9WgXcQ/00042.000.jpg"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "example": 42
+          },
+          "ground_truth_count": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 2
+          },
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroundTruthClassState"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "video_id",
+          "r2_key",
+          "timestamp_seconds",
+          "ground_truth_count",
+          "classes"
+        ]
       }
     },
     "parameters": {}
@@ -5645,6 +5950,408 @@
           },
           "401": {
             "description": "Missing or expired contributor session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/images/{id}/ground-truth": {
+      "post": {
+        "operationId": "createGroundTruthBox",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Draw a ground-truth box no model proposed",
+        "description": "The capability nothing else in the app has (#176): a box that exists because an annotator looked at the frame, not because a prediction was there to rule on. `annotator_id` is read off the Access assertion, never the body, matching every other admin write in this repo. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGroundTruthBoxRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The box as written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroundTruthBox"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No image with this id, or no class with the given class_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getImageAnnotation",
+        "tags": [
+          "admin"
+        ],
+        "summary": "One frame's predictions and ground truth together — the annotation surface's read path",
+        "description": "What #176's drawing surface needs for one image: every prediction the detector made on it (so an annotator sees what was already found and does not redraw it by hand), every ground-truth box already drawn, and whether each active class is marked exhaustively annotated on this frame. Unlike `labellingBatch`, predictions here are not filtered to unruled ones — this screen is not a verification queue, and an annotator comparing against the detector's output needs to see all of it. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The frame, its predictions, its ground truth and its exhaustiveness state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageAnnotation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No image with this id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/ground-truth/{id}": {
+      "delete": {
+        "operationId": "deleteGroundTruthBox",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Undo a mis-drawn ground-truth box",
+        "description": "The one DELETE `ground_truth` permits — see this file's own module comment for why a hand-drawn box is corrected by removal and redrawing rather than by an UPDATE this schema does not have. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted box's id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroundTruthBoxDeleted"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No ground-truth box with this id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/images/{id}/ground-truth/exhaustive": {
+      "patch": {
+        "operationId": "setGroundTruthExhaustive",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Record that every instance of one class has been found on this image, or retract it",
+        "description": "The fact migration 0014's `ground_truth_exhaustive` exists to hold: zero ground-truth boxes for (image, class) is ambiguous on its own — nobody has looked, or somebody looked and there is genuinely nothing there — and the scorer (#177) refuses to run on a pair this endpoint has not marked. `exhaustive: true` upserts the fact with the caller's identity and the current time; `exhaustive: false` retracts it, for an annotator revisiting a frame who realises the earlier pass was not actually complete. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetGroundTruthExhaustiveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The (image, class) pair's exhaustiveness state as it now stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroundTruthExhaustive"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No image with this id, or no class with the given class_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/ground-truth/pool": {
+      "get": {
+        "operationId": "listGroundTruthPool",
+        "tags": [
+          "admin"
+        ],
+        "summary": "The frozen evaluation pool, as an annotation worklist",
+        "description": "Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 0
+            },
+            "required": false,
+            "name": "offset",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the frozen pool and the total it was drawn from",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroundTruthPool"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid Access assertion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A verified identity that is not an administrator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin access is not configured on this deployment",
             "content": {
               "application/json": {
                 "schema": {
