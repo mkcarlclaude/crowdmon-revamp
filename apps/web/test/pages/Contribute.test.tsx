@@ -60,6 +60,7 @@ describe("Contribute", () => {
               url_mode: "signed",
               expires_at: 1,
               remaining: 0,
+              remaining_capped: false,
               next_cursor: null,
             }),
           );
@@ -82,7 +83,14 @@ describe("Contribute", () => {
         if (url.startsWith("/api/contribute/me"))
           return Promise.resolve(json(me({ trusted: true })));
         return Promise.resolve(
-          json({ images: [], url_mode: "signed", expires_at: 1, remaining: 0, next_cursor: null }),
+          json({
+            images: [],
+            url_mode: "signed",
+            expires_at: 1,
+            remaining: 0,
+            remaining_capped: false,
+            next_cursor: null,
+          }),
         );
       }),
     );
@@ -106,7 +114,14 @@ describe("Contribute", () => {
       }
       if (url.startsWith("/api/contribute/batch")) {
         return Promise.resolve(
-          json({ images: [], url_mode: "signed", expires_at: 1, remaining: 0, next_cursor: null }),
+          json({
+            images: [],
+            url_mode: "signed",
+            expires_at: 1,
+            remaining: 0,
+            remaining_capped: false,
+            next_cursor: null,
+          }),
         );
       }
       return Promise.resolve(json({ error: `unexpected ${url}` }, 404));

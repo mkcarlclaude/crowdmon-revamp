@@ -59,6 +59,13 @@ export function ContributeVerify() {
   // waiting, beyond what I've already done," matching the old component's
   // own arithmetic.
   const stillWaiting = Math.max(0, (batch.data?.remaining ?? 0) - frameIndex);
+  // Rendered as "500+" while the server says its count hit the ceiling. Not
+  // decremented by `frameIndex` in that state either: subtracting progress
+  // from a lower bound produces a number that is neither the bound nor the
+  // truth, and it would tick down as if the pool were 500 exactly.
+  const waitingLabel = batch.data?.remaining_capped
+    ? `${batch.data.remaining}+`
+    : String(stillWaiting);
 
   async function nextBatch() {
     await queryClient.refetchQueries({ queryKey: contributeBatchKey });
@@ -96,7 +103,7 @@ export function ContributeVerify() {
       <div className="flex flex-col gap-2">
         <p className="text-sm">
           {stillWaiting > 0
-            ? `Batch done. ${stillWaiting} frames still waiting.`
+            ? `Batch done. ${waitingLabel} frames still waiting.`
             : "Nothing left to verify right now — every frame has a ruling."}
         </p>
         <Button
@@ -116,7 +123,7 @@ export function ContributeVerify() {
     <div className="flex flex-col gap-3">
       <p className="text-sm text-muted-foreground">
         <span className="font-mono">{images.length - frameIndex}</span> in this batch,{" "}
-        <span className="font-mono">{stillWaiting}</span> in the pool · {frame.video_id} @{" "}
+        <span className="font-mono">{waitingLabel}</span> in the pool · {frame.video_id} @{" "}
         {frame.timestamp_seconds}s
       </p>
 

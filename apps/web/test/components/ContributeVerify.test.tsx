@@ -64,6 +64,7 @@ function batch(over: Record<string, unknown> = {}) {
     // nothing with no error to say why.
     next_cursor: null,
     remaining: 1,
+    remaining_capped: false,
     ...over,
   };
 }
@@ -100,6 +101,27 @@ const postsTo = (fetchMock: ReturnType<typeof stubApi>) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ContributeVerify", () => {
+  // The M25.1 bug this field exists to fix: the server caps its count at 500,
+  // so a pool of 1,098 reported 500 and the UI rendered it as an exact number
+  // that did not move for ~600 frames of swiping. A frozen counter reads as
+  // broken, not as bounded.
+  it("renders a capped pool count as a lower bound, not an exact number", async () => {
+    stubApi({ batches: [batch({ remaining: 500, remaining_capped: true })] });
+
+    render(wrap(<ContributeVerify />));
+
+    expect(await screen.findByText("500+")).toBeInTheDocument();
+  });
+
+  it("renders an exact count plainly when the server did not cap it", async () => {
+    stubApi({ batches: [batch({ remaining: 7 })] });
+
+    render(wrap(<ContributeVerify />));
+
+    expect(await screen.findByText("7")).toBeInTheDocument();
+    expect(screen.queryByText("7+")).not.toBeInTheDocument();
+  });
+
   it("offers no Adjust control — M24 §C1 dropped it, admin keeps it on /admin/verify", async () => {
     stubApi();
 
@@ -166,7 +188,14 @@ describe("ContributeVerify", () => {
     stubApi({
       batches: [
         batch(),
-        { images: [], url_mode: "signed", expires_at: 1, remaining: 0, next_cursor: null },
+        {
+          images: [],
+          url_mode: "signed",
+          expires_at: 1,
+          remaining: 0,
+          remaining_capped: false,
+          next_cursor: null,
+        },
       ],
     });
 
