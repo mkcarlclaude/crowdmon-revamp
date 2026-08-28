@@ -1502,3 +1502,29 @@ Open at the close of M25:
   candidate — so a video converges on its own frame count rather than growing without
   limit. That is a weaker guarantee than a cumulative cap, and enough while the governor
   is verification throughput
+
+## M26 — An evaluation set that can be wrong about the model
+
+*Goal: a baseline mAP that a better model scores better on.*
+*Plan: `docs/superpowers/plans/2026-08-28-eval-harness.md`.
+Design record: `CONTEXT.md` §Q16, §Q17, §Q21.*
+
+The finding that amended M25's "the eval harness is unblocked today": **every ground-truth
+box in this dataset is a box the detector proposed.** `INSERT INTO predictions` appears
+once in the codebase, in the worker's report path; a `verdicts` row always references a
+`predictions` row; `adjust` only moves an existing box. So the label set is a subset of
+the detector's own output, filtered by a human, containing nothing the detector failed to
+find — and a model that later finds a missed Paimon scores that detection as a false
+positive. The mAP series would trend *down* as the model improves, which is worse than
+having no instrument, because it looks like it works.
+
+- **[#175](https://github.com/mkcarlclaude/crowdmon-revamp/issues/175) — `ground_truth`,
+  its own table.** Not synthetic `predictions` rows: `predictions` is a truthful record of
+  what a model said, and that property is worth more than the saved table
+- **[#176](https://github.com/mkcarlclaude/crowdmon-revamp/issues/176) — a surface that
+  draws boxes no model proposed**, which nothing in the app can do today
+- **[#177](https://github.com/mkcarlclaude/crowdmon-revamp/issues/177) — the scorer**, on
+  the home box rather than as a `jobs.kind`, and the two tests that make it a ruler
+
+The actual gate is a labelling sitting, not a code change: 95 frozen images, one active
+class, every instance recorded by hand.
