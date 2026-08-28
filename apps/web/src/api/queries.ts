@@ -12,12 +12,18 @@ import {
   ContributeMe,
   type CreateClassRequest,
   type CreateDryRunRequest,
+  type CreateGroundTruthBoxRequest,
   type CreateMissingReportRequest,
   type CreatePrelabelRequest,
   type CreatePublicVerdictsRequest,
   type CreateVerdictsRequest,
   DryRun,
   DryRunList,
+  GroundTruthBox,
+  GroundTruthBoxDeleted,
+  GroundTruthExhaustive,
+  GroundTruthPool,
+  ImageAnnotation,
   JobList,
   type JobStatus,
   LabellingBatch,
@@ -25,6 +31,7 @@ import {
   MissingReport,
   PrelabelJob,
   PublicFrame,
+  type SetGroundTruthExhaustiveRequest,
   SnapshotJob,
   SnapshotList,
   type SubmitVideoRequest,
@@ -781,5 +788,85 @@ export function useLogout() {
       if (!response.ok) throw new Error(`logout failed with status ${response.status}`);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: contributeMeKey }),
+  });
+}
+
+/**
+ * The M26 annotation surface (#176): the frozen pool as a worklist
+ * (`GET /api/admin/ground-truth/pool`), one image's predictions and ground
+ * truth together (`GET /api/admin/images/{id}/ground-truth`), and the three
+ * writes `admin-ground-truth.ts` exposes. Every mutation invalidates both
+ * the pool listing and the one image's own annotation query — the pool
+ * carries a `ground_truth_count` and an `exhaustive` flag per class that a
+ * box or a mark changes, and the per-image query is what the surface
+ * currently on screen reads.
+ */
+export const groundTruthPoolKey = ["ground-truth", "pool"] as const;
+
+export function useGroundTruthPool() {
+  return useQuery({
+    queryKey: groundTruthPoolKey,
+    queryFn: () => apiFetch("/api/admin/ground-truth/pool", GroundTruthPool),
+  });
+}
+
+export const groundTruthAnnotationKey = (imageId: number) =>
+  ["ground-truth", "annotation", imageId] as const;
+
+export function useGroundTruthAnnotation(imageId: number | null) {
+  return useQuery({
+    queryKey: groundTruthAnnotationKey(imageId ?? -1),
+    queryFn: () => apiFetch(`/api/admin/images/${imageId}/ground-truth`, ImageAnnotation),
+    // `imageId` is only ever null before the worklist itself has loaded —
+    // there is nothing to fetch yet, not a real image with id -1.
+    enabled: imageId !== null,
+  });
+}
+
+function invalidateGroundTruth(queryClient: ReturnType<typeof useQueryClient>, imageId: number) {
+  queryClient.invalidateQueries({ queryKey: groundTruthPoolKey });
+  queryClient.invalidateQueries({ queryKey: groundTruthAnnotationKey(imageId) });
+}
+
+/** Draw a box no prediction covers (plan §A1). */
+export function useDrawGroundTruthBox(imageId: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: z.infer<typeof CreateGroundTruthBoxRequest>) =>
+      apiFetch(`/api/admin/images/${imageId}/ground-truth`, GroundTruthBox, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => invalidateGroundTruth(queryClient, imageId),
+  });
+}
+
+/** Undo a mis-drawn box — this schema's one legitimate delete (`admin-ground-truth.ts`). */
+export function useDeleteGroundTruthBox(imageId: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (groundTruthId: number) =>
+      apiFetch(`/api/admin/ground-truth/${groundTruthId}`, GroundTruthBoxDeleted, {
+        method: "DELETE",
+      }),
+    onSuccess: () => invalidateGroundTruth(queryClient, imageId),
+  });
+}
+
+/** Mark, or unmark, one (image, class) pair exhaustively annotated (plan §A2). */
+export function useSetGroundTruthExhaustive(imageId: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: z.infer<typeof SetGroundTruthExhaustiveRequest>) =>
+      apiFetch(`/api/admin/images/${imageId}/ground-truth/exhaustive`, GroundTruthExhaustive, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => invalidateGroundTruth(queryClient, imageId),
   });
 }
