@@ -1,4 +1,5 @@
 import { z } from "@hono/zod-openapi";
+import { SHUFFLE_KEY_MASK } from "./d1";
 
 /**
  * The wire contract, in one file.
@@ -1679,6 +1680,35 @@ export const MAX_LABELLING_BATCH = 100;
  */
 export const PRESIGN_TTL_SECONDS = 15 * 60;
 
+/**
+ * A `shuffle_key` carried forward from a previous batch's `next_cursor`
+ * (M25.1, plan §A3) — the keyset cursor both `LabellingBatchQuery` and
+ * `ContributeBatchQuery` accept, factored into one field rather than copied
+ * twice the way `limit`'s validation nearly was between the two pools before
+ * this. Optional and absent on a session's first call: there is nothing to
+ * carry forward yet, and an unbounded page from the bottom of the key space
+ * is exactly what that call should get.
+ *
+ * Bound to `SHUFFLE_KEY_MASK` (`d1.ts`), not just checked non-negative: every
+ * `shuffle_key` this Worker has ever written is masked to that same low-53-bit
+ * range (see `d1.ts`'s own comment on why a full 64-bit value cannot survive
+ * the round trip through JSON and back), so a caller-supplied cursor above it
+ * cannot equal any row's key. Refused as a 400 rather than accepted and
+ * silently matching nothing, the same reasoning `limit`'s own ceiling uses.
+ */
+const shuffleCursorQuery = () =>
+  z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((n) => Number.isSafeInteger(n) && n <= SHUFFLE_KEY_MASK)
+    .optional()
+    .openapi({
+      param: { name: "cursor", in: "query" },
+      type: "integer",
+      example: 3_141_592_653_589,
+    });
+
 export const LabellingBatchQuery = z.object({
   limit: z
     .string()
@@ -1687,6 +1717,7 @@ export const LabellingBatchQuery = z.object({
     .refine((n) => n >= 1 && n <= MAX_LABELLING_BATCH)
     .optional()
     .openapi({ param: { name: "limit", in: "query" }, type: "integer", example: 20 }),
+  cursor: shuffleCursorQuery(),
 });
 
 /**
@@ -1770,6 +1801,16 @@ export const LabellingBatch = z
     expires_at: z.int().openapi({ example: 1_754_099_900 }),
     /** How many frames are still waiting, this batch included — the session's own progress bar. */
     remaining: z.int().nonnegative().openapi({ example: 214 }),
+    /**
+     * The `shuffle_key` to pass back as `cursor` on the next call (M25.1,
+     * plan §A3) — `null` only when `images` is empty, since there is nothing
+     * to resume from. A session that never sends this back still gets a
+     * shuffled (not sequential) pool, just without the forward-progress
+     * guarantee the cursor exists for: every call restarts from the bottom
+     * of the key space rather than continuing past what a previous call
+     * already returned.
+     */
+    next_cursor: z.int().nonnegative().nullable().openapi({ example: 3_141_592_653_589 }),
   })
   .openapi("LabellingBatch");
 
@@ -2507,6 +2548,7 @@ export const ContributeBatchQuery = z.object({
     .refine((n) => n >= 1 && n <= MAX_CONTRIBUTE_BATCH)
     .optional()
     .openapi({ param: { name: "limit", in: "query" }, type: "integer", example: 20 }),
+  cursor: shuffleCursorQuery(),
 });
 
 /**
@@ -2536,8 +2578,16 @@ const ContributeImage = z
  * shape exactly, because it is the same kind of session over a different pool
  * and a different `source` stamp, not a different mechanism. `url_mode` and
  * `expires_at` carry the same meaning `labellingBatchHandler`'s own comment
- * gives them; `remaining` is sized against `CONTRIBUTOR_UNRULED_BOX`
- * (`contribute.ts`), not `UNRULED_BOX`.
+ * gives them; `next_cursor` is the same cursor mechanism (M25.1, plan §A3).
+ *
+ * `remaining` is sized against `CONTRIBUTOR_UNRULED_BOX` (`contribute.ts`),
+ * not `UNRULED_BOX`, and unlike `LabellingBatch`'s own field, it is capped
+ * rather than exact once the pool passes 500 (plan §C) — this route sits
+ * behind no Access gate, and an unauthenticated caller does not get an
+ * unbounded scan for asking. A value of exactly 500 means "500 or more," not
+ * "precisely 500"; a contributor does not need the distinction, and
+ * `ContributeVerify.tsx`'s own comment already tracks its own progress
+ * client-side rather than re-deriving it from this number.
  */
 export const ContributeBatch = z
   .object({
@@ -2545,6 +2595,7 @@ export const ContributeBatch = z
     url_mode: z.enum(["signed", "proxy"]).openapi({ example: "signed" }),
     expires_at: z.int().openapi({ example: 1_754_099_900 }),
     remaining: z.int().nonnegative().openapi({ example: 214 }),
+    next_cursor: z.int().nonnegative().nullable().openapi({ example: 3_141_592_653_589 }),
   })
   .openapi("ContributeBatch");
 

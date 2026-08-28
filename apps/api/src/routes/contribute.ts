@@ -92,6 +92,24 @@ const CONTRIBUTOR_UNRULED_BOX = `
             WHERE v.prediction_id = p.id AND v.source = 'user' AND u.trusted = 1)`;
 
 /**
+ * Why this pool has no `unruled_admin`-style denormalised counter of its own
+ * (M25.1, plan §C), stated here rather than only in `CLAUDE.md` — this is the
+ * file whoever changes the predicate above will actually be looking at.
+ * `admin-labelling.ts`'s `unruled_admin` stays true because every write that
+ * can change it — a prediction inserted, an admin verdict inserted — is a
+ * column on a row this codebase's own endpoints touch. `CONTRIBUTOR_UNRULED_BOX`
+ * has a third dependency neither of those do: `users.trusted`, flipped by
+ * hand in production D1 with no endpoint of its own. Promoting a user
+ * retroactively removes boxes from this pool with no write to `images` at
+ * all, which means a denormalised counter here would drift the instant
+ * anybody is promoted, through no bug in any write path — the exact failure
+ * mode migration 0013's own comment on `unruled_admin` warns a naive counter
+ * into. `CLAUDE.md` documents promoting a user as requiring
+ * `admin-labelling.ts`'s reconciliation query precisely because there is no
+ * counter here for a promotion to silently break.
+ */
+
+/**
  * The verified contributor `requireUser` left behind.
  *
  * Not a reachable-undefined case in practice — every route in this file is
@@ -111,7 +129,28 @@ interface BatchImageRow {
   video_id: string;
   r2_key: string;
   timestamp_seconds: number;
+  shuffle_key: number;
 }
+
+/**
+ * The bounded-count cap this pool's `remaining` answers instead of an exact
+ * number (M25.1, plan §C). `admin-labelling.ts`'s equivalent field is an
+ * index-only `COUNT(*)` because `unruled_admin` denormalises pool membership
+ * onto the row; this pool has no such column (see the module comment on
+ * `CONTRIBUTOR_UNRULED_BOX` above for why it cannot), so an *exact* count here
+ * is still the full correlated scan this milestone exists to stop paying for
+ * — and unlike the admin count, this one sits behind unauthenticated public
+ * traffic. `LIMIT CONTRIBUTOR_REMAINING_CAP + 1` bounds the scan to a fixed
+ * cost regardless of how large the true pool is: the inner query stops
+ * looking the moment it has found one more than the cap, so the outer
+ * `COUNT(*)` comes back as either the true count (below the cap) or exactly
+ * `CONTRIBUTOR_REMAINING_CAP + 1` (at or past it) — the second case is what a
+ * caller renders as "500+" rather than a number that would otherwise imply a
+ * precision this pool does not offer. A contributor does not need the exact
+ * figure either way: `ContributeVerify.tsx`'s own comment already decrements
+ * this client-side as frames are ruled rather than refetching it.
+ */
+const CONTRIBUTOR_REMAINING_CAP = 500;
 
 interface BatchBoxRow {
   id: number;
@@ -136,8 +175,12 @@ export const contributeBatchRoute = createRoute({
   description:
     "The whole unruled pool, not the curated public sample — see this file's module " +
     "comment for why. A frame is returned while any of its boxes carries neither an " +
-    "admin verdict nor a trusted user's, and carries only those boxes. Requires a " +
-    "contributor session.",
+    "admin verdict nor a trusted user's, and carries only those boxes. Shuffled by a " +
+    "per-image random key, not extraction order (M25.1); pass `cursor` back as " +
+    "`next_cursor` came from the previous call to keep advancing, and omit it to start " +
+    "over — the pool wraps rather than running dry once a cursor passes every key still " +
+    "in it. `remaining` is capped rather than exact past 500, since this route is public " +
+    "and unauthenticated. Requires a contributor session.",
   request: { query: ContributeBatchQuery },
   responses: {
     200: {
@@ -152,33 +195,81 @@ export const contributeBatchRoute = createRoute({
 export const contributeBatchHandler: RouteHandler<typeof contributeBatchRoute, AppEnv> = async (
   c,
 ) => {
-  const { limit = CONTRIBUTE_BATCH_SIZE } = c.req.valid("query");
+  const { limit = CONTRIBUTE_BATCH_SIZE, cursor } = c.req.valid("query");
 
-  // Same non-random ordering `labellingBatchHandler` uses, for the same
-  // reason: a contributor working through consecutive frames of one scene is
-  // reading context they already have.
+  // Shuffled by `shuffle_key` (M25.1, plan §A), the same mechanism and the
+  // same reason `labellingBatchHandler` now uses — see that handler's own
+  // comment for why the scene-context argument for sequential order is real
+  // and is overridden anyway. This pool gets the ordering half of the plan
+  // but not the counter half (`CONTRIBUTOR_REMAINING_CAP` above): keyset
+  // pagination over `shuffle_key` needs only the column, which every image
+  // already carries, while a denormalised membership count would need a
+  // write path this predicate does not have one of (`users.trusted` again).
+  //
+  // `cursor` and the wrap below are `labellingBatchHandler`'s own mechanism,
+  // unchanged: forward progress is `shuffle_key > cursor`, absent on a
+  // session's first call, and a short page with a cursor still set means the
+  // walk reached the top of the key space with pool left over on the other
+  // side of where it started.
+  const forward = cursor !== undefined ? "AND shuffle_key > ?" : "";
+  const forwardBindings = cursor !== undefined ? [cursor] : [];
+
   const [pageResult, remainingResult] = await c.env.DB.batch<BatchImageRow | { remaining: number }>(
     [
       c.env.DB.prepare(
-        `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds
-         FROM images i
-        WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
-        ORDER BY i.id
-        LIMIT ?`,
-      ).bind(limit),
+        `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.shuffle_key
+           FROM images i
+          WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
+          ${forward}
+          ORDER BY shuffle_key
+          LIMIT ?`,
+      ).bind(...forwardBindings, limit),
       c.env.DB.prepare(
-        `SELECT COUNT(*) AS remaining FROM images i WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})`,
+        `SELECT COUNT(*) AS remaining FROM (
+           SELECT 1 FROM images i
+            WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
+            LIMIT ${CONTRIBUTOR_REMAINING_CAP + 1}
+         )`,
       ),
     ],
   );
 
-  const images = (pageResult?.results ?? []) as BatchImageRow[];
-  const remaining =
+  let images = (pageResult?.results ?? []) as BatchImageRow[];
+  // Clamped to the cap, not the raw `COUNT(*)`: the inner `LIMIT` above stops
+  // at `CONTRIBUTOR_REMAINING_CAP + 1`, so the raw value here is either the
+  // true count (below the cap) or exactly one past it — `Math.min` collapses
+  // that "one past" case down to the cap itself, which is what a caller
+  // renders as "500+" rather than a number one larger than the constant it
+  // was told the cap is.
+  const rawRemaining =
     ((remainingResult?.results ?? []) as { remaining: number }[])[0]?.remaining ?? 0;
+  const remaining = Math.min(rawRemaining, CONTRIBUTOR_REMAINING_CAP);
+
+  // Wrapping, `labellingBatchHandler`'s own mechanism and the same reason:
+  // bounded by the same cursor value in the other direction, so the forward
+  // page and the wrap can never return the same row twice.
+  if (cursor !== undefined && images.length < limit) {
+    const wrapResult = await c.env.DB.prepare(
+      `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.shuffle_key
+         FROM images i
+        WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
+          AND shuffle_key <= ?
+        ORDER BY shuffle_key
+        LIMIT ?`,
+    )
+      .bind(cursor, limit - images.length)
+      .all<BatchImageRow>();
+    images = [...images, ...(wrapResult.results ?? [])];
+  }
+
+  const nextCursor = images.length > 0 ? (images[images.length - 1]?.shuffle_key ?? null) : null;
 
   if (images.length === 0) {
     const { mode, expiresAt } = await frameUrls(c.env, []);
-    return c.json({ images: [], url_mode: mode, expires_at: expiresAt, remaining }, 200);
+    return c.json(
+      { images: [], url_mode: mode, expires_at: expiresAt, remaining, next_cursor: nextCursor },
+      200,
+    );
   }
 
   const imageIds = images.map((image) => image.id);
@@ -228,6 +319,7 @@ export const contributeBatchHandler: RouteHandler<typeof contributeBatchRoute, A
       url_mode: mode,
       expires_at: expiresAt,
       remaining,
+      next_cursor: nextCursor,
     },
     200,
   );

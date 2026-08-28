@@ -159,6 +159,55 @@ describe("submitting a frame's rulings", () => {
     expect(results.map((row) => row.verdict)).toEqual(["accept", "reject"]);
   });
 
+  /**
+   * Plan §B2's reconciliation query, recomputing `images.unruled_admin` from
+   * the source predicate (`UNRULED_BOX`, `admin-labelling.ts`) rather than
+   * trusting the column. A drifting counter is invisible from every other
+   * angle this suite has — the response shape does not carry it — which is
+   * exactly why the plan calls this out as belonging in the acceptance run
+   * rather than a job nothing watches.
+   */
+  async function unruledAdminDrift(): Promise<number> {
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS drift FROM images i
+        WHERE i.unruled_admin != (
+          SELECT COUNT(*) FROM predictions p
+           WHERE p.image_id = i.id
+             AND NOT EXISTS (SELECT 1 FROM verdicts v
+                             WHERE v.prediction_id = p.id AND v.source = 'admin'))`,
+    ).first<{ drift: number }>();
+    return row?.drift ?? 0;
+  }
+
+  it("decrements images.unruled_admin once for a re-ruling, not twice (M25.1, plan §B2)", async () => {
+    const { imageId, predictionId } = await seedPool();
+    const unruledAdmin = () =>
+      env.DB.prepare("SELECT unruled_admin FROM images WHERE id = ?")
+        .bind(imageId)
+        .first<{ unruled_admin: number }>();
+
+    expect((await unruledAdmin())?.unruled_admin).toBe(1);
+    expect(await unruledAdminDrift()).toBe(0);
+
+    // First admin verdict on this prediction: the counter's only real
+    // decrement.
+    expect((await submit(imageId, { verdicts: [ruling(predictionId)] })).status).toBe(201);
+    expect((await unruledAdmin())?.unruled_admin).toBe(0);
+    expect(await unruledAdminDrift()).toBe(0);
+
+    // Re-ruling the same prediction — a legal, ordinary thing to do (this
+    // file's own "keeps both verdicts" test above) — must not decrement a
+    // second time. A naive `UPDATE ... SET unruled_admin = unruled_admin - 1`
+    // on every admin verdict, rather than only the first, would drift this
+    // to -1 here: still a legal SQLite integer, no constraint to catch it,
+    // and invisible from anywhere that only reads the response.
+    expect(
+      (await submit(imageId, { verdicts: [ruling(predictionId, { verdict: "reject" })] })).status,
+    ).toBe(201);
+    expect((await unruledAdmin())?.unruled_admin).toBe(0);
+    expect(await unruledAdminDrift()).toBe(0);
+  });
+
   it("ignores a source the caller tries to name", async () => {
     const { imageId, predictionId } = await seedPool();
 

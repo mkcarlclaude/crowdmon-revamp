@@ -41,6 +41,30 @@ docker compose -f ~/crowdmon/docker-compose.yml logs --tail 50
 Claude Code's permission classifier blocks production D1 writes. Ask Carl to run those
 with `! ` rather than trying to route around it.
 
+**Promoting a user to `users.trusted` requires the M25.1 reconciliation query
+afterward.** `users.trusted` has no endpoint — it is flipped by hand in production D1 —
+and `CONTRIBUTOR_UNRULED_BOX` (`routes/contribute.ts`) reads it, so promoting someone
+retroactively removes boxes from the contributor pool with no write to `images` at all.
+That is fine for the contributor pool itself (plan §C: it has no denormalised counter to
+drift), but `images.unruled_admin` — the admin pool's counter, migration 0013 — is
+computed independently and does not observe a `users.trusted` flip either way, so a
+promotion cannot desynchronise it. Run this after every promotion anyway, as the standing
+check that nothing else has:
+
+```sql
+SELECT COUNT(*) FROM images i
+ WHERE i.unruled_admin != (
+   SELECT COUNT(*) FROM predictions p
+    WHERE p.image_id = i.id
+      AND NOT EXISTS (SELECT 1 FROM verdicts v
+                       WHERE v.prediction_id = p.id AND v.source = 'admin'));
+```
+
+Zero rows means the counter agrees with the source predicate (`UNRULED_BOX`,
+`routes/admin-labelling.ts`). Anything else is drift, and — per M25.1's own plan — a
+drifting counter is worse than the full scan it replaced, because nothing else would ever
+say so.
+
 ## Checks
 
 The commands CI runs are in [`README.md`](README.md) under "Working on it", and

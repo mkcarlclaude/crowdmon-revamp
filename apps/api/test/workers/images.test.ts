@@ -164,6 +164,64 @@ describe("POST /api/jobs/{id}/images", () => {
     expect(results[0]?.dedup_threshold).toBe(16);
   });
 
+  /**
+   * M25.1's own worst-case hazard (plan §A2): `shuffle_key > ?` is NULL, not
+   * true, for a NULL key, so a row that never got one silently leaves the
+   * labelling queue forever with nothing failing. This is the one of the
+   * plan's three named defences that lives on the write path rather than in
+   * the migration's own backfill.
+   */
+  it("stamps every written row with a non-NULL shuffle_key", async () => {
+    const jobId = await seedHeldChunkJob("lllllllllll");
+
+    await reportImages(
+      jobId,
+      reported({
+        frames_extracted: 2,
+        frames_kept: 2,
+        images: [
+          image({ r2_key: "lllllllllll/0000001.jpg", timestamp_seconds: 1 }),
+          image({ r2_key: "lllllllllll/0000002.jpg", timestamp_seconds: 2 }),
+        ],
+      }),
+    );
+
+    const { results } = await env.DB.prepare("SELECT shuffle_key FROM images WHERE video_id = ?")
+      .bind("lllllllllll")
+      .all<{ shuffle_key: number | null }>();
+
+    expect(results).toHaveLength(2);
+    for (const row of results) {
+      expect(row.shuffle_key).not.toBeNull();
+      // Masked to the low 53 bits (`d1.ts`'s `SHUFFLE_KEY_MASK`), so every
+      // value is representable as an exact JS `number` — never negative,
+      // never past `Number.MAX_SAFE_INTEGER`.
+      expect(row.shuffle_key).toBeGreaterThanOrEqual(0);
+      expect(row.shuffle_key).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+    }
+  });
+
+  it("never regenerates shuffle_key on a re-run", async () => {
+    // A reaped chunk re-reports the same frames (CONTEXT.md §Q14) — this must
+    // not reshuffle an already-served frame's position, which is the
+    // "ordering isn't stable across a session" bug the keyset cursor exists
+    // to avoid.
+    const jobId = await seedHeldChunkJob("mmmmmmmmmmm");
+    const body = reported();
+
+    await reportImages(jobId, body);
+    const before = await env.DB.prepare("SELECT shuffle_key FROM images WHERE video_id = ?")
+      .bind("mmmmmmmmmmm")
+      .first<{ shuffle_key: number }>();
+
+    await reportImages(jobId, reported({ dedup_threshold: 99 }));
+    const after = await env.DB.prepare("SELECT shuffle_key FROM images WHERE video_id = ?")
+      .bind("mmmmmmmmmmm")
+      .first<{ shuffle_key: number }>();
+
+    expect(after?.shuffle_key).toBe(before?.shuffle_key);
+  });
+
   it("rejects a worker that does not hold the lease, and writes nothing", async () => {
     const jobId = await seedHeldChunkJob("eeeeeeeeeee", undefined, "somebody-else");
 

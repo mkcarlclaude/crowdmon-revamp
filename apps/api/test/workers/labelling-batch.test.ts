@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../src/app";
+import { adminPoolPageQuery } from "../../src/routes/admin-labelling";
 import { PRESIGN_TTL_SECONDS } from "../../src/schemas";
 import { adminHeaders, configureAccess, installAdminIdentity } from "./admin-identity";
 import { seedClass, seedImage, seedPool, seedPrediction, seedVerdict } from "./labelling-seed";
@@ -63,6 +64,7 @@ interface Batch {
   url_mode: "signed" | "proxy";
   expires_at: number;
   remaining: number;
+  next_cursor: number | null;
 }
 
 describe("the frames a session is handed", () => {
@@ -167,6 +169,98 @@ describe("the frames a session is handed", () => {
     await seedPool();
 
     expect((await getBatch("", {})).status).toBe(401);
+  });
+});
+
+/**
+ * The shuffled, cursor-paged order (M25.1, plan §A). Every test above this
+ * point seeds through `seedImage`'s default monotonic `shuffle_key`, which
+ * keeps insertion order and serving order in agreement so those tests never
+ * had to care which one the endpoint actually walks. These tests seed
+ * explicit, spread-out keys instead, because the whole point here is to
+ * exercise `shuffle_key` order directly.
+ */
+describe("the shuffled, cursor-paged order (M25.1)", () => {
+  it("pages forward through disjoint frames, then wraps once the cursor passes the top", async () => {
+    const videoId = "dQw4w9WgXcQ";
+    await seedVideo(videoId);
+    const classId = await seedClass("Paimon");
+
+    // Five frames, spread across the key space rather than adjacent, so a
+    // test that accidentally read `id` order instead of `shuffle_key` order
+    // would fail immediately rather than passing by coincidence.
+    const keys = [10, 20, 30, 40, 50];
+    const idByKey = new Map<number, number>();
+    for (const [i, shuffleKey] of keys.entries()) {
+      const imageId = await seedImage(videoId, i + 1, { shuffleKey });
+      await seedPrediction(imageId, classId);
+      idByKey.set(shuffleKey, imageId);
+    }
+
+    // Forward: two pages of two, increasing, sharing no frame.
+    const first = (await (await getBatch("?limit=2")).json()) as Batch;
+    expect(first.images.map((image) => image.id)).toEqual([idByKey.get(10), idByKey.get(20)]);
+    expect(first.next_cursor).toBe(20);
+
+    const second = (await (await getBatch(`?limit=2&cursor=${first.next_cursor}`)).json()) as Batch;
+    expect(second.images.map((image) => image.id)).toEqual([idByKey.get(30), idByKey.get(40)]);
+    expect(second.next_cursor).toBe(40);
+
+    // Only one key (50) sits above cursor 40 — a short page, even though
+    // `remaining` still reports the whole five-frame pool, because nothing
+    // here has been ruled on. Refusing to wrap would mean this session stops
+    // here forever, with 10 and 20 never revisited despite still carrying
+    // open boxes. The wrap fills the rest of the page from the bottom of the
+    // key space, which is why frame 10 — already served in `first` — is
+    // legitimately served again: re-serving an unruled frame on a later lap
+    // is the intended behaviour, not the duplicate-row bug the `<=`/`>`
+    // partition at the same cursor value exists to rule out within one call.
+    const third = (await (await getBatch(`?limit=2&cursor=${second.next_cursor}`)).json()) as Batch;
+    expect(third.remaining).toBe(5);
+    expect(third.images.map((image) => image.id)).toEqual([idByKey.get(50), idByKey.get(10)]);
+    expect(third.next_cursor).toBe(10);
+  });
+
+  it("starts from the bottom of the key space with no cursor, not from insertion order", async () => {
+    const videoId = "dQw4w9WgXcQ";
+    await seedVideo(videoId);
+    const classId = await seedClass("Paimon");
+
+    // Inserted high-key-first, so a test that fell back to `ORDER BY i.id`
+    // would return the wrong frame first.
+    const highId = await seedImage(videoId, 1, { shuffleKey: 500 });
+    await seedPrediction(highId, classId);
+    const lowId = await seedImage(videoId, 2, { shuffleKey: 5 });
+    await seedPrediction(lowId, classId);
+
+    const batch = (await (await getBatch("?limit=1")).json()) as Batch;
+
+    expect(batch.images.map((image) => image.id)).toEqual([lowId]);
+    expect(batch.next_cursor).toBe(5);
+  });
+
+  it("uses idx_images_admin_pool, not a scan of images, for the page query", async () => {
+    // Plan §B1's own warning: a query that silently stops matching a partial
+    // index's predicate reads identically from the response, so this is
+    // asserted against the query planner directly rather than inferred from
+    // behaviour. `adminPoolPageQuery` is the exact text
+    // `labellingBatchHandler` runs — imported, not retyped, so this can never
+    // pass against a stand-in the handler has since drifted from.
+    const withoutCursor = await env.DB.prepare(`EXPLAIN QUERY PLAN ${adminPoolPageQuery(false)}`)
+      .bind(20)
+      .all<{ detail: string }>();
+    const withCursor = await env.DB.prepare(`EXPLAIN QUERY PLAN ${adminPoolPageQuery(true)}`)
+      .bind(0, 20)
+      .all<{ detail: string }>();
+
+    for (const plan of [withoutCursor, withCursor]) {
+      const detail = plan.results.map((row) => row.detail).join(" | ");
+      expect(detail).toContain("idx_images_admin_pool");
+      // The negative case matters as much as the positive one: a plan that
+      // mentions the index *and* a full scan of `images` would still have
+      // paid the cost this migration exists to remove.
+      expect(detail).not.toMatch(/SCAN images\b/);
+    }
   });
 });
 

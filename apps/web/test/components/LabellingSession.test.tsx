@@ -54,6 +54,9 @@ function batch(over: Record<string, unknown> = {}) {
     images: [image(1)],
     url_mode: "signed",
     expires_at: 1_754_099_900,
+    // Required-nullable on the wire since M25.1's keyset cursor (see
+    // `ContributeVerify.test.tsx`'s copy of this note).
+    next_cursor: null,
     remaining: 1,
     ...over,
   };
