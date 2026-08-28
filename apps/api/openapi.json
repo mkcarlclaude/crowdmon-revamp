@@ -2599,6 +2599,10 @@
             "minimum": 0,
             "example": 214
           },
+          "remaining_capped": {
+            "type": "boolean",
+            "example": false
+          },
           "next_cursor": {
             "type": "integer",
             "nullable": true,
@@ -2611,6 +2615,7 @@
           "url_mode",
           "expires_at",
           "remaining",
+          "remaining_capped",
           "next_cursor"
         ]
       },

@@ -150,6 +150,7 @@ describe("GET /api/contribute/batch", () => {
     interface ContributeBatchBody {
       images: Array<{ id: number }>;
       remaining: number;
+      remaining_capped: boolean;
       next_cursor: number | null;
     }
 
@@ -167,6 +168,8 @@ describe("GET /api/contribute/batch", () => {
     ).json()) as ContributeBatchBody;
     expect(second.images.map((image) => image.id)).toEqual([idByKey.get(30), idByKey.get(10)]);
     expect(second.remaining).toBe(3);
+    // Below the cap, the count is exact and says so.
+    expect(second.remaining_capped).toBe(false);
   });
 
   /**
@@ -188,9 +191,14 @@ describe("GET /api/contribute/batch", () => {
 
     const body = (await (await asContributor("/api/contribute/batch?limit=1")).json()) as {
       remaining: number;
+      remaining_capped: boolean;
     };
 
     expect(body.remaining).toBe(500);
+    // The bit `Math.min` would otherwise destroy. Without it, "exactly 500
+    // left" and "at least 500 left" are the same number on the wire and the
+    // client cannot render the cap as a cap.
+    expect(body.remaining_capped).toBe(true);
   });
 });
 

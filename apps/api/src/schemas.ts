@@ -2595,6 +2595,13 @@ export const ContributeBatch = z
     url_mode: z.enum(["signed", "proxy"]).openapi({ example: "signed" }),
     expires_at: z.int().openapi({ example: 1_754_099_900 }),
     remaining: z.int().nonnegative().openapi({ example: 214 }),
+    // Whether `remaining` hit its ceiling rather than counting the pool out.
+    // Without this the two meanings of `500` — "exactly 500 left" and "at
+    // least 500 left" — are the same number on the wire, so a client cannot
+    // render the "500+" the cap was designed to be shown as. That was the
+    // M25.1 bug: the counter sat frozen at 500 while the pool drained from
+    // 1,098, which reads as broken rather than bounded.
+    remaining_capped: z.boolean().openapi({ example: false }),
     next_cursor: z.int().nonnegative().nullable().openapi({ example: 3_141_592_653_589 }),
   })
   .openapi("ContributeBatch");

@@ -244,6 +244,14 @@ export const contributeBatchHandler: RouteHandler<typeof contributeBatchRoute, A
   const rawRemaining =
     ((remainingResult?.results ?? []) as { remaining: number }[])[0]?.remaining ?? 0;
   const remaining = Math.min(rawRemaining, CONTRIBUTOR_REMAINING_CAP);
+  // The bit the clamp above would otherwise destroy, and the whole reason
+  // this field exists. `remaining` alone cannot tell "exactly 500 left" from
+  // "at least 500 left" — both arrive as 500 — so a client told to render
+  // "500+" past the cap had no way to know when it was past it. M25.1's plan
+  // specified the rendering and not the signal, and the result was a pool
+  // counter frozen at 500 for the ~600 frames it took to drain below the cap,
+  // which reads as a broken number rather than a bounded one.
+  const remainingCapped = rawRemaining > CONTRIBUTOR_REMAINING_CAP;
 
   // Wrapping, `labellingBatchHandler`'s own mechanism and the same reason:
   // bounded by the same cursor value in the other direction, so the forward
@@ -267,7 +275,14 @@ export const contributeBatchHandler: RouteHandler<typeof contributeBatchRoute, A
   if (images.length === 0) {
     const { mode, expiresAt } = await frameUrls(c.env, []);
     return c.json(
-      { images: [], url_mode: mode, expires_at: expiresAt, remaining, next_cursor: nextCursor },
+      {
+        images: [],
+        url_mode: mode,
+        expires_at: expiresAt,
+        remaining,
+        remaining_capped: remainingCapped,
+        next_cursor: nextCursor,
+      },
       200,
     );
   }
@@ -319,6 +334,7 @@ export const contributeBatchHandler: RouteHandler<typeof contributeBatchRoute, A
       url_mode: mode,
       expires_at: expiresAt,
       remaining,
+      remaining_capped: remainingCapped,
       next_cursor: nextCursor,
     },
     200,

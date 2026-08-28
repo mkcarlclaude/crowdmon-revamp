@@ -814,6 +814,9 @@ type ContributeBatch struct {
 	// Remaining Example: 214
 	Remaining int `json:"remaining"`
 
+	// RemainingCapped Example: false
+	RemainingCapped bool `json:"remaining_capped"`
+
 	// UrlMode Example: signed
 	UrlMode ContributeBatchUrlMode `json:"url_mode"`
 }
