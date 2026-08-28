@@ -2,7 +2,7 @@ import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import { trace } from "@opentelemetry/api";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
-import { chunkForBinding, placeholders } from "../d1";
+import { chunkForBinding, placeholders, randomShuffleKey } from "../d1";
 import {
   ChunkFanOut,
   ClaimRequest,
@@ -762,16 +762,36 @@ export const reportImagesHandler: RouteHandler<typeof reportImagesRoute, AppEnv>
   // derived deterministically from `(video_id, timestamp_seconds)` (migration
   // 0001's comment on the column), so any two rows with the same key already
   // have the same identity, and the conflict clause above fires first.
+  //
+  // `shuffle_key` is bound but never named in the `DO UPDATE SET` list — the
+  // one column here that must not move on a re-run. Migration 0013 (M25.1,
+  // plan §A2) explains why a NULL one is dangerous rather than merely wrong:
+  // `shuffle_key > ?` is NULL, not true, so an image that never got a key
+  // would silently drop out of the labelling queue forever. Writing it here,
+  // explicitly, on every insert is one of the migration's three named
+  // defences against exactly that; the other two are the migration's own
+  // backfill and a test asserting a freshly-reported image's key is
+  // non-NULL. A re-run must never regenerate it — reshuffling an
+  // already-served frame's position mid-session is the "ordering isn't
+  // stable across a session" bug the keyset cursor exists to avoid, not a
+  // difference between a first and a repeat report.
   const statements = [
     ...images.map((image) =>
       c.env.DB.prepare(
-        `INSERT INTO images (r2_key, video_id, timestamp_seconds, phash, dedup_threshold)
-              VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO images (r2_key, video_id, timestamp_seconds, phash, dedup_threshold, shuffle_key)
+              VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(video_id, timestamp_seconds) DO UPDATE SET
               r2_key          = excluded.r2_key,
               phash           = excluded.phash,
               dedup_threshold = excluded.dedup_threshold`,
-      ).bind(image.r2_key, videoId, image.timestamp_seconds, image.phash, dedup_threshold),
+      ).bind(
+        image.r2_key,
+        videoId,
+        image.timestamp_seconds,
+        image.phash,
+        dedup_threshold,
+        randomShuffleKey(),
+      ),
     ),
     // Both updates carry the lease in their `WHERE`, for the reason heartbeat
     // and complete do: the `SELECT` above proved the lease at one instant, and
@@ -985,6 +1005,20 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
   // duplicate.
   const stampValue = job.selection_reason ?? "random";
 
+  // `unruled_admin`'s first writer (M25.1, plan §B2): every prediction this
+  // call inserts is brand new, so it is unruled by definition — there is no
+  // verdict row yet that could reference an id that does not exist until
+  // this same batch creates it — which is what makes this increment
+  // unconditional where `admin-verdicts.ts`'s decrement below cannot be.
+  // Grouped by resolved image id rather than one `UPDATE` per prediction: a
+  // detector proposing several boxes on one frame is the ordinary case, not
+  // an edge one, and `unruled_admin` counts predictions, not report lines.
+  const predictionsPerImage = new Map<number, number>();
+  for (const prediction of predictions) {
+    const imageId = imageIdByKey.get(prediction.r2_key) as number;
+    predictionsPerImage.set(imageId, (predictionsPerImage.get(imageId) ?? 0) + 1);
+  }
+
   const statements = [
     ...predictions.map((prediction) =>
       c.env.DB.prepare(
@@ -1001,6 +1035,12 @@ export const reportPredictionsHandler: RouteHandler<typeof reportPredictionsRout
         prediction.confidence,
         prediction.prompt_version,
         model_id,
+      ),
+    ),
+    ...[...predictionsPerImage].map(([imageId, count]) =>
+      c.env.DB.prepare(`UPDATE images SET unruled_admin = unruled_admin + ? WHERE id = ?`).bind(
+        count,
+        imageId,
       ),
     ),
     ...chunkForBinding(sampled_images, 2).map((keys) =>

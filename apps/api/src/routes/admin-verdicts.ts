@@ -141,6 +141,37 @@ export const submitVerdictsHandler: RouteHandler<typeof submitVerdictsRoute, App
     return c.json({ error: `not a prediction on image ${id}: ${strangers.join(", ")}` }, 404);
   }
 
+  // `unruled_admin`'s second writer (M25.1, plan §B2) — decrement once per
+  // prediction whose *first* admin verdict this call is writing, not once
+  // per verdict written. Verdicts are append-only and an admin may re-rule a
+  // box (this file's own module comment, rule 1): a decrement that fired on
+  // every admin verdict would drift negative the second time anyone
+  // re-rules anything, and a drifting counter is worse than the scan it
+  // replaces, because nothing downstream would ever say so — plan §B2 owes
+  // a reconciliation query for exactly that reason.
+  //
+  // The guard is `NOT EXISTS` against `verdicts` for this `prediction_id`
+  // and `source = 'admin'`, evaluated inside the `UPDATE` itself rather than
+  // read in a separate `SELECT` and branched on in this handler: the read
+  // and the write are not the same instant unless the database makes them
+  // one, the same argument `jobs.ts`'s lease checks make for every write on
+  // a held job. Placed before the inserts below in the statement order that
+  // follows, not because D1 batches are anything but one transaction, but
+  // because the guard's `NOT EXISTS` has to see the pre-this-call state —
+  // it would still see that state even ordered the other way inside one
+  // transaction, but ordering it first is what makes that true by
+  // inspection rather than by relying on statement atomicity nobody
+  // re-reads this comment to confirm.
+  const decrements = verdicts.map((ruling) =>
+    c.env.DB.prepare(
+      `UPDATE images SET unruled_admin = unruled_admin - 1
+        WHERE id = ?
+          AND NOT EXISTS (
+                SELECT 1 FROM verdicts v
+                 WHERE v.prediction_id = ? AND v.source = 'admin')`,
+    ).bind(id, ruling.prediction_id),
+  );
+
   // One batch: every ruling on the frame lands or none does. A partial write
   // would leave the frame in the pool with some boxes ruled and some not —
   // which is a legal state, since that is exactly how a partly-submitted frame
@@ -151,27 +182,35 @@ export const submitVerdictsHandler: RouteHandler<typeof submitVerdictsRoute, App
   // `undefined` binding, and the columns are nullable precisely so an accept or
   // a reject has nothing in them (migration 0003's CHECK ties the two
   // together).
-  const written = await c.env.DB.batch(
-    verdicts.map((ruling) =>
-      c.env.DB.prepare(
-        `INSERT INTO verdicts
-              (prediction_id, verdict, adjusted_x_min, adjusted_y_min, adjusted_x_max,
-               adjusted_y_max, source, annotator_id)
-              VALUES (?, ?, ?, ?, ?, ?, 'admin', ?)`,
-      ).bind(
-        ruling.prediction_id,
-        ruling.verdict,
-        ruling.adjusted_x_min ?? null,
-        ruling.adjusted_y_min ?? null,
-        ruling.adjusted_x_max ?? null,
-        ruling.adjusted_y_max ?? null,
-        annotator(c),
-      ),
+  const inserts = verdicts.map((ruling) =>
+    c.env.DB.prepare(
+      `INSERT INTO verdicts
+            (prediction_id, verdict, adjusted_x_min, adjusted_y_min, adjusted_x_max,
+             adjusted_y_max, source, annotator_id)
+            VALUES (?, ?, ?, ?, ?, ?, 'admin', ?)`,
+    ).bind(
+      ruling.prediction_id,
+      ruling.verdict,
+      ruling.adjusted_x_min ?? null,
+      ruling.adjusted_y_min ?? null,
+      ruling.adjusted_x_max ?? null,
+      ruling.adjusted_y_max ?? null,
+      annotator(c),
     ),
   );
 
+  const written = await c.env.DB.batch([...decrements, ...inserts]);
+  // The decrements' own `meta.changes` are not "verdicts written" — sliced
+  // off before the count below, or a re-ruling (whose decrement correctly
+  // matches zero rows) would still be indistinguishable from an insert that
+  // failed.
+  const insertResults = written.slice(decrements.length);
+
   return c.json(
-    { image_id: id, verdicts: written.reduce((total, one) => total + (one.meta.changes ?? 0), 0) },
+    {
+      image_id: id,
+      verdicts: insertResults.reduce((total, one) => total + (one.meta.changes ?? 0), 0),
+    },
     201,
   );
 };

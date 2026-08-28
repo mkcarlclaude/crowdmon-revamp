@@ -49,8 +49,16 @@ import {
  * on, so contributors are not routinely handed each other's already-settled
  * work — and that asymmetry is the kind of thing that reads as a bug in six
  * months. It is documented at both definitions for exactly that reason.
+ *
+ * No longer read by either query below (M25.1, plan §B1) — `images.unruled_admin`
+ * is the same fact, denormalised onto the row so it can be indexed. Exported
+ * and kept, rather than deleted now that nothing here evaluates it, because it
+ * is still the *definition* the counter has to agree with: the plan's own §B2
+ * reconciliation query is this predicate, recomputed and compared against the
+ * column it now stands in for, and a test built any other way could drift
+ * from what "unruled" actually means without ever being told.
  */
-const UNRULED_BOX = `
+export const UNRULED_BOX = `
   SELECT 1 FROM predictions p
    WHERE p.image_id = i.id
      AND NOT EXISTS (
@@ -62,6 +70,7 @@ interface BatchImageRow {
   r2_key: string;
   timestamp_seconds: number;
   public_sample: number | null;
+  shuffle_key: number;
 }
 
 interface BatchBoxRow {
@@ -89,7 +98,11 @@ export const labellingBatchRoute = createRoute({
     "URL per frame — presigned against R2 when this deployment has an S3 credential, and " +
     "this Worker's own Access-gated proxy path when it does not (`url_mode` says which). " +
     "A frame is returned while any of its boxes has no admin verdict, and carries only " +
-    "those boxes. Requires a Cloudflare Access assertion.",
+    "those boxes. Frames come back shuffled by a per-image random key, not extraction " +
+    "order (M25.1); pass `cursor` back as `next_cursor` came from the previous call to " +
+    "keep advancing through the pool instead of re-fetching its start, and omit it to " +
+    "start over. The pool wraps rather than running dry once a session's cursor passes " +
+    "every key still in it. Requires a Cloudflare Access assertion.",
   request: { query: LabellingBatchQuery },
   responses: {
     200: {
@@ -103,41 +116,114 @@ export const labellingBatchRoute = createRoute({
   },
 });
 
+/**
+ * The admin pool's forward page query, exported so `labelling-batch.test.ts`
+ * can run `EXPLAIN QUERY PLAN` against the exact statement production
+ * issues, not a hand-copied stand-in that could quietly drift from it. Plan
+ * §B1 names why that drift matters here specifically: a query that stops
+ * matching `idx_images_admin_pool`'s predicate reads identically from the
+ * response, so the one place a regression would actually show up is a plan
+ * assertion against this precise text.
+ *
+ * `hasCursor` selects the same two shapes `labellingBatchHandler` builds —
+ * bounded below by the caller's cursor, or not, when there isn't one yet —
+ * rather than always binding a placeholder for it: a query with an unused
+ * `?` is a different statement to the planner than one without, and the
+ * un-cursored shape is what a session's first call actually runs.
+ */
+export function adminPoolPageQuery(hasCursor: boolean): string {
+  return `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.public_sample, i.shuffle_key
+       FROM images i
+      WHERE unruled_admin > 0
+      ${hasCursor ? "AND shuffle_key > ?" : ""}
+      ORDER BY shuffle_key
+      LIMIT ?`;
+}
+
 export const labellingBatchHandler: RouteHandler<typeof labellingBatchRoute, AppEnv> = async (
   c,
 ) => {
-  const { limit = LABELLING_BATCH_SIZE } = c.req.valid("query");
+  const { limit = LABELLING_BATCH_SIZE, cursor } = c.req.valid("query");
 
-  // `ORDER BY i.id` — the order frames were extracted in, which for a sampled
-  // timeline is chronological within a video and grouped by video across them.
-  // Deliberately not random: an operator verifying consecutive frames of one
-  // scene is reading context they already have, and a shuffled pool makes
-  // every frame a cold start. The frozen evaluation pool is where randomness
-  // is load-bearing (CONTEXT.md §Q16), and it is drawn by `selection_reason`,
-  // not by this ordering.
+  // Shuffled, by `shuffle_key` (M25.1, plan §A) — not extraction order. The
+  // sequential order this replaced was deliberate once: an operator verifying
+  // consecutive frames of one scene is reading context they already have, and
+  // a shuffled pool makes every frame a cold start. That argument is still
+  // real and is overridden anyway, because the operator asked for the
+  // opposite once M25's `diverse` frames started entering this same pool
+  // alongside `random` ones — a varied cross-section per session is worth
+  // more than scene context now. Safe to change at all only because ordering
+  // has never been where randomness is load-bearing: the train/eval split is
+  // fixed at *selection* time by `selection_reason` (CONTEXT.md §Q16), so no
+  // labelling order, sequential or shuffled, can move a frame across it.
+  //
+  // `unruled_admin > 0` is `EXISTS (${UNRULED_BOX})`, denormalised (plan §B1)
+  // — the join `UNRULED_BOX` reads is invisible to any index on `images`
+  // alone, and this column is what makes both queries below index walks
+  // instead of the two full scans of `images` this endpoint used to cost.
+  //
+  // `cursor` is the caller's last-seen `shuffle_key`, absent on a session's
+  // first call. Forward progress is `shuffle_key > cursor`; nothing bounds it
+  // from below when there is no cursor yet, so the first call is free to
+  // start anywhere in the key space the query planner likes.
+  const forwardBindings = cursor !== undefined ? [cursor] : [];
+
   const [pageResult, remainingResult] = await c.env.DB.batch<BatchImageRow | { remaining: number }>(
     [
-      c.env.DB.prepare(
-        `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.public_sample
-         FROM images i
-        WHERE EXISTS (${UNRULED_BOX})
-        ORDER BY i.id
-        LIMIT ?`,
-      ).bind(limit),
-      c.env.DB.prepare(`SELECT COUNT(*) AS remaining FROM images i WHERE EXISTS (${UNRULED_BOX})`),
+      c.env.DB.prepare(adminPoolPageQuery(cursor !== undefined)).bind(...forwardBindings, limit),
+      c.env.DB.prepare(`SELECT COUNT(*) AS remaining FROM images WHERE unruled_admin > 0`),
     ],
   );
 
-  const images = (pageResult?.results ?? []) as BatchImageRow[];
+  let images = (pageResult?.results ?? []) as BatchImageRow[];
   const remaining =
     ((remainingResult?.results ?? []) as { remaining: number }[])[0]?.remaining ?? 0;
+
+  // Wrapping (plan §A3), not an edge case deferred: a session that has ruled
+  // its way to the top of the key space gets a short page here — fewer rows
+  // than `limit`, sometimes zero — with `remaining` above still positive,
+  // because nothing is left with a shuffle_key *greater* than the cursor.
+  // Refusing to wrap would mean the session simply stops with frames still
+  // waiting on the other side of where it started.
+  //
+  // The wrap query is bounded by the *same* cursor value, the other
+  // direction: `shuffle_key > cursor` above and `shuffle_key <= cursor` here
+  // partition the whole key space at exactly one point, so the two queries
+  // can never both return the same row — no de-duplication needed regardless
+  // of how small the pool has shrunk to. Only fired when there was a cursor
+  // to bound it by: a first call with none already saw the entire pool in
+  // the query above, and has nothing left to wrap into.
+  if (cursor !== undefined && images.length < limit) {
+    const wrapResult = await c.env.DB.prepare(
+      `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.public_sample, i.shuffle_key
+         FROM images i
+        WHERE unruled_admin > 0
+          AND shuffle_key <= ?
+        ORDER BY shuffle_key
+        LIMIT ?`,
+    )
+      .bind(cursor, limit - images.length)
+      .all<BatchImageRow>();
+    images = [...images, ...(wrapResult.results ?? [])];
+  }
+
+  // Whatever this call actually returned, last — whether that is the forward
+  // page alone or a forward page topped up by a wrap. A session that never
+  // wraps advances monotonically; one that does is deliberately handed a
+  // *smaller* cursor than it started with, because that is the position a
+  // wrapped lap actually ended at, and the next call has to resume from
+  // there, not from where this one began.
+  const nextCursor = images.length > 0 ? (images[images.length - 1]?.shuffle_key ?? null) : null;
 
   if (images.length === 0) {
     // Signed or not, an empty batch has nothing to sign — and `frameUrls`
     // would still have to be asked which mode it is in, which is a question
     // with no consequence when there is no URL to hold.
     const { mode, expiresAt } = await frameUrls(c.env, []);
-    return c.json({ images: [], url_mode: mode, expires_at: expiresAt, remaining }, 200);
+    return c.json(
+      { images: [], url_mode: mode, expires_at: expiresAt, remaining, next_cursor: nextCursor },
+      200,
+    );
   }
 
   const imageIds = images.map((image) => image.id);
@@ -190,6 +276,7 @@ export const labellingBatchHandler: RouteHandler<typeof labellingBatchRoute, App
       url_mode: mode,
       expires_at: expiresAt,
       remaining,
+      next_cursor: nextCursor,
     },
     200,
   );
@@ -251,9 +338,13 @@ export const labellingStatsHandler: RouteHandler<typeof labellingStatsRoute, App
          FROM images i
         WHERE EXISTS (SELECT 1 FROM predictions p WHERE p.image_id = i.id)`,
     ),
-    c.env.DB.prepare(
-      `SELECT COUNT(*) AS images_remaining FROM images i WHERE EXISTS (${UNRULED_BOX})`,
-    ),
+    // `unruled_admin > 0`, not `EXISTS (${UNRULED_BOX})` (M25.1, plan §B1):
+    // this is the second of the four full-scan sites the plan's own
+    // "finding" names — reached on every stats poll rather than every batch
+    // request, but the same `idx_images_admin_pool` partial index answers it
+    // in one, since the index holds exactly the rows this predicate would
+    // otherwise have to visit all 19,352 to find.
+    c.env.DB.prepare(`SELECT COUNT(*) AS images_remaining FROM images WHERE unruled_admin > 0`),
     c.env.DB.prepare(
       // Every count is over `predictions.id`, never over `verdicts.id`. A
       // prediction may legally carry several verdicts (migration 0003 refuses

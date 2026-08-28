@@ -3,7 +3,8 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../../src/app";
 import { adminHeaders, configureAccess, installAdminIdentity } from "./admin-identity";
 import { seedSession, seedUser } from "./contributor-seed";
-import { seedImage, seedPool, seedPrediction, seedVerdict } from "./labelling-seed";
+import { seedClass, seedImage, seedPool, seedPrediction, seedVerdict } from "./labelling-seed";
+import { seedVideo } from "./seed";
 
 /**
  * `/api/contribute/*` (M20, plan §B3, §B4, §B5, §B6).
@@ -125,6 +126,71 @@ describe("GET /api/contribute/batch", () => {
     await seedPool();
     const res = await app.request("/api/contribute/batch", {}, env);
     expect(res.status).toBe(401);
+  });
+
+  /**
+   * The same shuffle_key keyset cursor `labellingBatchHandler` uses (M25.1,
+   * plan §A3), exercised through this pool instead — `CONTRIBUTOR_UNRULED_BOX`
+   * rather than `UNRULED_BOX`, and no `idx_images_admin_pool` to lean on
+   * (plan §C), but the same forward-then-wrap mechanism.
+   */
+  it("pages forward through disjoint frames, then wraps once the cursor passes the top", async () => {
+    const videoId = "dQw4w9WgXcQ";
+    await seedVideo(videoId);
+    const classId = await seedClass("Paimon");
+
+    const keys = [10, 20, 30];
+    const idByKey = new Map<number, number>();
+    for (const [i, shuffleKey] of keys.entries()) {
+      const imageId = await seedImage(videoId, i + 1, { shuffleKey });
+      await seedPrediction(imageId, classId);
+      idByKey.set(shuffleKey, imageId);
+    }
+
+    interface ContributeBatchBody {
+      images: Array<{ id: number }>;
+      remaining: number;
+      next_cursor: number | null;
+    }
+
+    const first = (await (
+      await asContributor("/api/contribute/batch?limit=2")
+    ).json()) as ContributeBatchBody;
+    expect(first.images.map((image) => image.id)).toEqual([idByKey.get(10), idByKey.get(20)]);
+    expect(first.next_cursor).toBe(20);
+
+    // Only one key (30) sits above cursor 20 — a short page that wraps back
+    // to the bottom of the key space to fill out the rest, re-serving frame
+    // 10 rather than stopping with an unruled frame left behind.
+    const second = (await (
+      await asContributor(`/api/contribute/batch?limit=2&cursor=${first.next_cursor}`)
+    ).json()) as ContributeBatchBody;
+    expect(second.images.map((image) => image.id)).toEqual([idByKey.get(30), idByKey.get(10)]);
+    expect(second.remaining).toBe(3);
+  });
+
+  /**
+   * The bounded count (M25.1, plan §C): this route is public and
+   * unauthenticated, so its `remaining` is capped at `CONTRIBUTOR_REMAINING_CAP`
+   * rather than an exact `COUNT(*)` — the admin pool's exact figure relies on
+   * `unruled_admin`, which this pool has no denormalised column for.
+   */
+  it("caps remaining at 500 rather than scanning for the exact count past it", async () => {
+    const videoId = "dQw4w9WgXcQ";
+    await seedVideo(videoId);
+    const classId = await seedClass("Paimon");
+
+    const TOTAL = 505;
+    for (let i = 0; i < TOTAL; i++) {
+      const imageId = await seedImage(videoId, i + 1, { shuffleKey: i });
+      await seedPrediction(imageId, classId);
+    }
+
+    const body = (await (await asContributor("/api/contribute/batch?limit=1")).json()) as {
+      remaining: number;
+    };
+
+    expect(body.remaining).toBe(500);
   });
 });
 

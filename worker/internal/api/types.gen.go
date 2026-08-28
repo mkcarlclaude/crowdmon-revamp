@@ -805,6 +805,9 @@ type ContributeBatch struct {
 	ExpiresAt int               `json:"expires_at"`
 	Images    []ContributeImage `json:"images"`
 
+	// NextCursor Example: 3141592653589
+	NextCursor *int `json:"next_cursor"`
+
 	// Remaining Example: 214
 	Remaining int `json:"remaining"`
 
@@ -1145,6 +1148,9 @@ type LabellingBatch struct {
 	// ExpiresAt Example: 1754099900
 	ExpiresAt int              `json:"expires_at"`
 	Images    []LabellingImage `json:"images"`
+
+	// NextCursor Example: 3141592653589
+	NextCursor *int `json:"next_cursor"`
 
 	// Remaining Example: 214
 	Remaining int `json:"remaining"`
@@ -1615,7 +1621,8 @@ type ListJobsParams struct {
 
 // LabellingBatchParams defines parameters for LabellingBatch.
 type LabellingBatchParams struct {
-	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor *int `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListVerdictsParams defines parameters for ListVerdicts.
@@ -1659,7 +1666,8 @@ type GoogleAuthStartParams struct {
 
 // ContributeBatchParams defines parameters for ContributeBatch.
 type ContributeBatchParams struct {
-	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor *int `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // SnapshotSourceParams defines parameters for SnapshotSource.
@@ -1943,7 +1951,7 @@ type ClientInterface interface {
 
 	// LabellingBatch The next N frames to verify, with their boxes and their URLs
 	//
-	// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Requires a Cloudflare Access assertion.
+	// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Frames come back shuffled by a per-image random key, not extraction order (M25.1); pass `cursor` back as `next_cursor` came from the previous call to keep advancing through the pool instead of re-fetching its start, and omit it to start over. The pool wraps rather than running dry once a session's cursor passes every key still in it. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/labelling/batch (the `LabellingBatch` operationId).
 	LabellingBatch(ctx context.Context, params *LabellingBatchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2084,7 +2092,7 @@ type ClientInterface interface {
 
 	// ContributeBatch The next N frames for a contributor to verify, with their boxes and their URLs
 	//
-	// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Requires a contributor session.
+	// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Shuffled by a per-image random key, not extraction order (M25.1); pass `cursor` back as `next_cursor` came from the previous call to keep advancing, and omit it to start over — the pool wraps rather than running dry once a cursor passes every key still in it. `remaining` is capped rather than exact past 500, since this route is public and unauthenticated. Requires a contributor session.
 	//
 	// Corresponds with GET /api/contribute/batch (the `ContributeBatch` operationId).
 	ContributeBatch(ctx context.Context, params *ContributeBatchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2604,7 +2612,7 @@ func (c *Client) ListJobs(ctx context.Context, params *ListJobsParams, reqEditor
 
 // LabellingBatch The next N frames to verify, with their boxes and their URLs
 //
-// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Requires a Cloudflare Access assertion.
+// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Frames come back shuffled by a per-image random key, not extraction order (M25.1); pass `cursor` back as `next_cursor` came from the previous call to keep advancing through the pool instead of re-fetching its start, and omit it to start over. The pool wraps rather than running dry once a session's cursor passes every key still in it. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/labelling/batch (the `LabellingBatch` operationId).
 func (c *Client) LabellingBatch(ctx context.Context, params *LabellingBatchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2935,7 +2943,7 @@ func (c *Client) ListActiveClasses(ctx context.Context, reqEditors ...RequestEdi
 
 // ContributeBatch The next N frames for a contributor to verify, with their boxes and their URLs
 //
-// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Requires a contributor session.
+// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Shuffled by a per-image random key, not extraction order (M25.1); pass `cursor` back as `next_cursor` came from the previous call to keep advancing, and omit it to start over — the pool wraps rather than running dry once a cursor passes every key still in it. `remaining` is capped rather than exact past 500, since this route is public and unauthenticated. Requires a contributor session.
 //
 // Corresponds with GET /api/contribute/batch (the `ContributeBatch` operationId).
 func (c *Client) ContributeBatch(ctx context.Context, params *ContributeBatchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3945,6 +3953,18 @@ func NewLabellingBatchRequest(server string, params *LabellingBatchParams) (*htt
 
 		}
 
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -4705,6 +4725,18 @@ func NewContributeBatchRequest(server string, params *ContributeBatchParams) (*h
 		if params.Limit != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -5630,7 +5662,7 @@ type ClientWithResponsesInterface interface {
 
 	// LabellingBatchWithResponse The next N frames to verify, with their boxes and their URLs
 	//
-	// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Requires a Cloudflare Access assertion.
+	// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Frames come back shuffled by a per-image random key, not extraction order (M25.1); pass `cursor` back as `next_cursor` came from the previous call to keep advancing through the pool instead of re-fetching its start, and omit it to start over. The pool wraps rather than running dry once a session's cursor passes every key still in it. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -5801,7 +5833,7 @@ type ClientWithResponsesInterface interface {
 
 	// ContributeBatchWithResponse The next N frames for a contributor to verify, with their boxes and their URLs
 	//
-	// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Requires a contributor session.
+	// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Shuffled by a per-image random key, not extraction order (M25.1); pass `cursor` back as `next_cursor` came from the previous call to keep advancing, and omit it to start over — the pool wraps rather than running dry once a cursor passes every key still in it. `remaining` is capped rather than exact past 500, since this route is public and unauthenticated. Requires a contributor session.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -8965,7 +8997,7 @@ func (c *ClientWithResponses) ListJobsWithResponse(ctx context.Context, params *
 
 // LabellingBatchWithResponse The next N frames to verify, with their boxes and their URLs
 //
-// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Requires a Cloudflare Access assertion.
+// One call returns a session's next frames, the model's un-ruled boxes on each, and a URL per frame — presigned against R2 when this deployment has an S3 credential, and this Worker's own Access-gated proxy path when it does not (`url_mode` says which). A frame is returned while any of its boxes has no admin verdict, and carries only those boxes. Frames come back shuffled by a per-image random key, not extraction order (M25.1); pass `cursor` back as `next_cursor` came from the previous call to keep advancing through the pool instead of re-fetching its start, and omit it to start over. The pool wraps rather than running dry once a session's cursor passes every key still in it. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -9250,7 +9282,7 @@ func (c *ClientWithResponses) ListActiveClassesWithResponse(ctx context.Context,
 
 // ContributeBatchWithResponse The next N frames for a contributor to verify, with their boxes and their URLs
 //
-// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Requires a contributor session.
+// The whole unruled pool, not the curated public sample — see this file's module comment for why. A frame is returned while any of its boxes carries neither an admin verdict nor a trusted user's, and carries only those boxes. Shuffled by a per-image random key, not extraction order (M25.1); pass `cursor` back as `next_cursor` came from the previous call to keep advancing, and omit it to start over — the pool wraps rather than running dry once a cursor passes every key still in it. `remaining` is capped rather than exact past 500, since this route is public and unauthenticated. Requires a contributor session.
 //
 // Returns a wrapper object for the known response body format(s).
 //

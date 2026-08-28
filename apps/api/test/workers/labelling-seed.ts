@@ -34,6 +34,23 @@ export async function seedClass(
 }
 
 /**
+ * Hands out a strictly increasing `shuffle_key` to every `seedImage` call
+ * that does not name its own (M25.1, plan §A). A test-seeded image bypasses
+ * `reportImagesHandler`, the endpoint that would otherwise stamp one, so
+ * something here has to — a NULL key is not a lesser default, it is the
+ * exact hazard migration 0013's own comment names: invisible to any query
+ * filtering on `shuffle_key`, forever, with nothing failing.
+ *
+ * Monotonic rather than random by default so that a suite written before
+ * M25.1 — which seeded frames in the order it wanted them served, back when
+ * serving order followed `images.id` — keeps working unmodified: insertion
+ * order and `shuffle_key` order agree unless a test overrides one to
+ * exercise shuffling or the cursor directly (`labelling-batch.test.ts`'s own
+ * ordering and wraparound cases do).
+ */
+let nextShuffleKey = 1;
+
+/**
  * One frame. `timestampSeconds` is explicit rather than defaulted because
  * `idx_images_identity` (migration 0001) is unique on `(video_id,
  * timestamp_seconds)`, so a suite seeding several frames for one video has to
@@ -43,11 +60,11 @@ export async function seedClass(
 export async function seedImage(
   videoId: string,
   timestampSeconds: number,
-  { publicSample }: { publicSample?: 0 | 1 } = {},
+  { publicSample, shuffleKey }: { publicSample?: 0 | 1; shuffleKey?: number } = {},
 ): Promise<number> {
   const row = await env.DB.prepare(
-    `INSERT INTO images (r2_key, video_id, timestamp_seconds, phash, dedup_threshold, public_sample)
-          VALUES (?, ?, ?, 'af3c9e1b2d4f7a80', 8, ?)
+    `INSERT INTO images (r2_key, video_id, timestamp_seconds, phash, dedup_threshold, public_sample, shuffle_key)
+          VALUES (?, ?, ?, 'af3c9e1b2d4f7a80', 8, ?, ?)
        RETURNING id`,
   )
     .bind(
@@ -55,6 +72,7 @@ export async function seedImage(
       videoId,
       timestampSeconds,
       publicSample ?? null,
+      shuffleKey ?? nextShuffleKey++,
     )
     .first<{ id: number }>();
 
@@ -79,6 +97,17 @@ export async function seedPrediction(
     .first<{ id: number }>();
 
   if (!row) throw new Error("seeding a prediction inserted nothing");
+
+  // Mirrors `reportPredictionsHandler`'s own write to `images.unruled_admin`
+  // (M25.1, plan §B2). A prediction inserted directly here, bypassing the
+  // real endpoint, would otherwise leave the counter at its `ADD COLUMN
+  // DEFAULT 0` forever — invisible to `idx_images_admin_pool` regardless of
+  // how many un-ruled boxes the row actually carries, which would look like
+  // the endpoint under test was broken rather than the fixture.
+  await env.DB.prepare("UPDATE images SET unruled_admin = unruled_admin + 1 WHERE id = ?")
+    .bind(imageId)
+    .run();
+
   return row.id;
 }
 
@@ -115,6 +144,28 @@ export async function seedVerdict(
     annotatorId?: string;
   } = {},
 ): Promise<void> {
+  // Mirrors `submitVerdictsHandler`'s own guarded decrement (M25.1, plan
+  // §B2), run before the insert below for the same reason that handler
+  // orders it first: the guard's `NOT EXISTS` has to see the state before
+  // *this* verdict lands. Only for `source = 'admin'` — `unruled_admin`
+  // counts admin verdicts alone (`UNRULED_BOX`'s own predicate), so a
+  // seeded `anon` or `user` verdict must not move it, the same asymmetry
+  // `admin-labelling.ts` and `contribute.ts` document at their own
+  // predicates. A test that seeds two admin verdicts on one prediction —
+  // exercising a re-ruling directly, without going through the endpoint —
+  // would otherwise drift this fixture's counter negative exactly the way
+  // the plan warns an unguarded decrement would in production.
+  if (source === "admin") {
+    await env.DB.prepare(
+      `UPDATE images SET unruled_admin = unruled_admin - 1
+        WHERE id = (SELECT image_id FROM predictions WHERE id = ?)
+          AND NOT EXISTS (
+                SELECT 1 FROM verdicts v WHERE v.prediction_id = ? AND v.source = 'admin')`,
+    )
+      .bind(predictionId, predictionId)
+      .run();
+  }
+
   await env.DB.prepare(
     `INSERT INTO verdicts (prediction_id, verdict, source, annotator_id) VALUES (?, ?, ?, ?)`,
   )
