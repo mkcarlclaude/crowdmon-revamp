@@ -59,6 +59,10 @@ function batch(over: Record<string, unknown> = {}) {
     images: [image(1)],
     url_mode: "signed",
     expires_at: 1_754_099_900,
+    // Required-nullable on the wire since M25.1's keyset cursor: a fixture
+    // omitting it fails the response schema, and the component then renders
+    // nothing with no error to say why.
+    next_cursor: null,
     remaining: 1,
     ...over,
   };
@@ -160,7 +164,10 @@ describe("ContributeVerify", () => {
 
   it("shows the next batch once the current one is finished, and 'nothing left' once the pool is empty", async () => {
     stubApi({
-      batches: [batch(), { images: [], url_mode: "signed", expires_at: 1, remaining: 0 }],
+      batches: [
+        batch(),
+        { images: [], url_mode: "signed", expires_at: 1, remaining: 0, next_cursor: null },
+      ],
     });
 
     render(wrap(<ContributeVerify />));
