@@ -1478,13 +1478,18 @@ not fixable by relabelling, since §Q16 makes the frozen pool permanent.
   32-bit halves parsed once, SWAR popcount: 34ms, same answers. The tests could not tell
   the two apart, because a unit test's pool is a dozen frames and a real one is thousands
 
+**Verified by hand on 2026-08-28**, which was the one thing no test could do. A 400-frame
+`diverse` pass on `SEJtdGgcp6k` came back as gameplay, not as the failure the plan named —
+menus, loading screens and map views score as maximally far from everything under a pHash
+distance dominated by layout and brightness, so a sampler that "worked" could have handed
+back 400 shots of UI and looked identical from the outside. It did not, so no content
+filter is needed and 400 stands as a per-video budget. Reading the drawn set required
+`/admin/videos/:id?selection_reason=diverse`
+([#170](https://github.com/mkcarlclaude/crowdmon-revamp/pull/170)) — before that the grid
+flattened the column to a boolean and the only way to see which 400 was a database export.
+
 Open at the close of M25:
 
-- **No `diverse` pass has been run against production**, so the plan's fourth verification
-  item — export the database and check by hand that the drawn set is not visibly
-  near-duplicate frames — is outstanding. Selection *quality* is not unit-testable; the
-  failure mode is a sampler that "works" and returns 200 shots of the same loading screen,
-  and only a person looking at the frames can rule it out
 - **The class roster disagrees with the labels.** Only Paimon and Hu Tao are `active`, yet
   the 125 labels are 118 Paimon and 7 Raiden Shogun — and Raiden, with 233 candidate
   predictions, is switched off. Somebody has to decide which characters v5 trains on and
