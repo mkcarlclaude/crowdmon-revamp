@@ -28,7 +28,7 @@ is not:
 SELECT COUNT(*) AS remaining FROM images i WHERE EXISTS (UNRULED_BOX)
 ```
 
-No `LIMIT`. That visits every row in `images` — 19,352 today — and runs a correlated
+No `LIMIT`. That visits every row in `images` — 18,952 today — and runs a correlated
 `EXISTS` probe into `predictions` on each one.
 
 Four sites do this:
@@ -41,12 +41,12 @@ Four sites do this:
 | `contribute.ts:170` | contributor | every batch request, **unauthenticated public traffic** |
 
 Rough per-batch arithmetic at today's sizes, with a pool of ~1,300 unruled images out of
-19,352:
+18,952:
 
 | | rows read |
 |---|---|
 | page query | ~280 image rows + probes |
-| count query | 19,352 image rows + 19,352 probes |
+| count query | 18,952 image rows + 18,952 probes |
 | **per batch** | **~40,000** |
 
 A 400-frame session at `LABELLING_BATCH_SIZE = 20` is 20 batches, so roughly **800,000
@@ -128,7 +128,7 @@ CREATE INDEX idx_images_admin_pool ON images (shuffle_key) WHERE unruled_admin >
 ```
 
 A constant `DEFAULT 0` *is* legal in `ADD COLUMN`, unlike A2's case. The partial index
-holds one entry per pool image (~1,300) rather than one per image (19,352), and it
+holds one entry per pool image (~1,300) rather than one per image (18,952), and it
 references only its own table, which is what makes it legal at all — a partial index
 cannot carry a subquery.
 
@@ -221,7 +221,7 @@ against the *new* schema is fine, since it simply never mentions the new columns
 
 ## Deliberately not in this plan
 
-- **Moving off D1.** The corpus is 19,352 images and the pool is ~1,300. This is an
+- **Moving off D1.** The corpus is 18,952 images and the pool is ~1,300. This is an
   indexing problem at a size SQLite does not notice; the two D1 constraints that have
   actually bitten this project are the 100-bound-param ceiling and the ignored
   `foreign_keys` pragma, and neither is about scale nor improves elsewhere.
