@@ -106,6 +106,25 @@ const asBox = (drag: Drag): NewBox => ({
   y_max: Math.max(drag.y1, drag.y2),
 });
 
+/**
+ * The smallest box a release commits, in the same normalized [0, 1] units
+ * as everything else here (M26.4, plan §A2). Below this, `drawnIsUsable`
+ * used to be sufficient on its own — `x_max > x_min && y_max > y_min`,
+ * rejecting only a truly zero-area box — because a human pressing a
+ * physical `Save box` button was never going to press it on a 2-pixel
+ * smudge. That human judgment is gone along with the button: with a box
+ * committing the instant the pointer lifts, every twitch that moves the
+ * cursor one pixel between press and release would otherwise become a
+ * `ground_truth` row. The exact value matters less than what happens below
+ * it — a release smaller than this is discarded silently, the same as a
+ * click that was never a drag, not surfaced as an error the annotator has
+ * to dismiss. The existing box list is the undo path for everything that
+ * *does* commit, and it already has a delete; that is enough, because a
+ * mistake is visible there immediately rather than pending behind a button
+ * that no longer exists.
+ */
+const MIN_BOX_DIMENSION = 0.01;
+
 export function GroundTruthCard({
   frame,
   onDrawBox,
@@ -126,10 +145,13 @@ export function GroundTruthCard({
   );
   const [drawing, setDrawing] = useState(false);
   const [drag, setDrag] = useState<Drag | null>(null);
-  // Separate from `drag !== null`, `VerificationCard`'s own reason: without
-  // it, `onPointerMove` keeps tracking the cursor after release, so moving
-  // toward the Save button after lifting the pointer would stretch the box
-  // on the way there.
+  // Separate from `drag !== null`, `VerificationCard`'s own reason, carried
+  // over rather than rediscovered: without it, `onPointerMove` keeps
+  // tracking the cursor after release. There is no `Save box` button to
+  // move toward any more (M26.4 removed it — a box now commits the instant
+  // the pointer lifts), but the hazard this guards against is the same
+  // shape either way — a pointer that is not actually down must never be
+  // able to keep stretching a box that already finished.
   const [dragging, setDragging] = useState(false);
 
   function positionOf(event: {
@@ -147,18 +169,15 @@ export function GroundTruthCard({
   }
 
   const drawn = drag ? asBox(drag) : null;
-  const drawnIsUsable = drawn !== null && drawn.x_max > drawn.x_min && drawn.y_max > drawn.y_min;
+  const drawnIsUsable =
+    drawn !== null &&
+    drawn.x_max - drawn.x_min >= MIN_BOX_DIMENSION &&
+    drawn.y_max - drawn.y_min >= MIN_BOX_DIMENSION;
 
   function cancelDrawing() {
     setDrawing(false);
     setDrag(null);
     setDragging(false);
-  }
-
-  function saveBox() {
-    if (selectedClass === null || !drawn || !drawnIsUsable) return;
-    onDrawBox(selectedClass, drawn);
-    cancelDrawing();
   }
 
   const overlayBoxes: OverlayBox[] = [
@@ -211,16 +230,9 @@ export function GroundTruthCard({
         ) : (
           <>
             <p className="text-sm text-[var(--color-text-muted)]">
-              Drag on the frame to draw the box.
+              Drag on the frame to draw a box — releasing saves it, and drawing stays on for the
+              next one.
             </p>
-            <button
-              type="button"
-              disabled={!drawnIsUsable || busy}
-              onClick={saveBox}
-              className="rounded border border-[var(--color-done)] px-3 py-1 text-sm disabled:opacity-50"
-            >
-              Save box
-            </button>
             <button
               type="button"
               onClick={cancelDrawing}
@@ -232,10 +244,14 @@ export function GroundTruthCard({
         )}
       </div>
 
-      {/* No keyboard equivalent, matching `VerificationCard`'s own dashed
-          drag surface: this is an alternative to the class picker and
-          Save/Cancel buttons, which are the keyboard path through the same
-          action. */}
+      {/* No keyboard equivalent. Unlike the claim this comment used to
+          make, the class picker and Cancel are not "the keyboard path
+          through the same action" — no keyboard control can produce a
+          *box*, because geometry needs a drag, and removing `Save box`
+          (M26.4) only made that plainer than it already was. What a
+          keyboard user gets from them is control over the surface around
+          the drag: which class a box belongs to, and a way out of drawing
+          mode. Drawing the box itself has no substitute. */}
       <BoxOverlay
         ref={surface}
         frameUrl={frame.url}
@@ -261,16 +277,34 @@ export function GroundTruthCard({
           if (!at) return;
           setDrag({ ...drag, x2: at.x, y2: at.y });
         }}
+        // The commit, now that there is no button to press instead (M26.4,
+        // plan §A1): a usable box posts the instant the pointer lifts, and
+        // `drawing` is left untouched so the surface is still armed for the
+        // next drag — several boxes on one frame are several drags, not
+        // several round trips through a button. Below `MIN_BOX_DIMENSION`,
+        // `drawn` is simply dropped: no request, no row, no error the
+        // annotator has to dismiss, the same silent discard a click that
+        // never became a drag already got.
         onPointerUp={(event) => {
           setDragging(false);
           if (event.currentTarget.hasPointerCapture(event.pointerId)) {
             event.currentTarget.releasePointerCapture(event.pointerId);
           }
+          if (drawn && drawnIsUsable && selectedClass !== null) {
+            onDrawBox(selectedClass, drawn);
+          }
+          setDrag(null);
         }}
         // A cancelled pointer — a touch turned into a scroll, a device lost
-        // — never sends `pointerup`; without this the box would stay live
-        // and the next pointer move would resume stretching it.
-        onPointerCancel={() => setDragging(false)}
+        // — never sends `pointerup`, so nothing above ever runs for it.
+        // `drag` is cleared here rather than left to linger: with no Save
+        // button to later commit an abandoned drag from, keeping its
+        // dashed rectangle on screen would only be a stale box nothing can
+        // finish, until the next `pointerdown` happened to overwrite it.
+        onPointerCancel={() => {
+          setDragging(false);
+          setDrag(null);
+        }}
       >
         {drawn && (
           <span

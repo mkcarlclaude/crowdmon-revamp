@@ -173,8 +173,8 @@ describe("GroundTruthCard — what the detector proposed, shown but not editable
   });
 });
 
-describe("GroundTruthCard — drawing and saving a box (write-path only, see this file's header)", () => {
-  it("draws a box and reports it to the class currently selected", async () => {
+describe("GroundTruthCard — a box commits on release (write-path only, see this file's header)", () => {
+  it("commits a box the instant the pointer is released, with no further interaction", async () => {
     const onDrawBox = vi.fn();
     render(
       <GroundTruthCard
@@ -193,29 +193,12 @@ describe("GroundTruthCard — drawing and saving a box (write-path only, see thi
       { target: surface, coords: { clientX: 120, clientY: 60 } },
       { target: surface, keys: "[/MouseLeft]" },
     ]);
-    await userEvent.click(screen.getByRole("button", { name: /save box/i }));
 
+    // No button clicked after the release — the release itself is the commit.
     expect(onDrawBox).toHaveBeenCalledWith(3, { x_min: 0.1, y_min: 0.1, x_max: 0.6, y_max: 0.6 });
   });
 
-  it("will not save a box that was never drawn", async () => {
-    const onDrawBox = vi.fn();
-    render(
-      <GroundTruthCard
-        frame={frame()}
-        onDrawBox={onDrawBox}
-        onDeleteBox={vi.fn()}
-        onSetExhaustive={vi.fn()}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Draw a box" }));
-
-    expect(screen.getByRole("button", { name: /save box/i })).toBeDisabled();
-    expect(onDrawBox).not.toHaveBeenCalled();
-  });
-
-  it("cancel clears the drawn box without calling onDrawBox", async () => {
+  it("leaves drawing mode on after a commit, so the next drag is another box", async () => {
     const onDrawBox = vi.fn();
     render(
       <GroundTruthCard
@@ -228,12 +211,106 @@ describe("GroundTruthCard — drawing and saving a box (write-path only, see thi
 
     await userEvent.click(screen.getByRole("button", { name: "Draw a box" }));
     const surface = layOutFrame();
+
     await userEvent.pointer([
       { target: surface, coords: { clientX: 20, clientY: 10 }, keys: "[MouseLeft>]" },
       { target: surface, coords: { clientX: 120, clientY: 60 } },
       { target: surface, keys: "[/MouseLeft]" },
     ]);
 
+    // There is no `Save box` button any more, and no `Draw a box` button
+    // either — the surface never left drawing mode.
+    expect(screen.queryByRole("button", { name: /save box/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Draw a box" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+  });
+
+  it("several drags on one frame are several boxes, with no button between them", async () => {
+    const onDrawBox = vi.fn();
+    render(
+      <GroundTruthCard
+        frame={frame()}
+        onDrawBox={onDrawBox}
+        onDeleteBox={vi.fn()}
+        onSetExhaustive={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Draw a box" }));
+    const surface = layOutFrame();
+
+    await userEvent.pointer([
+      { target: surface, coords: { clientX: 0, clientY: 0 }, keys: "[MouseLeft>]" },
+      { target: surface, coords: { clientX: 40, clientY: 20 } },
+      { target: surface, keys: "[/MouseLeft]" },
+    ]);
+    await userEvent.pointer([
+      { target: surface, coords: { clientX: 60, clientY: 30 }, keys: "[MouseLeft>]" },
+      { target: surface, coords: { clientX: 100, clientY: 50 } },
+      { target: surface, keys: "[/MouseLeft]" },
+    ]);
+
+    expect(onDrawBox).toHaveBeenCalledTimes(2);
+    expect(onDrawBox).toHaveBeenNthCalledWith(1, 3, { x_min: 0, y_min: 0, x_max: 0.2, y_max: 0.2 });
+    expect(onDrawBox).toHaveBeenNthCalledWith(2, 3, {
+      x_min: 0.3,
+      y_min: 0.3,
+      x_max: 0.5,
+      y_max: 0.5,
+    });
+  });
+
+  it("discards a release below the minimum size silently — no request, no row, no error", async () => {
+    const onDrawBox = vi.fn();
+    render(
+      <GroundTruthCard
+        frame={frame()}
+        onDrawBox={onDrawBox}
+        onDeleteBox={vi.fn()}
+        onSetExhaustive={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Draw a box" }));
+    const surface = layOutFrame();
+
+    // A press-and-release with no meaningful movement — a click, not a
+    // drag, exactly the case `MIN_BOX_DIMENSION` exists to keep out of
+    // `ground_truth` now that there is no human judgment behind a Save
+    // button to catch it.
+    await userEvent.pointer([
+      { target: surface, coords: { clientX: 20, clientY: 10 }, keys: "[MouseLeft>]" },
+      { target: surface, keys: "[/MouseLeft]" },
+    ]);
+
+    expect(onDrawBox).not.toHaveBeenCalled();
+    // Silently, not as a dismissible error — and drawing mode is
+    // untouched, not reset or exited by the failed attempt.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("drawn-box")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+  });
+
+  it("cancel exits drawing mode outright, with nothing drawn yet to discard", async () => {
+    // A drag in progress can no longer be "cancelled" by clicking Cancel
+    // instead of releasing: the pointer is captured (`setPointerCapture`),
+    // so a real browser cannot deliver a click to Cancel while the primary
+    // button is still down elsewhere — releasing it is what a click on
+    // Cancel would require first, and that release is the commit. What
+    // Cancel actually does now is exit drawing mode outright, whether that
+    // is before any drag was started or after a too-small release already
+    // discarded itself.
+    const onDrawBox = vi.fn();
+    render(
+      <GroundTruthCard
+        frame={frame()}
+        onDrawBox={onDrawBox}
+        onDeleteBox={vi.fn()}
+        onSetExhaustive={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Draw a box" }));
     await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
 
     expect(onDrawBox).not.toHaveBeenCalled();
