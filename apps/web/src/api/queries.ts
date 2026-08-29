@@ -800,13 +800,53 @@ export function useLogout() {
  * carries a `ground_truth_count` and an `exhaustive` flag per class that a
  * box or a mark changes, and the per-image query is what the surface
  * currently on screen reads.
+ *
+ * The pool invalidation is deliberately left in on all three mutations
+ * (M26.5), including the mark itself — it is not the bug. `GroundTruthSession`
+ * shows the pool's own `total` live, counting down as Carl works through a
+ * sitting, and that number only moves because these invalidations keep
+ * `pool.data` current in the background. What must never happen is that
+ * background refetch silently replacing the *array* an in-progress walk is
+ * indexing into — `GroundTruthSession`'s own header comment on why it holds
+ * a snapshot of `images` in local state instead of reading `pool.data`
+ * directly is the other half of this fix.
  */
+
+/**
+ * As large a page as `GET /api/admin/ground-truth/pool` allows —
+ * `PAGE_LIMIT_MAX` in `apps/api/src/schemas.ts`, duplicated here rather
+ * than imported because that constant is not exported (M26.5 does not
+ * touch the API). `GroundTruthSession` treats one page as one batch to
+ * walk end to end before asking for another, not a page size anything
+ * renders at once, so asking for as much as the endpoint allows in one
+ * round trip is what makes "walk it locally, refetch only when exhausted"
+ * cheap in requests.
+ */
+const GROUND_TRUTH_POOL_BATCH_SIZE = 200;
+
 export const groundTruthPoolKey = ["ground-truth", "pool"] as const;
 
+/**
+ * The unfinished half of the worklist — `unmarked=true`, always, and not a
+ * parameter this hook takes. That is the whole fix for the bug this
+ * milestone exists to close: Carl drew boxes on ~50 images and marked only
+ * 18 of them, because the worklist showed marked and unmarked images
+ * alike and nothing told him which was which. Fixing that by adding a
+ * *toggle* would reopen the exact hole `GroundTruthSession`'s own header
+ * comment already closed for a jump-to-frame control — a user-operated
+ * filter is still a way to choose what happens to come up next, even
+ * though a constant one is not: nobody can steer this query, only the
+ * frames that are still unfinished ever appear, and which one of those
+ * comes first is still #180's shuffle, never the annotator's choice.
+ */
 export function useGroundTruthPool() {
   return useQuery({
     queryKey: groundTruthPoolKey,
-    queryFn: () => apiFetch("/api/admin/ground-truth/pool", GroundTruthPool),
+    queryFn: () =>
+      apiFetch(
+        `/api/admin/ground-truth/pool?unmarked=true&limit=${GROUND_TRUTH_POOL_BATCH_SIZE}`,
+        GroundTruthPool,
+      ),
   });
 }
 
