@@ -2780,9 +2780,30 @@ const GroundTruthPoolImage = z
   })
   .openapi("GroundTruthPoolImage");
 
+/**
+ * `?unmarked=true` narrows the worklist (#176) to images not yet marked
+ * exhaustive for every active class — "what's left," not a way to choose
+ * *which* unfinished image comes first. That distinction is the whole
+ * reason this is the one query parameter this route accepts besides
+ * paging: it is worded as a plain presence flag (present and `"true"`, or
+ * absent) rather than as a general filter/sort parameter precisely because
+ * the shape of a sort parameter is what would invite a sibling that *did*
+ * let an annotator cherry-pick — see `listGroundTruthPoolHandler`'s own
+ * comment on why the order this route hands out is not the annotator's to
+ * choose. Removing already-finished rows from the list is not re-serving
+ * completed work and is not that: every remaining row still comes back in
+ * the same fixed order it always would have.
+ */
+const unmarkedParam = z
+  .enum(["true"])
+  .optional()
+  .transform((value) => value === "true")
+  .openapi({ param: { name: "unmarked", in: "query" }, type: "boolean", example: true });
+
 export const GroundTruthPoolQuery = z.object({
   limit: limitParam,
   offset: offsetParam,
+  unmarked: unmarkedParam,
 });
 
 /**

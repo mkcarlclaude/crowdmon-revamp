@@ -1563,10 +1563,42 @@ the moment a run is made, and can grow between one run and the next — so
 `worker/cmd/eval`'s report now names the exact image ids it was computed from
 (`scored_image_ids`, `scored_image_count`) rather than leaving the set to be inferred:
 that is what lets a later run (M27's) claim it scored the same set instead of assuming
-it. `GET /api/admin/ground-truth/pool` keeps the annotation worklist in a fixed,
-ascending-image-id order for the same reason, stated in that handler's own comment: an
-annotator free to pick frames by eye would put the exact selection bias §Q16 froze the
-pool to avoid back into whichever images happen to get annotated first.
+it.
+
+**A second correction, from the first real sitting.** Carl annotated 50 images and ran
+the scorer. Every one of them turned out to be from a single video:
+
+```sql
+SELECT i.video_id, COUNT(*) FROM images i
+  JOIN ground_truth_exhaustive g ON g.image_id = i.id GROUP BY i.video_id;
+-> F1snt1pXqQc | 50
+```
+
+`GET /api/admin/ground-truth/pool`'s `ORDER BY id` — asked for above, in the first
+correction, specifically to stop an annotator from cherry-picking frames — did exactly
+that and nothing else: it is not choosable, so it is not cherry-picking, but it is not
+unbiased either. `reportImagesHandler` inserts a video's frames as one contiguous run,
+so ascending id clusters every frame of a video together; a `random` `selection_reason`
+guarantees which frames were *eligible* for the pool, and says nothing at all about the
+order they get drawn *in*. Fifty images "at random" that are actually fifty frames of one
+playthrough is a sample of that playthrough, not of the pool. Fixed by replacing the
+order with a deterministic multiplicative hash of `id` — `(id * 2654435761) % 2147483647`
+(Knuth's constant, a Mersenne-prime modulus, coprime so the map cannot collide) — which
+keeps every property `ORDER BY id` had (fixed, unchoosable, stable across pages) and adds
+the one it was missing: it scatters ids across the space instead of preserving their
+insertion clustering, so consecutive pool positions stop meaning "same video." A second
+addition, `?unmarked=true`, lets an annotator skip rows already finished without
+choosing *which* unfinished row comes next — worklist maintenance, not the cherry-picking
+the fixed order exists to prevent, and said explicitly as such in the parameter's own
+comment so it does not grow a sibling that would be.
+
+`GET /api/admin/ground-truth/pool` keeps its worklist in a fixed, API-chosen order for
+the reason both corrections above amount to the same thing: an annotator free to pick
+*which* frames or *what order* would put selection bias back into the one pool §Q16
+froze specifically to keep out. Getting the mechanism wrong once does not weaken that
+argument; it is why the mechanism has its own test now (`GET /api/admin/ground-truth/pool`
+seeding several videos and asserting the first page is not dominated by one), not just a
+comment asserting it works.
 
 Open at the close of the code (the labelling sitting itself is still ahead, and was
 never in scope here):
@@ -1585,6 +1617,40 @@ never in scope here):
   `GET /api/admin/eval-source` response saved to disk by hand rather than fetching it
   itself — documented as a deliberate gap in the command's own doc comment, not routed
   around
-- **The scorer has never been run against real data.** It is verified against fixtures
-  only; the first real number comes out of the labelling sitting, which is the actual
-  gate this milestone always said it was
+- **`worker/cmd/eval` has never scored a second video, or the whole pool.** The number
+  below is one video's, which the pool-ordering bug above is exactly what makes possible
+  to say plainly rather than assume
+
+**The first number (2026-08-29).** Fifty images, one video, 23 ground-truth Paimons, 67
+predictions:
+
+mAP@0.5 is **0.3392**; mAP@[.5:.95] is **0.2208** — the gap between them is the model
+finding roughly the right places and boxing them more loosely than a stricter IoU
+rewards, exactly the localisation-drift signal plan §B2 built the second number to catch
+rather than let a headline-only report hide.
+
+The more informative numbers are the ones a single mAP would have buried. Recall tops out
+at **0.739**: 6 of the 23 Paimons are never found at IoU 0.5, at *any* confidence
+threshold, no matter how far the operating point is pushed. Those 6 are the whole reason
+this milestone exists — before migration 0014, a Paimon nothing detected had no
+prediction, so no verdict, so no label, so no record that she was ever in the frame at
+all. They were not a low score. They were not visible as a gap in anything. They were
+structurally unrepresented, and the only way this run can now say "6 of 23, specifically
+these" is that `ground_truth` and `ground_truth_exhaustive` exist to be asked. Precision
+at that full recall is **0.254** — most of what it would take to catch the last 6 is
+false alarms, not more of the same detections.
+
+The best operating point is confidence **0.14** (precision 0.417, recall 0.435, the
+sweep's own maximum F1) — inside the 0.10–0.20 band the plan named from the detector's
+own behaviour and nowhere near a threshold any tutorial default would suggest. And the
+single highest-confidence detection in the whole set, at **0.271**, is a false positive:
+the model's own certainty ordering is not a ranking this application could have trusted
+without the sweep that found it.
+
+None of this is the pool baseline. It is one video, and the pool-ordering fix above is
+what makes that fact legible instead of an unexamined assumption riding along inside an
+"eval mAP" number that looked like it meant more than it did. What it is is the right
+order of magnitude, and the first evidence that the recall this instrument was built to
+expose is real and worth the sitting still ahead of it. A later run is only comparable to
+this one if it was scored against the same `scored_image_ids` — the report file records
+them for exactly that comparison, not as an afterthought.

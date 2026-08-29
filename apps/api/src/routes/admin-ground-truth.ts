@@ -364,14 +364,13 @@ export const listGroundTruthPoolRoute = createRoute({
     "Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), " +
     "paged, with a ground-truth box count and each active class's exhaustiveness state — " +
     "enough for #176's surface to render a worklist without a second request per row. " +
-    "Includes images already marked exhaustive for every active class, not only the ones " +
-    "still outstanding: an annotator revisiting a finished frame needs the same list a " +
-    "first pass does. Always ordered by image id, page over page — see this route's own " +
-    "handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` " +
-    "scores whatever has been annotated rather than refusing until the whole pool is done " +
-    "(#177): an annotator free to pick images by eye would put selection bias back into " +
-    "the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access " +
-    "assertion.",
+    "Includes images already marked exhaustive for every active class by default, not " +
+    "only the ones still outstanding — an annotator revisiting a finished frame needs " +
+    "the same list a first pass does — unless `unmarked=true` narrows to what's left " +
+    "(`GroundTruthPoolQuery`'s own comment on why that is not cherry-picking). Ordered " +
+    "by a deterministic shuffle of image id, page over page, never by the caller's own " +
+    "choice: see this route's own handler for why that fixed order is load-bearing, and " +
+    "why it is a hash rather than the id itself. Requires a Cloudflare Access assertion.",
   request: { query: GroundTruthPoolQuery },
   responses: {
     200: {
@@ -388,40 +387,99 @@ export const listGroundTruthPoolHandler: RouteHandler<
   typeof listGroundTruthPoolRoute,
   AppEnv
 > = async (c) => {
-  const { limit, offset } = c.req.valid("query");
+  const { limit, offset, unmarked } = c.req.valid("query");
+
+  // An image not yet marked exhaustive for every active class —
+  // `getEvalSourceHandler`'s own per-image cross product (`admin-eval.ts`),
+  // restated as an EXISTS so it can be spliced into either query below.
+  // `?unmarked=true` narrows the worklist to these rows; it does not let a
+  // caller choose *which* of them comes first, which is the distinction
+  // `GroundTruthPoolQuery`'s own comment on `unmarked` insists on — this
+  // predicate only ever removes finished rows, it never reorders what is
+  // left.
+  const UNMARKED_PREDICATE = `
+    EXISTS (
+      SELECT 1 FROM classes c
+       WHERE c.active = 1
+         AND NOT EXISTS (
+               SELECT 1 FROM ground_truth_exhaustive ge
+                WHERE ge.image_id = i.id AND ge.class_id = c.id))`;
+  const unmarkedClause = unmarked ? `AND ${UNMARKED_PREDICATE}` : "";
+
+  // The worklist's shuffle. Not `ORDER BY id` — that was this route's
+  // original shape, and it was wrong, not merely simplistic. The premise
+  // behind ordering this list at all still holds: `GET /api/admin/eval-source`
+  // scores whatever has been marked exhaustive rather than refusing until
+  // the whole 2,298-image pool is done (#177), so for as long as the
+  // sitting is incomplete, annotation order *is* the eval set's sampling
+  // order — which means the API has to choose that order, not the
+  // annotator, or `selection_reason = 'random'`'s own unbiasedness
+  // (CONTEXT.md §Q16) is worth nothing once a human is free to work the
+  // list in whatever sequence looks convenient.
+  //
+  // Plain ascending `id` satisfied "the annotator doesn't choose" and
+  // silently failed the actual goal anyway: `reportImagesHandler` inserts
+  // a video's frames as a contiguous run, so ascending id clusters every
+  // frame of one video together rather than spreading the pool's videos
+  // across the list. Read against production after the first 50-image
+  // sitting confirmed it — every one of the 50 came from a single video:
+  //
+  //   SELECT i.video_id, COUNT(*) FROM images i
+  //     JOIN ground_truth_exhaustive g ON g.image_id = i.id GROUP BY i.video_id;
+  //   -> F1snt1pXqQc | 50
+  //
+  // — a different bias than cherry-picking, and a real one: the eval set
+  // became one video's frames, not a sample of the pool. A `random`
+  // `selection_reason` only guarantees which frames were *eligible*; it
+  // guarantees nothing about the order they get drawn in, and `ORDER BY id`
+  // supplied one anyway, silently.
+  //
+  // `WORKLIST_ORDER` is a Knuth multiplicative hash of `id` — `id` times
+  // `2654435761` (0x9E3779B1, chosen for how it scatters small sequential
+  // inputs across a much larger range), modulo `2147483647` (2^31 - 1, a
+  // Mersenne prime). Deterministic, so paging is stable across requests and
+  // two annotators walking the list see the same order; total, because the
+  // multiplier and modulus are coprime (the modulus is prime and does not
+  // divide the multiplier), which makes `x -> x * 2654435761 mod
+  // 2147483647` a bijection — no two distinct ids can ever land on the same
+  // hash, so nothing is skipped or repeated across a page boundary the way
+  // a lossy or colliding hash would. Not choosable by the caller: there is
+  // no sort parameter on this route and `GroundTruthSession.tsx` offers no
+  // jump-to-frame control, both on purpose.
+  //
+  // The arithmetic stays exact rather than silently falling into SQLite's
+  // REAL (float64) type — verified directly, not assumed: SQLite integers
+  // are 64-bit, and `id * 2654435761` stays an `integer`-typed result up to
+  // `id = 3,474,701,543` (`9223372036854775807 / 2654435761`, rounded
+  // down); one past that, the same multiplication silently returns a
+  // `real` instead, at which point this expression stops being a bijection
+  // and could collide. This table holds on the order of 10^4 rows today
+  // (`images.id` is an `AUTOINCREMENT` rowid, so it only ever grows by
+  // insertion, never by a value jump) — nine orders of magnitude below the
+  // boundary, not merely "big enough for now." `%` is SQLite's integer
+  // modulo on an integer input, not a cast to REAL, so it costs nothing
+  // once the multiplication itself is exact.
+  //
+  // A future reader must not "simplify" this back to `ORDER BY id`. That
+  // already happened once, by omission rather than by a deliberate choice,
+  // and it produced exactly the bug the query above demonstrates.
+  const WORKLIST_ORDER = "(i.id * 2654435761) % 2147483647";
 
   // Page and total over the identical predicate, `listVerdictsHandler`'s own
   // idiom: D1 has no cheap "count regardless of LIMIT" primitive short of a
   // second pass.
-  //
-  // `ORDER BY id` is not a display nicety — it is what keeps the eval set
-  // unbiased now that #177 changed what feeds it. `GET /api/admin/eval-source`
-  // used to refuse outright until the whole frozen pool was annotated, so
-  // which image an annotator reached first could not matter: every one of
-  // them had to be done before anything was scored. It now scores whatever
-  // *has* been marked exhaustive (`admin-eval.ts`'s own comment on why —
-  // the pool is 2,298 images in production and the plan's single sitting
-  // never covered it). That makes the annotation order the sampling order
-  // of the eval set for as long as the sitting is incomplete: an annotator
-  // free to pick "interesting-looking" frames out of this list would be
-  // hand-selecting which images get to exist in the instrument, exactly
-  // the bias CONTEXT.md §Q16 froze the pool to keep out — a `random`
-  // `selection_reason` guarantees nothing about the order boxes get *drawn*
-  // in, only about which frames were eligible to begin with. A fixed,
-  // arbitrary order (image id, ascending — the value itself carries no
-  // meaning, only its stability does) is what stands in for "work through
-  // it in the order you were handed it" the way nothing at the API layer
-  // otherwise enforces. See `GroundTruthSession.tsx` on the web side: it
-  // offers no way to jump to a chosen frame for the same reason.
   const [pageResult, countResult] = await c.env.DB.batch<PoolImageRow | { total: number }>([
     c.env.DB.prepare(
-      `SELECT id, video_id, r2_key, timestamp_seconds
-         FROM images
-        WHERE selection_reason = 'random'
-        ORDER BY id
+      `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds
+         FROM images i
+        WHERE i.selection_reason = 'random'
+          ${unmarkedClause}
+        ORDER BY ${WORKLIST_ORDER}
         LIMIT ? OFFSET ?`,
     ).bind(limit ?? 50, offset ?? 0),
-    c.env.DB.prepare(`SELECT COUNT(*) AS total FROM images WHERE selection_reason = 'random'`),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS total FROM images i WHERE i.selection_reason = 'random' ${unmarkedClause}`,
+    ),
   ]);
 
   const images = (pageResult?.results ?? []) as PoolImageRow[];

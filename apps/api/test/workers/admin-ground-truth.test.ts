@@ -351,6 +351,77 @@ describe("the frozen-pool worklist", () => {
     ]);
   });
 
+  it("spreads the pool across videos instead of clustering by insertion order", async () => {
+    // Mirrors production: a video's frames land as one contiguous run of
+    // ids (`reportImagesHandler` inserts a chunk at a time), so three
+    // videos seeded one after another produce three consecutive blocks of
+    // ids — exactly the shape that made plain `ORDER BY id` hand back a
+    // single video as the entire first (and, in production, only) page
+    // (this file's own module comment on the incident that found it).
+    const videoIds = ["videoA", "videoB", "videoC"];
+    const allImageIds: number[] = [];
+
+    for (const videoId of videoIds) {
+      await seedVideo(videoId);
+      for (let i = 0; i < 5; i++) {
+        const imageId = await seedImage(videoId, i + 1);
+        await env.DB.prepare("UPDATE images SET selection_reason = 'random' WHERE id = ?")
+          .bind(imageId)
+          .run();
+        allImageIds.push(imageId);
+      }
+    }
+
+    const res = await getPool("?limit=6");
+    const body = (await res.json()) as { images: Array<{ id: number; video_id: string }> };
+
+    expect(new Set(body.images.map((image) => image.video_id)).size).toBeGreaterThan(1);
+
+    // The exact deterministic order, not just "more than one video": the
+    // same multiplicative hash the SQL computes (`WORKLIST_ORDER`,
+    // `listGroundTruthPoolHandler`), worked out here in JS against the ids
+    // this test actually seeded.
+    const expectedOrder = [...allImageIds].sort(
+      (a, b) => ((a * 2654435761) % 2147483647) - ((b * 2654435761) % 2147483647),
+    );
+    expect(body.images.map((image) => image.id)).toEqual(expectedOrder.slice(0, 6));
+  });
+
+  it("?unmarked=true narrows to images not yet marked exhaustive for every active class", async () => {
+    const { imageId: finishedId, classId } = await seedPool();
+    await env.DB.prepare("UPDATE images SET selection_reason = 'random' WHERE id = ?")
+      .bind(finishedId)
+      .run();
+    await setExhaustive(finishedId, { class_id: classId, exhaustive: true });
+
+    await seedVideo("secondVideoId");
+    const unfinishedId = await seedImage("secondVideoId", 1);
+    await env.DB.prepare("UPDATE images SET selection_reason = 'random' WHERE id = ?")
+      .bind(unfinishedId)
+      .run();
+
+    const filtered = await getPool("?unmarked=true");
+    const filteredBody = (await filtered.json()) as { images: Array<{ id: number }> };
+    expect(filteredBody.images.map((image) => image.id)).toEqual([unfinishedId]);
+
+    // Not cherry-picking: the filter only removes finished rows, it does
+    // not change which of the remaining ones the caller sees first — the
+    // unfiltered list still carries both.
+    const unfiltered = await getPool();
+    const unfilteredBody = (await unfiltered.json()) as { images: Array<{ id: number }> };
+    expect(new Set(unfilteredBody.images.map((image) => image.id))).toEqual(
+      new Set([finishedId, unfinishedId]),
+    );
+  });
+
+  it("rejects any `unmarked` value other than the literal `true` — a presence flag, not a general boolean", async () => {
+    await seedPool();
+
+    const res = await getPool("?unmarked=false");
+
+    expect(res.status).toBe(400);
+  });
+
   it("is gated: no assertion, no listing", async () => {
     const res = await getPool("", {});
 
