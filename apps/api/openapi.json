@@ -6393,7 +6393,7 @@
           "admin"
         ],
         "summary": "The frozen evaluation pool, as an annotation worklist",
-        "description": "Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.",
+        "description": "Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class by default, not only the ones still outstanding — an annotator revisiting a finished frame needs the same list a first pass does — unless `unmarked=true` narrows to what's left (`GroundTruthPoolQuery`'s own comment on why that is not cherry-picking). Ordered by a deterministic shuffle of image id, page over page, never by the caller's own choice: see this route's own handler for why that fixed order is load-bearing, and why it is a hash rather than the id itself. Requires a Cloudflare Access assertion.",
         "parameters": [
           {
             "schema": {
@@ -6411,6 +6411,15 @@
             },
             "required": false,
             "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "boolean",
+              "example": true
+            },
+            "required": false,
+            "name": "unmarked",
             "in": "query"
           }
         ],

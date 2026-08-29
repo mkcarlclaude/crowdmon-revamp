@@ -1809,8 +1809,9 @@ type ListDryRunsParams struct {
 
 // ListGroundTruthPoolParams defines parameters for ListGroundTruthPool.
 type ListGroundTruthPoolParams struct {
-	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit    *int  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset   *int  `form:"offset,omitempty" json:"offset,omitempty"`
+	Unmarked *bool `form:"unmarked,omitempty" json:"unmarked,omitempty"`
 }
 
 // GetImageParams defines parameters for GetImage.
@@ -2102,7 +2103,7 @@ type ClientInterface interface {
 
 	// ListGroundTruthPool The frozen evaluation pool, as an annotation worklist
 	//
-	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.
+	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class by default, not only the ones still outstanding — an annotator revisiting a finished frame needs the same list a first pass does — unless `unmarked=true` narrows to what's left (`GroundTruthPoolQuery`'s own comment on why that is not cherry-picking). Ordered by a deterministic shuffle of image id, page over page, never by the caller's own choice: see this route's own handler for why that fixed order is load-bearing, and why it is a hash rather than the id itself. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/ground-truth/pool (the `ListGroundTruthPool` operationId).
 	ListGroundTruthPool(ctx context.Context, params *ListGroundTruthPoolParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2757,7 +2758,7 @@ func (c *Client) GetEvalSource(ctx context.Context, reqEditors ...RequestEditorF
 
 // ListGroundTruthPool The frozen evaluation pool, as an annotation worklist
 //
-// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.
+// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class by default, not only the ones still outstanding — an annotator revisiting a finished frame needs the same list a first pass does — unless `unmarked=true` narrows to what's left (`GroundTruthPoolQuery`'s own comment on why that is not cherry-picking). Ordered by a deterministic shuffle of image id, page over page, never by the caller's own choice: see this route's own handler for why that fixed order is load-bearing, and why it is a hash rather than the id itself. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/ground-truth/pool (the `ListGroundTruthPool` operationId).
 func (c *Client) ListGroundTruthPool(ctx context.Context, params *ListGroundTruthPoolParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4146,6 +4147,18 @@ func NewListGroundTruthPoolRequest(server string, params *ListGroundTruthPoolPar
 		if params.Offset != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Unmarked != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "unmarked", *params.Unmarked, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -6286,7 +6299,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListGroundTruthPoolWithResponse The frozen evaluation pool, as an annotation worklist
 	//
-	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.
+	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class by default, not only the ones still outstanding — an annotator revisiting a finished frame needs the same list a first pass does — unless `unmarked=true` narrows to what's left (`GroundTruthPoolQuery`'s own comment on why that is not cherry-picking). Ordered by a deterministic shuffle of image id, page over page, never by the caller's own choice: see this route's own handler for why that fixed order is load-bearing, and why it is a hash rather than the id itself. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -10072,7 +10085,7 @@ func (c *ClientWithResponses) GetEvalSourceWithResponse(ctx context.Context, req
 
 // ListGroundTruthPoolWithResponse The frozen evaluation pool, as an annotation worklist
 //
-// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.
+// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class by default, not only the ones still outstanding — an annotator revisiting a finished frame needs the same list a first pass does — unless `unmarked=true` narrows to what's left (`GroundTruthPoolQuery`'s own comment on why that is not cherry-picking). Ordered by a deterministic shuffle of image id, page over page, never by the caller's own choice: see this route's own handler for why that fixed order is load-bearing, and why it is a hash rather than the id itself. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //
