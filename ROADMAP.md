@@ -1654,3 +1654,42 @@ order of magnitude, and the first evidence that the recall this instrument was b
 expose is real and worth the sitting still ahead of it. A later run is only comparable to
 this one if it was scored against the same `scored_image_ids` — the report file records
 them for exactly that comparison, not as an afterthought.
+
+**The baseline, and the first number's retraction (2026-08-29).** The sitting continued
+to 286 images and 117 ground-truth boxes, and the number above did not survive it.
+
+| set | images | GT boxes | mAP@0.5 | mAP@[.5:.95] | recall ceiling |
+|---|---|---|---|---|---|
+| first sitting, `F1snt1pXqQc` only | 50 | 23 | 0.3392 | 0.2208 | 0.739 |
+| everything | 286 | 117 | 0.0821 | 0.0491 | 0.419 |
+| **excluding that first video** | **236** | **94** | **0.0550** | **0.0325** | **0.340** |
+
+**The baseline is 0.055, and the 0.3392 published hours earlier was one easy video.**
+`F1snt1pXqQc` gave up 74% of its Paimons; the pool gives up 34%. Nothing about the
+annotation differed between the two batches — that was checked with the person who did
+them, because a more careful second pass would have explained the gap just as well and
+would have meant something entirely different. It was the video.
+
+That is what M25's `ORDER BY id` cost, and it is worth being precise about the shape of
+the error: the worklist order was chosen to stop an annotator cherry-picking frames, which
+it did. It silently substituted clustering for cherry-picking, because `reportImagesHandler`
+inserts a video's frames as a contiguous run — a bias that satisfies the stated
+requirement and defeats the purpose behind it. The deterministic shuffle (#180) is the
+fix; the 50 frames drawn before it are still in the scored set and still over-represent
+one video, which is why the third row above exists and is the one to quote.
+
+**The estimate has converged.** At 19 boxes the pool number was 0.066; at 94 it is 0.055.
+Five times the data moved it about a point, which is the argument for stopping: 117 boxes
+put recall at ±4.5 points, and a model fine-tuned on its own labels should move recall
+from 0.34 to somewhere past 0.6. That is a 26-point change against a 4.5-point error bar,
+and buying more precision now is buying precision M27 has no use for. The case for
+annotating further is if M27 lands at 0.42 rather than 0.60 — then the move is arguable
+rather than conclusive, and *that* is the moment to spend another hundred boxes, knowing
+it is worth it instead of guessing.
+
+**Where the artifact lives.** `eval/2026-08-29/report.json` in `crowdmon-frames`, with the
+`GET /api/admin/eval-source` response it was computed from beside it as
+`eval-source.json` (plan §B3: a file beside the snapshot in R2, no `model_versions` row —
+that table is M27's). The report names all 286 `scored_image_ids`. M27 is comparable to
+this run only if it scores the same ids, and the file is the only thing that makes that
+checkable rather than assumed.
