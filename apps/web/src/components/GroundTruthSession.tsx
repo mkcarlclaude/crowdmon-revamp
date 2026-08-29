@@ -23,6 +23,18 @@ import { Button } from "./ui/button";
  * needs to be able to get back to it, and the plan itself treats "already
  * marked" and "not yet looked at" as two states of the same worklist, not
  * a done pile and a todo pile.
+ *
+ * **Deliberately no way to jump to a chosen frame, only Previous/Next
+ * through `images` in the order the pool endpoint returned it.** That
+ * order (`ORDER BY id`, `listGroundTruthPoolHandler`'s own comment on why
+ * it is fixed) is what keeps the annotation *order* from becoming a second,
+ * hand-picked sample sitting on top of the frozen pool's already-unbiased
+ * one — `GET /api/admin/eval-source` now scores whatever has been marked
+ * exhaustive rather than refusing until the whole pool is done (#177), so
+ * for as long as the sitting is incomplete, which images get annotated
+ * *first* is which images the eval set is actually drawn from. A jump-to /
+ * filter / sort control here would hand an annotator exactly the choice
+ * that fact makes dangerous.
  */
 export function GroundTruthSession() {
   const pool = useGroundTruthPool();

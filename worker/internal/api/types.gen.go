@@ -2093,16 +2093,16 @@ type ClientInterface interface {
 	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
 	ListDryRuns(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetEvalSource The frozen pool's ground truth and predictions, for the scorer
+	// GetEvalSource The scored set's ground truth and predictions, for the scorer
 	//
-	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.
+	// Every frozen-pool image (`selection_reason = 'random'`, CONTEXT.md §Q16) that is marked exhaustively annotated for every active class, with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them. An image not yet marked for every active class is omitted, not scored as empty — it is not yet part of the instrument. Refuses with 409 only when no pool image is marked exhaustive for any active class yet, i.e. there is nothing to score at all. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/eval-source (the `GetEvalSource` operationId).
 	GetEvalSource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListGroundTruthPool The frozen evaluation pool, as an annotation worklist
 	//
-	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
+	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.
 	//
 	// Corresponds with GET /api/admin/ground-truth/pool (the `ListGroundTruthPool` operationId).
 	ListGroundTruthPool(ctx context.Context, params *ListGroundTruthPoolParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2738,9 +2738,9 @@ func (c *Client) ListDryRuns(ctx context.Context, id int, params *ListDryRunsPar
 	return c.Client.Do(req)
 }
 
-// GetEvalSource The frozen pool's ground truth and predictions, for the scorer
+// GetEvalSource The scored set's ground truth and predictions, for the scorer
 //
-// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.
+// Every frozen-pool image (`selection_reason = 'random'`, CONTEXT.md §Q16) that is marked exhaustively annotated for every active class, with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them. An image not yet marked for every active class is omitted, not scored as empty — it is not yet part of the instrument. Refuses with 409 only when no pool image is marked exhaustive for any active class yet, i.e. there is nothing to score at all. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/eval-source (the `GetEvalSource` operationId).
 func (c *Client) GetEvalSource(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2757,7 +2757,7 @@ func (c *Client) GetEvalSource(ctx context.Context, reqEditors ...RequestEditorF
 
 // ListGroundTruthPool The frozen evaluation pool, as an annotation worklist
 //
-// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
+// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.
 //
 // Corresponds with GET /api/admin/ground-truth/pool (the `ListGroundTruthPool` operationId).
 func (c *Client) ListGroundTruthPool(ctx context.Context, params *ListGroundTruthPoolParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6275,9 +6275,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/admin/classes/{id}/dryruns (the `ListDryRuns` operationId).
 	ListDryRunsWithResponse(ctx context.Context, id int, params *ListDryRunsParams, reqEditors ...RequestEditorFn) (*ListDryRunsResponse, error)
 
-	// GetEvalSourceWithResponse The frozen pool's ground truth and predictions, for the scorer
+	// GetEvalSourceWithResponse The scored set's ground truth and predictions, for the scorer
 	//
-	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.
+	// Every frozen-pool image (`selection_reason = 'random'`, CONTEXT.md §Q16) that is marked exhaustively annotated for every active class, with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them. An image not yet marked for every active class is omitted, not scored as empty — it is not yet part of the instrument. Refuses with 409 only when no pool image is marked exhaustive for any active class yet, i.e. there is nothing to score at all. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6286,7 +6286,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListGroundTruthPoolWithResponse The frozen evaluation pool, as an annotation worklist
 	//
-	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
+	// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -10055,9 +10055,9 @@ func (c *ClientWithResponses) ListDryRunsWithResponse(ctx context.Context, id in
 	return ParseListDryRunsResponse(rsp)
 }
 
-// GetEvalSourceWithResponse The frozen pool's ground truth and predictions, for the scorer
+// GetEvalSourceWithResponse The scored set's ground truth and predictions, for the scorer
 //
-// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.
+// Every frozen-pool image (`selection_reason = 'random'`, CONTEXT.md §Q16) that is marked exhaustively annotated for every active class, with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them. An image not yet marked for every active class is omitted, not scored as empty — it is not yet part of the instrument. Refuses with 409 only when no pool image is marked exhaustive for any active class yet, i.e. there is nothing to score at all. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -10072,7 +10072,7 @@ func (c *ClientWithResponses) GetEvalSourceWithResponse(ctx context.Context, req
 
 // ListGroundTruthPoolWithResponse The frozen evaluation pool, as an annotation worklist
 //
-// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.
+// Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.
 //
 // Returns a wrapper object for the known response body format(s).
 //

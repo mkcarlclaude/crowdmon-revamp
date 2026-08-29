@@ -2801,10 +2801,9 @@ export const GroundTruthPool = z
   .openapi("GroundTruthPool");
 
 /**
- * `GET /api/admin/eval-source`'s payload (#177, M26.3) — everything
- * `worker/cmd/eval` scores: the frozen pool's ground truth, model-
- * independent, and the predictions being measured against it, with
- * confidence.
+ * `GET /api/admin/eval-source`'s payload (#177, M26.3) — the ground truth,
+ * model-independent, and the predictions being measured against it, with
+ * confidence, for every image the labelling sitting has actually finished.
  *
  * Deliberately not the existing `snapshotSourceRoute` extended, and not the
  * manifest `snapshot`s write to R2. That endpoint's labels are
@@ -2819,6 +2818,27 @@ export const GroundTruthPool = z
  * scope. This route reads only `ground_truth`, `ground_truth_exhaustive` and
  * `predictions`, restricted to the frozen pool and to active classes, and
  * `snapshotSourceHandler`'s own query is untouched by its existence.
+ *
+ * **`images` is not the frozen pool — it is the frozen pool intersected
+ * with what has actually been marked exhaustive.** The original shape
+ * required *every* pool image to carry an exhaustive mark for every active
+ * class before this route would return anything at all, on the reasoning
+ * that a scorer running over a partial pool was silently reproducing the
+ * biased metric M26 exists to fix. Read against production on 2026-08-29
+ * that requirement is unsatisfiable, not merely strict: the frozen pool
+ * (`selection_reason = 'random'`) is 2,298 images, only 1,025 of which the
+ * zero-shot detector proposed anything on at all, and only 95 of which
+ * carry a label today — the plan's own "95 images, one class, tractable in
+ * a single sitting" was counting labelled images, not the pool. Refusing
+ * until all 2,298 are annotated blocks the instrument on work an order of
+ * magnitude larger than what was budgeted, and the pool cannot be narrowed
+ * to the 95 or the 1,025 instead: an image the detector proposed nothing on
+ * is exactly where a missed instance lives, and scoring only where a
+ * prediction already exists reconstructs the inverted metric at a smaller
+ * size — the same failure the plan opens with, one layer down. So the gate
+ * moved from *all-or-nothing* to *per-image*: an image is in `images` once
+ * every active class is marked exhaustive on it, and stays out — not
+ * scored as empty, simply not yet part of the instrument — until then.
  *
  * `class_name` rides on every box rather than a top-level roster the boxes
  * index into, `ProposedBox`'s own reason: the scorer groups by class on its
@@ -2847,13 +2867,22 @@ const EvalSourceImage = z
   .openapi("EvalSourceImage");
 
 /**
- * The whole frozen pool, restricted to active classes — every image
- * `selection_reason = 'random'` names, whether or not it carries any boxes
- * at all. A ground-truth-empty, exhaustively-marked image is a legitimate
- * "nothing here" (migration 0014's own reasoning) and stays in the set, not
- * because it has something to score but because a scorer computing recall
- * needs the true negative in its denominator as much as it needs every
- * positive.
+ * The scored set, restricted to active classes: every frozen-pool image
+ * marked exhaustively annotated for every one of them, and only those (see
+ * this file's own comment above `EvalSourceBox` for why the pool itself
+ * cannot be the answer). `image_id` on each entry already names the scored
+ * set explicitly — there is no separate id list to keep in sync with it —
+ * and `worker/cmd/eval` reads those ids back out to record, in its own
+ * report, exactly which images a given number was computed from
+ * (`main.go`'s own comment on `scored_image_ids`), which is what lets a
+ * later run claim it scored the same set rather than asserting it.
+ *
+ * A ground-truth-empty entry (an image marked exhaustive with nothing
+ * drawn on it) is a legitimate "nothing here" (migration 0014's own
+ * reasoning) and stays in the set: a scorer computing recall needs that
+ * true negative in its denominator as much as it needs every positive.
+ * That is different from an image simply not being in `images` at all,
+ * which means nobody has finished looking at it yet.
  */
 export const EvalSource = z
   .object({

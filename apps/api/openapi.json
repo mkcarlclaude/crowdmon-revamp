@@ -6393,7 +6393,7 @@
           "admin"
         ],
         "summary": "The frozen evaluation pool, as an annotation worklist",
-        "description": "Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Requires a Cloudflare Access assertion.",
+        "description": "Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), paged, with a ground-truth box count and each active class's exhaustiveness state — enough for #176's surface to render a worklist without a second request per row. Includes images already marked exhaustive for every active class, not only the ones still outstanding: an annotator revisiting a finished frame needs the same list a first pass does. Always ordered by image id, page over page — see this route's own handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` scores whatever has been annotated rather than refusing until the whole pool is done (#177): an annotator free to pick images by eye would put selection bias back into the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access assertion.",
         "parameters": [
           {
             "schema": {
@@ -6464,11 +6464,11 @@
         "tags": [
           "admin"
         ],
-        "summary": "The frozen pool's ground truth and predictions, for the scorer",
-        "description": "Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them, both restricted to active classes. Refuses with 409, the whole call, if any active class is not marked exhaustively annotated on any pool image — the plan's own requirement that an incomplete pool be refused outright rather than silently scored on whatever happens to be marked yet. Requires a Cloudflare Access assertion.",
+        "summary": "The scored set's ground truth and predictions, for the scorer",
+        "description": "Every frozen-pool image (`selection_reason = 'random'`, CONTEXT.md §Q16) that is marked exhaustively annotated for every active class, with its ground-truth boxes (migration 0014, model-independent) and the predictions being measured against them. An image not yet marked for every active class is omitted, not scored as empty — it is not yet part of the instrument. Refuses with 409 only when no pool image is marked exhaustive for any active class yet, i.e. there is nothing to score at all. Requires a Cloudflare Access assertion.",
         "responses": {
           "200": {
-            "description": "The eval pool's ground truth and predictions",
+            "description": "The scored set's ground truth and predictions",
             "content": {
               "application/json": {
                 "schema": {
@@ -6498,7 +6498,7 @@
             }
           },
           "409": {
-            "description": "At least one active class is not yet marked exhaustively annotated on at least one pool image — named in the message, up to a limit",
+            "description": "No pool image is marked exhaustively annotated for any active class yet",
             "content": {
               "application/json": {
                 "schema": {

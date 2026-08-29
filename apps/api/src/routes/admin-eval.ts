@@ -15,6 +15,21 @@ import { EvalSource, errorResponse } from "../schemas";
  * with it. This route touches none of that: it reads `ground_truth`,
  * `ground_truth_exhaustive` and `predictions` directly, and
  * `snapshotSourceHandler` is unchanged by its existence.
+ *
+ * **The gate is per image, not all-or-nothing across the pool.** The
+ * original shape refused the entire call unless every frozen-pool image
+ * (`selection_reason = 'random'`) was marked exhaustive for every active
+ * class. Read against production, that pool is 2,298 images — the plan's
+ * "95 images, one class, tractable in a single sitting" was the count of
+ * *labelled* images, not the pool itself — so the all-or-nothing gate could
+ * never be satisfied by the sitting the plan actually budgeted. Narrowing
+ * the pool to the 95 (or to the 1,025 the detector proposed something on)
+ * is not an option either: an image with no prediction on it is exactly
+ * where a missed instance lives, and scoring only where a prediction
+ * already exists reconstructs the inverted metric this milestone exists to
+ * fix, one layer down. So `images` below is whatever *has* been marked
+ * exhaustive, not the whole pool — see `EvalSource`'s own comment for the
+ * numbers and the full reasoning.
  */
 
 interface ActiveClassRow {
@@ -50,32 +65,26 @@ export const getEvalSourceRoute = createRoute({
   path: "/api/admin/eval-source",
   operationId: "getEvalSource",
   tags: ["admin"],
-  summary: "The frozen pool's ground truth and predictions, for the scorer",
+  summary: "The scored set's ground truth and predictions, for the scorer",
   description:
-    "Every image with `selection_reason = 'random'` (CONTEXT.md §Q16's frozen pool), " +
-    "with its ground-truth boxes (migration 0014, model-independent) and the predictions " +
-    "being measured against them, both restricted to active classes. Refuses with 409, " +
-    "the whole call, if any active class is not marked exhaustively annotated on any pool " +
-    "image — the plan's own requirement that an incomplete pool be refused outright rather " +
-    "than silently scored on whatever happens to be marked yet. Requires a Cloudflare " +
-    "Access assertion.",
+    "Every frozen-pool image (`selection_reason = 'random'`, CONTEXT.md §Q16) that is " +
+    "marked exhaustively annotated for every active class, with its ground-truth boxes " +
+    "(migration 0014, model-independent) and the predictions being measured against them. " +
+    "An image not yet marked for every active class is omitted, not scored as empty — it " +
+    "is not yet part of the instrument. Refuses with 409 only when no pool image is marked " +
+    "exhaustive for any active class yet, i.e. there is nothing to score at all. Requires " +
+    "a Cloudflare Access assertion.",
   responses: {
     200: {
-      description: "The eval pool's ground truth and predictions",
+      description: "The scored set's ground truth and predictions",
       content: { "application/json": { schema: EvalSource } },
     },
     401: errorResponse("Missing or invalid Access assertion"),
     403: errorResponse("A verified identity that is not an administrator"),
-    409: errorResponse(
-      "At least one active class is not yet marked exhaustively annotated on at least one " +
-        "pool image — named in the message, up to a limit",
-    ),
+    409: errorResponse("No pool image is marked exhaustively annotated for any active class yet"),
     503: errorResponse("Admin access is not configured on this deployment"),
   },
 });
-
-/** How many incomplete (image, class) pairs the 409 names before it just gives the count. */
-const MAX_NAMED_GAPS = 20;
 
 export const getEvalSourceHandler: RouteHandler<typeof getEvalSourceRoute, AppEnv> = async (c) => {
   const [classesResult, imagesResult] = await c.env.DB.batch<ActiveClassRow | EvalImageRow>([
@@ -86,50 +95,60 @@ export const getEvalSourceHandler: RouteHandler<typeof getEvalSourceRoute, AppEn
   const classes = (classesResult?.results ?? []) as ActiveClassRow[];
   const images = (imagesResult?.results ?? []) as EvalImageRow[];
 
-  if (classes.length === 0 || images.length === 0) {
+  // No roster at all: a different precondition from "nobody has finished
+  // annotating anything yet" below — there is no (image, class) pair to be
+  // incomplete, so there is nothing to refuse either.
+  if (classes.length === 0) {
     return c.json({ images: [] }, 200);
   }
 
   const imageIds = images.map((image) => image.id);
   const classIds = classes.map((klass) => klass.id);
 
-  // One reserved slot per active class — `MAX_ACTIVE_CLASSES` (schemas.ts)
-  // bounds that at 30, so a chunk still carries most of its budget for
-  // image ids even at the roster's ceiling.
-  const exhaustiveResults = await c.env.DB.batch<ExhaustivePairRow>(
-    chunkForBinding(imageIds, classIds.length).map((chunk) =>
-      c.env.DB.prepare(
-        `SELECT image_id, class_id FROM ground_truth_exhaustive
-          WHERE image_id IN (${placeholders(chunk)}) AND class_id IN (${placeholders(classIds)})`,
-      ).bind(...chunk, ...classIds),
-    ),
-  );
-
-  const covered = new Set(
-    exhaustiveResults.flatMap((result) =>
-      result.results.map((row) => `${row.image_id}:${row.class_id}`),
-    ),
-  );
-
-  const gaps: string[] = [];
-  for (const imageId of imageIds) {
-    for (const klass of classes) {
-      if (!covered.has(`${imageId}:${klass.id}`)) {
-        gaps.push(`image ${imageId} / class ${klass.name}`);
-      }
-    }
+  // Empty when the pool itself is empty — `chunkForBinding` over zero ids
+  // produces zero chunks, so this skips straight to an empty `covered` set
+  // rather than issuing a query with nothing to bind.
+  let covered = new Set<string>();
+  if (imageIds.length > 0) {
+    // One reserved slot per active class — `MAX_ACTIVE_CLASSES` (schemas.ts)
+    // bounds that at 30, so a chunk still carries most of its budget for
+    // image ids even at the roster's ceiling.
+    const exhaustiveResults = await c.env.DB.batch<ExhaustivePairRow>(
+      chunkForBinding(imageIds, classIds.length).map((chunk) =>
+        c.env.DB.prepare(
+          `SELECT image_id, class_id FROM ground_truth_exhaustive
+            WHERE image_id IN (${placeholders(chunk)}) AND class_id IN (${placeholders(classIds)})`,
+        ).bind(...chunk, ...classIds),
+      ),
+    );
+    covered = new Set(
+      exhaustiveResults.flatMap((result) =>
+        result.results.map((row) => `${row.image_id}:${row.class_id}`),
+      ),
+    );
   }
 
-  if (gaps.length > 0) {
-    const named = gaps.slice(0, MAX_NAMED_GAPS).join(", ");
-    const suffix =
-      gaps.length > MAX_NAMED_GAPS ? ` (and ${gaps.length - MAX_NAMED_GAPS} more)` : "";
-    return c.json({ error: `not exhaustively annotated: ${named}${suffix}` }, 409);
+  // The scored set (this route's own module comment, and `EvalSource`'s in
+  // schemas.ts): an image is in it once every active class is marked
+  // exhaustive on it, and stays out — not refused, not scored as empty,
+  // simply not yet part of the instrument — until then.
+  const scoredImageIds = imageIds.filter((imageId) =>
+    classIds.every((classId) => covered.has(`${imageId}:${classId}`)),
+  );
+
+  // The one refusal this route still makes: nothing marked at all means
+  // there is genuinely nothing to score, which is a different situation
+  // from a partially-annotated pool returning a smaller-than-hoped-for set.
+  if (scoredImageIds.length === 0) {
+    return c.json(
+      { error: "no pool image is marked exhaustively annotated for any active class yet" },
+      409,
+    );
   }
 
   const [predictionResults, groundTruthResults] = await Promise.all([
     c.env.DB.batch<PredictionBoxRow>(
-      chunkForBinding(imageIds, classIds.length).map((chunk) =>
+      chunkForBinding(scoredImageIds, classIds.length).map((chunk) =>
         c.env.DB.prepare(
           `SELECT p.image_id, c.name AS class_name, p.x_min, p.y_min, p.x_max, p.y_max, p.confidence
              FROM predictions p
@@ -140,7 +159,7 @@ export const getEvalSourceHandler: RouteHandler<typeof getEvalSourceRoute, AppEn
       ),
     ),
     c.env.DB.batch<BoxRow>(
-      chunkForBinding(imageIds, classIds.length).map((chunk) =>
+      chunkForBinding(scoredImageIds, classIds.length).map((chunk) =>
         c.env.DB.prepare(
           `SELECT g.image_id, c.name AS class_name, g.x_min, g.y_min, g.x_max, g.y_max
              FROM ground_truth g
@@ -168,7 +187,7 @@ export const getEvalSourceHandler: RouteHandler<typeof getEvalSourceRoute, AppEn
 
   return c.json(
     {
-      images: imageIds.map((imageId) => ({
+      images: scoredImageIds.map((imageId) => ({
         image_id: imageId,
         predictions: (predictionsByImage.get(imageId) ?? []).map(({ image_id: _, ...box }) => box),
         ground_truth: (groundTruthByImage.get(imageId) ?? []).map(({ image_id: _, ...box }) => box),

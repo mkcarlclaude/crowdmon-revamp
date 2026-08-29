@@ -1,6 +1,10 @@
 package main
 
-import "github.com/mkcarlclaude/crowdmon-revamp/worker/internal/eval"
+import (
+	"sort"
+
+	"github.com/mkcarlclaude/crowdmon-revamp/worker/internal/eval"
+)
 
 // evalSource mirrors `GET /api/admin/eval-source`'s response
 // (`EvalSource` in apps/api/src/schemas.ts) — see main.go's own doc comment
@@ -92,4 +96,23 @@ func classSets(source evalSource) []eval.ClassSet {
 
 func boxOf(b evalSourceBox) eval.Box {
 	return eval.Box{XMin: b.XMin, YMin: b.YMin, XMax: b.XMax, YMax: b.YMax}
+}
+
+// scoredImageIDs is every image id `source` carries — which, as of
+// `GET /api/admin/eval-source`'s per-image gate, already *is* the scored
+// set: the route no longer returns an image unless every active class is
+// marked exhaustive on it, so there is no further filtering to do here.
+// Sorted ascending regardless of the order the source file happens to hold
+// them in, rather than trusted to already be sorted — the source is a file
+// an admin fetched and saved by hand, and this list is what a later run
+// compares against to claim it scored the same set (`report`'s own
+// comment in main.go), which has to mean the same thing however either
+// file happened to order its rows.
+func scoredImageIDs(source evalSource) []int {
+	ids := make([]int, len(source.Images))
+	for i, image := range source.Images {
+		ids[i] = image.ImageID
+	}
+	sort.Ints(ids)
+	return ids
 }

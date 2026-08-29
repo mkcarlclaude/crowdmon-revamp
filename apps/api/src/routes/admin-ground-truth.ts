@@ -366,7 +366,12 @@ export const listGroundTruthPoolRoute = createRoute({
     "enough for #176's surface to render a worklist without a second request per row. " +
     "Includes images already marked exhaustive for every active class, not only the ones " +
     "still outstanding: an annotator revisiting a finished frame needs the same list a " +
-    "first pass does. Requires a Cloudflare Access assertion.",
+    "first pass does. Always ordered by image id, page over page — see this route's own " +
+    "handler for why that fixed order is load-bearing now that `GET /api/admin/eval-source` " +
+    "scores whatever has been annotated rather than refusing until the whole pool is done " +
+    "(#177): an annotator free to pick images by eye would put selection bias back into " +
+    "the one pool CONTEXT.md §Q16 exists to keep unbiased. Requires a Cloudflare Access " +
+    "assertion.",
   request: { query: GroundTruthPoolQuery },
   responses: {
     200: {
@@ -388,6 +393,26 @@ export const listGroundTruthPoolHandler: RouteHandler<
   // Page and total over the identical predicate, `listVerdictsHandler`'s own
   // idiom: D1 has no cheap "count regardless of LIMIT" primitive short of a
   // second pass.
+  //
+  // `ORDER BY id` is not a display nicety — it is what keeps the eval set
+  // unbiased now that #177 changed what feeds it. `GET /api/admin/eval-source`
+  // used to refuse outright until the whole frozen pool was annotated, so
+  // which image an annotator reached first could not matter: every one of
+  // them had to be done before anything was scored. It now scores whatever
+  // *has* been marked exhaustive (`admin-eval.ts`'s own comment on why —
+  // the pool is 2,298 images in production and the plan's single sitting
+  // never covered it). That makes the annotation order the sampling order
+  // of the eval set for as long as the sitting is incomplete: an annotator
+  // free to pick "interesting-looking" frames out of this list would be
+  // hand-selecting which images get to exist in the instrument, exactly
+  // the bias CONTEXT.md §Q16 froze the pool to keep out — a `random`
+  // `selection_reason` guarantees nothing about the order boxes get *drawn*
+  // in, only about which frames were eligible to begin with. A fixed,
+  // arbitrary order (image id, ascending — the value itself carries no
+  // meaning, only its stability does) is what stands in for "work through
+  // it in the order you were handed it" the way nothing at the API layer
+  // otherwise enforces. See `GroundTruthSession.tsx` on the web side: it
+  // offers no way to jump to a chosen frame for the same reason.
   const [pageResult, countResult] = await c.env.DB.batch<PoolImageRow | { total: number }>([
     c.env.DB.prepare(
       `SELECT id, video_id, r2_key, timestamp_seconds

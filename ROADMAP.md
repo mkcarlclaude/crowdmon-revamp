@@ -1546,6 +1546,28 @@ Two decisions the plan left open, both explained at the point they are made:
   and widening it to refuse on incomplete eval annotation would block an unrelated
   training rebuild on a labelling sitting that has nothing to do with it.
 
+**A correction, read against production on 2026-08-29.** The "95 frozen images" above is
+the count of images that carry a label today, not the frozen pool itself:
+`selection_reason = 'random'` names 2,298 images, and the zero-shot detector proposed
+something on only 1,025 of them. `GET /api/admin/eval-source` originally refused the
+whole call until every one of the 2,298 was marked exhaustively annotated for every
+active class — an all-or-nothing gate the single sitting the plan actually budgeted could
+never satisfy. Narrowing the pool to the 95 or the 1,025 instead was not an option
+either: an image the detector proposed nothing on is exactly where a missed instance
+lives, and scoring only where a prediction already exists reconstructs the inverted
+metric this milestone opens with, one layer down. The gate is **per image** now:
+`images` in the response is whatever has actually been marked exhaustive, and the 409
+survives for exactly the case where nothing has been marked at all. The consequence is
+that the eval set is no longer fixed in advance — it is whatever has been annotated at
+the moment a run is made, and can grow between one run and the next — so
+`worker/cmd/eval`'s report now names the exact image ids it was computed from
+(`scored_image_ids`, `scored_image_count`) rather than leaving the set to be inferred:
+that is what lets a later run (M27's) claim it scored the same set instead of assuming
+it. `GET /api/admin/ground-truth/pool` keeps the annotation worklist in a fixed,
+ascending-image-id order for the same reason, stated in that handler's own comment: an
+annotator free to pick frames by eye would put the exact selection bias §Q16 froze the
+pool to avoid back into whichever images happen to get annotated first.
+
 Open at the close of the code (the labelling sitting itself is still ahead, and was
 never in scope here):
 
