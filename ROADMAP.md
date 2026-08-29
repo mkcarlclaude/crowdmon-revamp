@@ -1502,3 +1502,86 @@ Open at the close of M25:
   candidate — so a video converges on its own frame count rather than growing without
   limit. That is a weaker guarantee than a cumulative cap, and enough while the governor
   is verification throughput
+
+## M26 — An evaluation set that can be wrong about the model
+
+*Goal: a baseline mAP that a better model scores better on.*
+*Plan: `docs/superpowers/plans/2026-08-28-eval-harness.md`.
+Design record: `CONTEXT.md` §Q16, §Q17, §Q21.*
+[#178](https://github.com/mkcarlclaude/crowdmon-revamp/pull/178).
+
+The finding that amended M25's "the eval harness is unblocked today": **every ground-truth
+box in this dataset is a box the detector proposed.** `INSERT INTO predictions` appears
+once in the codebase, in the worker's report path; a `verdicts` row always references a
+`predictions` row; `adjust` only moves an existing box. So the label set is a subset of
+the detector's own output, filtered by a human, containing nothing the detector failed to
+find — and a model that later finds a missed Paimon scores that detection as a false
+positive. The mAP series would trend *down* as the model improves, which is worse than
+having no instrument, because it looks like it works.
+
+- **[#175](https://github.com/mkcarlclaude/crowdmon-revamp/issues/175) — `ground_truth`,
+  its own table.** Not synthetic `predictions` rows: `predictions` is a truthful record of
+  what a model said, and that property is worth more than the saved table
+- **[#176](https://github.com/mkcarlclaude/crowdmon-revamp/issues/176) — a surface that
+  draws boxes no model proposed**, which nothing in the app can do today
+- **[#177](https://github.com/mkcarlclaude/crowdmon-revamp/issues/177) — the scorer**, on
+  the home box rather than as a `jobs.kind`, and the two tests that make it a ruler
+
+The actual gate is a labelling sitting, not a code change: 95 frozen images, one active
+class, every instance recorded by hand.
+
+All three issues' code landed in #178: migration 0014 (`ground_truth`,
+`ground_truth_exhaustive`), the admin draw/delete/mark-exhaustive/read endpoints,
+`worker/internal/eval`'s scorer with the hand-computed fixture and both required tests
+(an unmatched ground-truth box lowers the score; an unmatched prediction is a false
+positive), `worker/cmd/eval`, and `/admin/annotate`.
+
+Two decisions the plan left open, both explained at the point they are made:
+
+- **`ground_truth_exhaustive` is a second table**, not a column on `images` — a column
+  would need an `ALTER TABLE` rebuild, and D1's ignored-`foreign_keys`-pragma cascade
+  hazard (`memory/d1-ignores-foreign-keys-pragma`) applies to exactly that.
+- **The scorer reads a new endpoint, `GET /api/admin/eval-source`**, not the existing
+  snapshot manifest — that route also feeds `worker/cmd/snapshot`'s training-set build,
+  and widening it to refuse on incomplete eval annotation would block an unrelated
+  training rebuild on a labelling sitting that has nothing to do with it.
+
+**A correction, read against production on 2026-08-29.** The "95 frozen images" above is
+the count of images that carry a label today, not the frozen pool itself:
+`selection_reason = 'random'` names 2,298 images, and the zero-shot detector proposed
+something on only 1,025 of them. `GET /api/admin/eval-source` originally refused the
+whole call until every one of the 2,298 was marked exhaustively annotated for every
+active class — an all-or-nothing gate the single sitting the plan actually budgeted could
+never satisfy. Narrowing the pool to the 95 or the 1,025 instead was not an option
+either: an image the detector proposed nothing on is exactly where a missed instance
+lives, and scoring only where a prediction already exists reconstructs the inverted
+metric this milestone opens with, one layer down. The gate is **per image** now:
+`images` in the response is whatever has actually been marked exhaustive, and the 409
+survives for exactly the case where nothing has been marked at all. The consequence is
+that the eval set is no longer fixed in advance — it is whatever has been annotated at
+the moment a run is made, and can grow between one run and the next — so
+`worker/cmd/eval`'s report now names the exact image ids it was computed from
+(`scored_image_ids`, `scored_image_count`) rather than leaving the set to be inferred:
+that is what lets a later run (M27's) claim it scored the same set instead of assuming
+it. `GET /api/admin/ground-truth/pool` keeps the annotation worklist in a fixed,
+ascending-image-id order for the same reason, stated in that handler's own comment: an
+annotator free to pick frames by eye would put the exact selection bias §Q16 froze the
+pool to avoid back into whichever images happen to get annotated first.
+
+Open at the close of the code (the labelling sitting itself is still ahead, and was
+never in scope here):
+
+- **The drawing gesture has not been tried on a real mouse or finger.** CLAUDE.md's own
+  section on this (#155) is why: neither jsdom nor CDP can start the gestures a browser
+  owns, so a synthetic pointer-event pass is not evidence the gesture survives contact
+  with a real device. `GroundTruthCard.test.tsx` says this in its own header and keeps
+  the write-path tests (synthetic, legitimate) separate from the attribute assertions
+  (`draggable={false}`, `touch-none`, `select-none`) that are its actual evidence
+- **`worker/cmd/eval` has no live fetch path.** There is no Access service token scoped
+  to the admin API the way `otlp.mkcarl.com`'s is (CONTEXT.md §6), so it reads a
+  `GET /api/admin/eval-source` response saved to disk by hand rather than fetching it
+  itself — documented as a deliberate gap in the command's own doc comment, not routed
+  around
+- **The scorer has never been run against real data.** It is verified against fixtures
+  only; the first real number comes out of the labelling sitting, which is the actual
+  gate this milestone always said it was

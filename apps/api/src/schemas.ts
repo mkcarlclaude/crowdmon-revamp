@@ -2638,3 +2638,254 @@ export const ContributeMe = z
       .openapi("ContributeMeVerdicts"),
   })
   .openapi("ContributeMe");
+
+/**
+ * Ground truth (M26, migration 0014): exhaustive, model-independent labels
+ * for the frozen evaluation pool. Plan:
+ * docs/superpowers/plans/2026-08-28-eval-harness.md §A. `predictions` stays
+ * a truthful record of what a model said — that is exactly the property the
+ * plan's §A2 weighs and keeps — so a ground-truth box gets its own request
+ * and response shapes here rather than reusing `PredictionBox` or
+ * `ProposedBox`.
+ */
+
+/** Mirrors migration 0014's `ground_truth` id — the one thing `DELETE` needs. */
+export const GroundTruthIdParam = z.object({
+  id: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .refine((id) => id > 0)
+    .openapi({ param: { name: "id", in: "path" }, type: "integer", example: 1 }),
+});
+
+/**
+ * What drawing a ground-truth box takes (#175): a class and four corners,
+ * checked with `PredictionBox`'s own cross-field refinement. No `image_id`
+ * — that comes from the path, matching `CreateMissingReportRequest`'s own
+ * shape — and no `annotator_id`, for `StagedVerdict`'s own reason: the
+ * identity comes off the Access assertion, never the body, or a caller
+ * could attribute a box to somebody else's name.
+ */
+export const CreateGroundTruthBoxRequest = z
+  .object({
+    class_id: z.int().positive().openapi({ example: 1 }),
+    x_min: z.number().min(0).max(1).openapi({ example: 0.12 }),
+    y_min: z.number().min(0).max(1).openapi({ example: 0.2 }),
+    x_max: z.number().min(0).max(1).openapi({ example: 0.5 }),
+    y_max: z.number().min(0).max(1).openapi({ example: 0.6 }),
+  })
+  .superRefine((box, ctx) => {
+    if (box.x_max < box.x_min) {
+      ctx.addIssue({ code: "custom", message: "x_max must be >= x_min", path: ["x_max"] });
+    }
+    if (box.y_max < box.y_min) {
+      ctx.addIssue({ code: "custom", message: "y_max must be >= y_min", path: ["y_max"] });
+    }
+  })
+  .openapi("CreateGroundTruthBoxRequest");
+
+/** A `ground_truth` row as written, joined to its class name — `ProposedBox`'s own reason to carry it. */
+export const GroundTruthBox = z
+  .object({
+    id: z.int().positive().openapi({ example: 1 }),
+    image_id: z.int().positive().openapi({ example: 7 }),
+    class_id: z.int().positive().openapi({ example: 1 }),
+    class_name: z.string().openapi({ example: "Paimon" }),
+    x_min: z.number().openapi({ example: 0.12 }),
+    y_min: z.number().openapi({ example: 0.2 }),
+    x_max: z.number().openapi({ example: 0.5 }),
+    y_max: z.number().openapi({ example: 0.6 }),
+    annotator_id: z.string().openapi({ example: "admin@example.com" }),
+    created_at: z.int().openapi({ example: 1_754_099_000 }),
+  })
+  .openapi("GroundTruthBox");
+
+/** What deleting a box confirms — the id, and nothing else worth echoing back. */
+export const GroundTruthBoxDeleted = z
+  .object({ id: z.int().positive().openapi({ example: 1 }) })
+  .openapi("GroundTruthBoxDeleted");
+
+/**
+ * Marking (or unmarking) one image exhaustively annotated for one class
+ * (#175, migration 0014's `ground_truth_exhaustive`). `updatePublicSampleRoute`'s
+ * own shape — a single boolean flag, PATCHed rather than a separate mark/
+ * unmark pair of endpoints, so an annotator revisiting a frame to fix a
+ * mistake toggles the same control they set it with.
+ */
+export const SetGroundTruthExhaustiveRequest = z
+  .object({
+    class_id: z.int().positive().openapi({ example: 1 }),
+    exhaustive: z.boolean().openapi({ example: true }),
+  })
+  .openapi("SetGroundTruthExhaustiveRequest");
+
+/** One class's exhaustiveness state on one image — what both the mark endpoint and the per-image read echo back. */
+export const GroundTruthClassState = z
+  .object({
+    class_id: z.int().positive().openapi({ example: 1 }),
+    name: z.string().openapi({ example: "Paimon" }),
+    exhaustive: z.boolean().openapi({ example: false }),
+  })
+  .openapi("GroundTruthClassState");
+
+export const GroundTruthExhaustive = z
+  .object({
+    image_id: z.int().positive().openapi({ example: 7 }),
+    class_id: z.int().positive().openapi({ example: 1 }),
+    exhaustive: z.boolean().openapi({ example: true }),
+  })
+  .openapi("GroundTruthExhaustive");
+
+/**
+ * One frozen-pool image, everything the annotation surface (#176) needs to
+ * draw on it: what the detector proposed, what has already been recorded as
+ * ground truth, and which active classes this image is exhaustively marked
+ * for. `predictions` reuses `ProposedBox` rather than a narrower shape —
+ * the whole point of showing them is letting an annotator see what was
+ * already found so they draw only what is missing, and that needs the same
+ * detail the verification screen shows.
+ */
+export const ImageAnnotation = z
+  .object({
+    image_id: z.int().positive().openapi({ example: 7 }),
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    r2_key: z.string().openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    timestamp_seconds: z.number().openapi({ example: 42 }),
+    url: z.string().openapi({
+      example:
+        "https://account.r2.cloudflarestorage.com/crowdmon-frames/frames/…?X-Amz-Signature=…",
+    }),
+    predictions: z.array(ProposedBox),
+    ground_truth: z.array(GroundTruthBox),
+    classes: z.array(GroundTruthClassState),
+  })
+  .openapi("ImageAnnotation");
+
+/**
+ * One image in the annotation worklist (#176's queue): enough to render a
+ * row and decide whether it still needs a look, without the predictions or
+ * ground-truth boxes themselves — those cost a second request per image
+ * (`GET /api/admin/images/{id}/ground-truth`) and a worklist of 95 rows has
+ * no use for all of them at once.
+ */
+const GroundTruthPoolImage = z
+  .object({
+    id: z.int().positive().openapi({ example: 7 }),
+    video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
+    r2_key: z.string().openapi({ example: "frames/dQw4w9WgXcQ/00042.000.jpg" }),
+    timestamp_seconds: z.number().openapi({ example: 42 }),
+    ground_truth_count: z.int().nonnegative().openapi({ example: 2 }),
+    classes: z.array(GroundTruthClassState),
+  })
+  .openapi("GroundTruthPoolImage");
+
+export const GroundTruthPoolQuery = z.object({
+  limit: limitParam,
+  offset: offsetParam,
+});
+
+/**
+ * The frozen evaluation pool (`selection_reason = 'random'`, CONTEXT.md
+ * §Q16), for the annotation surface to work through. Every image in it,
+ * not just the ones still missing a look — an annotator revisiting a
+ * finished frame to add a box the first pass missed needs the same list, so
+ * this does not filter to `classes[].exhaustive = false` the way
+ * `labellingBatchHandler`'s pool filters to unruled boxes.
+ */
+export const GroundTruthPool = z
+  .object({
+    images: z.array(GroundTruthPoolImage),
+    total: z.int().nonnegative().openapi({ example: 95 }),
+  })
+  .openapi("GroundTruthPool");
+
+/**
+ * `GET /api/admin/eval-source`'s payload (#177, M26.3) — the ground truth,
+ * model-independent, and the predictions being measured against it, with
+ * confidence, for every image the labelling sitting has actually finished.
+ *
+ * Deliberately not the existing `snapshotSourceRoute` extended, and not the
+ * manifest `snapshot`s write to R2. That endpoint's labels are
+ * `WINNING_VERDICT`-derived (`routes/jobs.ts`) — a subset of the detector's
+ * own output, which is exactly the bias this milestone exists to remove —
+ * and it is also the one path `worker/cmd/snapshot` uses to build *training*
+ * datasets. Widening it to carry ground truth and refuse on incomplete
+ * annotation would mean an unrelated training-snapshot rebuild starts
+ * failing because the eval pool's labelling sitting is not finished, which
+ * couples two things that do not need to be coupled — and the M26 plan is
+ * explicit that touching how the train split's labels are derived is out of
+ * scope. This route reads only `ground_truth`, `ground_truth_exhaustive` and
+ * `predictions`, restricted to the frozen pool and to active classes, and
+ * `snapshotSourceHandler`'s own query is untouched by its existence.
+ *
+ * **`images` is not the frozen pool — it is the frozen pool intersected
+ * with what has actually been marked exhaustive.** The original shape
+ * required *every* pool image to carry an exhaustive mark for every active
+ * class before this route would return anything at all, on the reasoning
+ * that a scorer running over a partial pool was silently reproducing the
+ * biased metric M26 exists to fix. Read against production on 2026-08-29
+ * that requirement is unsatisfiable, not merely strict: the frozen pool
+ * (`selection_reason = 'random'`) is 2,298 images, only 1,025 of which the
+ * zero-shot detector proposed anything on at all, and only 95 of which
+ * carry a label today — the plan's own "95 images, one class, tractable in
+ * a single sitting" was counting labelled images, not the pool. Refusing
+ * until all 2,298 are annotated blocks the instrument on work an order of
+ * magnitude larger than what was budgeted, and the pool cannot be narrowed
+ * to the 95 or the 1,025 instead: an image the detector proposed nothing on
+ * is exactly where a missed instance lives, and scoring only where a
+ * prediction already exists reconstructs the inverted metric at a smaller
+ * size — the same failure the plan opens with, one layer down. So the gate
+ * moved from *all-or-nothing* to *per-image*: an image is in `images` once
+ * every active class is marked exhaustive on it, and stays out — not
+ * scored as empty, simply not yet part of the instrument — until then.
+ *
+ * `class_name` rides on every box rather than a top-level roster the boxes
+ * index into, `ProposedBox`'s own reason: the scorer groups by class on its
+ * own and a second lookup structure buys nothing a Go binary needs.
+ */
+const EvalSourceBox = z
+  .object({
+    class_name: z.string().openapi({ example: "Paimon" }),
+    x_min: z.number().openapi({ example: 0.12 }),
+    y_min: z.number().openapi({ example: 0.2 }),
+    x_max: z.number().openapi({ example: 0.5 }),
+    y_max: z.number().openapi({ example: 0.6 }),
+  })
+  .openapi("EvalSourceBox");
+
+const EvalSourcePrediction = EvalSourceBox.extend({
+  confidence: z.number().min(0).max(1).openapi({ example: 0.14 }),
+}).openapi("EvalSourcePrediction");
+
+const EvalSourceImage = z
+  .object({
+    image_id: z.int().positive().openapi({ example: 7 }),
+    predictions: z.array(EvalSourcePrediction),
+    ground_truth: z.array(EvalSourceBox),
+  })
+  .openapi("EvalSourceImage");
+
+/**
+ * The scored set, restricted to active classes: every frozen-pool image
+ * marked exhaustively annotated for every one of them, and only those (see
+ * this file's own comment above `EvalSourceBox` for why the pool itself
+ * cannot be the answer). `image_id` on each entry already names the scored
+ * set explicitly — there is no separate id list to keep in sync with it —
+ * and `worker/cmd/eval` reads those ids back out to record, in its own
+ * report, exactly which images a given number was computed from
+ * (`main.go`'s own comment on `scored_image_ids`), which is what lets a
+ * later run claim it scored the same set rather than asserting it.
+ *
+ * A ground-truth-empty entry (an image marked exhaustive with nothing
+ * drawn on it) is a legitimate "nothing here" (migration 0014's own
+ * reasoning) and stays in the set: a scorer computing recall needs that
+ * true negative in its denominator as much as it needs every positive.
+ * That is different from an image simply not being in `images` at all,
+ * which means nobody has finished looking at it yet.
+ */
+export const EvalSource = z
+  .object({
+    images: z.array(EvalSourceImage),
+  })
+  .openapi("EvalSource");

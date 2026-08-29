@@ -113,6 +113,10 @@ const NAV_ITEMS = [
   // and Verify — it is what `/admin/videos`'s own `JobList` used to be.
   { to: "/admin/queue", label: "Queue" },
   { to: "/admin/verify", label: "Verify" },
+  // M26, #176: the frozen pool's exhaustive labelling sitting — a
+  // different action from "Verify" (rule on what a model proposed) and
+  // deliberately its own item rather than a tab on it.
+  { to: "/admin/annotate", label: "Annotate" },
   { to: "/admin/annotations", label: "Annotations" },
   { to: "/admin/classes", label: "Classes" },
   { to: "/admin/snapshots", label: "Snapshots" },

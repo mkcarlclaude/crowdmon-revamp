@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router";
 import { AdminLayout } from "./components/AdminLayout";
+import { AdminAnnotatePage } from "./pages/admin/Annotate";
 import { AdminAnnotationsPage } from "./pages/admin/Annotations";
 import { AdminClassesPage } from "./pages/admin/Classes";
 import { AdminDashboardPage } from "./pages/admin/Dashboard";
@@ -68,6 +69,10 @@ export function App() {
             grouped `JobList` that used to live on `/admin/videos`. */}
         <Route path="queue" element={<AdminQueuePage />} />
         <Route path="verify" element={<AdminVerifyPage />} />
+        {/* M26, #176: the frozen pool's exhaustive labelling sitting —
+            drawing boxes no prediction proposed, distinct from `verify`'s
+            accept/adjust/reject on boxes a model already made. */}
+        <Route path="annotate" element={<AdminAnnotatePage />} />
         <Route path="annotations" element={<AdminAnnotationsPage />} />
         {/* M19, plan §B2: the coverage table folded into `/admin/videos`.
             A redirect rather than a 404 — this repo's own docs and issue
