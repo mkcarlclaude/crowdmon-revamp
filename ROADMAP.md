@@ -1571,12 +1571,15 @@ pool to avoid back into whichever images happen to get annotated first.
 Open at the close of the code (the labelling sitting itself is still ahead, and was
 never in scope here):
 
-- **The drawing gesture has not been tried on a real mouse or finger.** CLAUDE.md's own
-  section on this (#155) is why: neither jsdom nor CDP can start the gestures a browser
-  owns, so a synthetic pointer-event pass is not evidence the gesture survives contact
-  with a real device. `GroundTruthCard.test.tsx` says this in its own header and keeps
-  the write-path tests (synthetic, legitimate) separate from the attribute assertions
-  (`draggable={false}`, `touch-none`, `select-none`) that are its actual evidence
+- **The drawing gesture works on a real mouse — verified by hand on 2026-08-29**, which
+  is the only instrument that could say so. CLAUDE.md's own section on this (#155) is
+  why it had to be a hand: neither jsdom nor CDP can start the gestures a browser owns,
+  so the synthetic pass proved the write path and nothing about the gesture.
+  `GroundTruthCard.test.tsx` keeps those two kinds of evidence apart in its own header,
+  and the attribute assertions (`draggable={false}`, `touch-none`, `select-none`) are
+  what guard the fix from here. **A finger has still not tried it**: `touch-none` is
+  applied only in drawing mode, and touch is the half of #155 that a mouse cannot
+  exercise
 - **`worker/cmd/eval` has no live fetch path.** There is no Access service token scoped
   to the admin API the way `otlp.mkcarl.com`'s is (CONTEXT.md §6), so it reads a
   `GET /api/admin/eval-source` response saved to disk by hand rather than fetching it
