@@ -12,6 +12,9 @@ crowdmon-extract-render/
 # Node
 node_modules/
 dist/
+# The SSR pass `apps/web` builds so `scripts/prerender.mjs` can render `/` at
+# build time. Transient, and outside `apps/web/dist`, so it is never deployed.
+dist-ssr/
 .wrangler/
 *.log
 

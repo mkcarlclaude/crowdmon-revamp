@@ -12,10 +12,16 @@
       whatever survives its JavaScript pass.
 
       There is deliberately no canonical link element here. One shell serves every
-      route (M5.1), so a canonical in this file would apply to `/demo` as well
-      and declare it a duplicate of `/` — actively worse than having none. With
-      two indexable URLs and no duplicate content, a per-route injected
-      canonical would buy nothing for the complexity.
+      route (M5.1), so a canonical in this file would apply to every path the SPA
+      fallback answers and declare each a duplicate of `/` — actively worse than
+      having none. `scripts/prerender.mjs` now gives `/demo` a document of its
+      own and rewrites this file's `<title>` and description for it, so a
+      per-route canonical has become *possible*; it is still not here, because
+      with two indexable URLs and no duplicate content it would buy nothing.
+
+      That script also injects `/`'s rendered markup into the `<div id="root">`
+      below, which is why that div has to stay exactly one empty element — see
+      `test/index-html.test.ts`.
     -->
     <meta
       name="description"

@@ -61,6 +61,18 @@ describe("index.html", () => {
   });
 
   /**
+   * `scripts/prerender.mjs` injects `/`'s build-time markup by replacing this
+   * exact string, and `src/main.tsx` decides between `hydrateRoot` and
+   * `createRoot` by whether `#root` came with children. Two mounts would make
+   * the replacement pick one arbitrarily; a non-empty one would make that
+   * branch lie in `vite dev`, where nothing prerenders. The build fails on
+   * both, but it fails pointing at `dist/`; this fails pointing at the source.
+   */
+  it("has exactly one empty #root for the prerender step to fill", () => {
+    expect(html.split('<div id="root"></div>')).toHaveLength(2);
+  });
+
+  /**
    * One shell serves every route (M5.1), so a canonical here would apply to
    * `/demo` too and declare it a duplicate of `/`. Absent is correct; wrong
    * is worse than missing.
