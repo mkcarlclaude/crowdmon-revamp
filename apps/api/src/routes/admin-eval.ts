@@ -8,13 +8,20 @@ import { EvalSource, errorResponse } from "../schemas";
  *
  * See `EvalSource`'s own comment in `schemas.ts` for why this is a route of
  * its own rather than the existing `snapshotSourceRoute` widened: that
- * route's labels are verdict-derived (`WINNING_VERDICT`, `routes/jobs.ts`)
- * and it also feeds `worker/cmd/snapshot`'s training-dataset build, so
- * teaching it to refuse on incomplete eval annotation would block an
- * unrelated training rebuild on a labelling sitting that has nothing to do
- * with it. This route touches none of that: it reads `ground_truth`,
- * `ground_truth_exhaustive` and `predictions` directly, and
- * `snapshotSourceHandler` is unchanged by its existence.
+ * route's *train*-split labels are still verdict-derived (`WINNING_VERDICT`,
+ * `routes/jobs.ts`), so teaching this route to refuse on incomplete eval
+ * annotation would block an unrelated training rebuild on a labelling
+ * sitting that has nothing to do with it — `snapshotSourceHandler`'s own
+ * comment on its eval half restates the same reasoning for why *it* adds no
+ * refusal either. What the two routes now share, as of M26.7 plan §B, is
+ * `resolveScoredEvalPool` below: the same "exhaustive for every active
+ * class" computation, because a second implementation of that predicate is
+ * a second thing to keep true. They still differ in what they do with an
+ * empty result — this route's whole reason to keep existing is the 409
+ * below, which `snapshotSourceHandler` deliberately does not have — and in
+ * everything downstream of the pool: this route also reads `predictions` to
+ * hand the scorer both sides of the comparison, which the snapshot route has
+ * no reason to do.
  *
  * **The gate is per image, not all-or-nothing across the pool.** The
  * original shape refused the entire call unless every frozen-pool image
@@ -86,20 +93,53 @@ export const getEvalSourceRoute = createRoute({
   },
 });
 
-export const getEvalSourceHandler: RouteHandler<typeof getEvalSourceRoute, AppEnv> = async (c) => {
-  const [classesResult, imagesResult] = await c.env.DB.batch<ActiveClassRow | EvalImageRow>([
-    c.env.DB.prepare("SELECT id, name FROM classes WHERE active = 1 ORDER BY name"),
-    c.env.DB.prepare("SELECT id FROM images WHERE selection_reason = 'random' ORDER BY id"),
+/** What `resolveScoredEvalPool` hands both its callers. */
+export interface ScoredEvalPool {
+  /**
+   * The active-class roster exhaustiveness was computed against. Empty
+   * means no roster at all — a different situation from a roster existing
+   * with nothing scored yet, and a caller checking `classIds.length` can
+   * tell the two apart (see `resolveScoredEvalPool`'s own comment).
+   */
+  classIds: number[];
+  /** The frozen-pool (`selection_reason = 'random'`) image ids marked exhaustive for every one of `classIds`. */
+  scoredImageIds: number[];
+}
+
+/**
+ * The computation this route's own module comment describes as shared with
+ * `snapshotSourceHandler` (`routes/jobs.ts`, M26.7 plan §B): which
+ * frozen-pool images are exhaustively annotated for every active class.
+ * Pulled out of `getEvalSourceHandler` rather than left inline once a second
+ * caller needed the identical answer — "exhaustive for every active class"
+ * is exactly the kind of predicate this repo's own memory
+ * (`d1-bound-param-limit`) warns is easy to get right once and wrong the
+ * second time it is retyped, so there is now exactly one implementation.
+ *
+ * Callers differ only in what an empty `scoredImageIds` means to them:
+ * `getEvalSourceHandler` refuses with 409 (this file's own module comment
+ * explains why that refusal is scoped to this route); `snapshotSourceHandler`
+ * treats it as a correct answer for a deployment mid-annotation and adds no
+ * refusal of its own.
+ */
+export async function resolveScoredEvalPool(db: D1Database): Promise<ScoredEvalPool> {
+  const [classesResult, imagesResult] = await db.batch<ActiveClassRow | EvalImageRow>([
+    db.prepare("SELECT id, name FROM classes WHERE active = 1 ORDER BY name"),
+    db.prepare("SELECT id FROM images WHERE selection_reason = 'random' ORDER BY id"),
   ]);
 
   const classes = (classesResult?.results ?? []) as ActiveClassRow[];
   const images = (imagesResult?.results ?? []) as EvalImageRow[];
 
   // No roster at all: a different precondition from "nobody has finished
-  // annotating anything yet" below — there is no (image, class) pair to be
-  // incomplete, so there is nothing to refuse either.
+  // annotating anything yet" — there is no (image, class) pair to be
+  // incomplete, so there is nothing to refuse either, and — just as
+  // important — nothing to vacuously satisfy. `classIds.every(...)` below
+  // is true for every image when `classIds` is empty, so returning early
+  // here is what stops an empty roster from reading as "every image is
+  // fully annotated."
   if (classes.length === 0) {
-    return c.json({ images: [] }, 200);
+    return { classIds: [], scoredImageIds: [] };
   }
 
   const imageIds = images.map((image) => image.id);
@@ -113,9 +153,9 @@ export const getEvalSourceHandler: RouteHandler<typeof getEvalSourceRoute, AppEn
     // One reserved slot per active class — `MAX_ACTIVE_CLASSES` (schemas.ts)
     // bounds that at 30, so a chunk still carries most of its budget for
     // image ids even at the roster's ceiling.
-    const exhaustiveResults = await c.env.DB.batch<ExhaustivePairRow>(
+    const exhaustiveResults = await db.batch<ExhaustivePairRow>(
       chunkForBinding(imageIds, classIds.length).map((chunk) =>
-        c.env.DB.prepare(
+        db.prepare(
           `SELECT image_id, class_id FROM ground_truth_exhaustive
             WHERE image_id IN (${placeholders(chunk)}) AND class_id IN (${placeholders(classIds)})`,
         ).bind(...chunk, ...classIds),
@@ -135,6 +175,17 @@ export const getEvalSourceHandler: RouteHandler<typeof getEvalSourceRoute, AppEn
   const scoredImageIds = imageIds.filter((imageId) =>
     classIds.every((classId) => covered.has(`${imageId}:${classId}`)),
   );
+
+  return { classIds, scoredImageIds };
+}
+
+export const getEvalSourceHandler: RouteHandler<typeof getEvalSourceRoute, AppEnv> = async (c) => {
+  const { classIds, scoredImageIds } = await resolveScoredEvalPool(c.env.DB);
+
+  // No roster at all — see `resolveScoredEvalPool`'s own comment.
+  if (classIds.length === 0) {
+    return c.json({ images: [] }, 200);
+  }
 
   // The one refusal this route still makes: nothing marked at all means
   // there is genuinely nothing to score, which is a different situation

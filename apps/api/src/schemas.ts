@@ -1240,17 +1240,20 @@ export const DryRunReport = z
   .openapi("DryRunReport");
 
 /**
- * One label a snapshot admits for one image (M15.1, M15.3).
+ * One label a snapshot admits for one image (M15.1, M15.3, amended M26.7
+ * plan §B).
  *
- * No `id`, no `prompt_version`, no `model_id`: unlike `ProposedBox`, this is
- * not a proposal a screen renders and lets an operator rule on — it is the
- * resolved outcome of a ruling that already happened, exactly the shape a
- * training script needs and nothing about how the box was arrived at. There
- * is also no verdict kind on it. `snapshotSourceHandler` (M15.3's default
- * inclusion policy) only ever emits one label per prediction, resolved to
- * whichever coordinates that prediction's latest admin verdict settled on —
- * the prediction's own box for `accept`, the verdict's adjusted box for
- * `adjust` — so there is nothing left for a reader of this shape to resolve.
+ * No `id`, no `prompt_version`, no `model_id`, no confidence: unlike
+ * `ProposedBox`, this is not a proposal a screen renders and lets an
+ * operator rule on. On a train-split image it is the resolved outcome of a
+ * ruling that already happened — `snapshotSourceHandler` emits one label per
+ * prediction, resolved to whichever coordinates that prediction's latest
+ * admin verdict settled on, the prediction's own box for `accept`, the
+ * verdict's adjusted box for `adjust`. On an eval-split image it is a
+ * `ground_truth` row (migration 0014) instead, and there was never a
+ * verdict to resolve: a ground-truth box is a person's direct claim about
+ * what is in the frame, not a model's proposal somebody ruled on, so this
+ * shape already has nothing on it that reading would need.
  */
 const SnapshotLabel = z
   .object({
@@ -1264,16 +1267,37 @@ const SnapshotLabel = z
 
 /**
  * One image the current inclusion policy admits, and the labels it carries
- * (M15.1).
+ * (M15.1, amended M26.7 plan §A/§B).
  *
- * `selection_reason` travels here rather than being resolved into `split` by
- * this response: the worker is what decides how a reason maps onto a split
- * (M15.2's own rule — "holds `selection_reason = 'random'` images out of
- * train" — is a property of the *builder*, not of the contract), and handing
- * back the raw column keeps that decision in one place instead of splitting
- * it across the API and the worker that reads it. `labels` is never empty:
- * `snapshotSourceHandler` only emits an image once it carries at least one
- * (see that handler's own comment).
+ * `split` is resolved here, in the response, rather than left for the
+ * worker to infer from `selection_reason`. Until M26.7 this comment said
+ * that mapping was "a property of the *builder*, not of the contract" — that
+ * stopped being true the moment `labels` started coming from two different
+ * tables depending which split an image is in: `ground_truth` for eval,
+ * `WINNING_VERDICT` (`routes/jobs.ts`) for train. Choosing which table to
+ * read *is* choosing the split, so by the time this response is built the
+ * decision has already been made; handing back only `selection_reason` and
+ * letting the worker re-derive the same rule independently would leave two
+ * decisions that can disagree, with the manifest recording the worker's
+ * answer while the labels silently reflect the API's. `selection_reason`
+ * still rides along as provenance rather than being dropped — `manual` vs
+ * `diverse` is a fact about the image worth keeping on the record — it is
+ * simply no longer what the worker's split is computed *from*. `splitFor()`
+ * (`worker/internal/snapshot/builder.go`) still exists for exactly that
+ * reason: it recomputes the same rule from `selection_reason` and fails the
+ * build if its answer disagrees with `split`, rather than either side being
+ * trusted alone.
+ *
+ * `labels` may be empty — but only on an eval-split entry. A zero-label eval
+ * entry means this frame was examined for every active class and genuinely
+ * contains nothing, and that reading is only safe *because* an eval image
+ * that has not been fully examined is omitted from `images` entirely, never
+ * emitted with an empty `labels` as a stand-in (`snapshotSourceHandler`'s
+ * own comment on the eval query). The two rules are one rule: relax either
+ * half by itself and every true negative in the eval set becomes
+ * indistinguishable from "nobody has looked yet." A train-split entry keeps
+ * the old guarantee unconditionally — `snapshotSourceHandler` only ever
+ * emits one once it carries at least one verdict-derived label.
  */
 const SnapshotSourceImage = z
   .object({
@@ -1281,7 +1305,8 @@ const SnapshotSourceImage = z
     video_id: z.string().openapi({ example: "dQw4w9WgXcQ" }),
     timestamp_seconds: z.number().nonnegative().openapi({ example: 42 }),
     selection_reason: z.string().nullable().openapi({ example: "random" }),
-    labels: z.array(SnapshotLabel).min(1),
+    split: z.enum(["train", "eval"]).openapi({ example: "train" }),
+    labels: z.array(SnapshotLabel),
   })
   .openapi("SnapshotSourceImage");
 
@@ -1319,25 +1344,36 @@ export const SnapshotSource = z
 
 /**
  * The inclusion policy every snapshot built by this deployment currently
- * uses (M15.3, reordered M20 plan §C2). Free text on the `snapshots` row
- * rather than a versioned policy table (migration 0003's own comment on
- * `snapshots.inclusion_policy` explains why: a snapshot's dataset must be
- * reconstructible from its own row, not from a foreign key into a table that
- * might later change meaning underneath it) — this constant is simply
- * today's one policy, stated once so `snapshotSourceHandler` and
- * `createSnapshotHandler` cannot describe two different policies by
- * accident, and stamped verbatim onto every `snapshots` row so a change here
- * only describes snapshots built *after* it, never rewrites what an existing
- * row says about how it was built (plan §C2 — old rows are not backfilled).
+ * uses (M15.3, reordered M20 plan §C2, made asymmetric per split in M26.7
+ * plan §C). Free text on the `snapshots` row rather than a versioned policy
+ * table (migration 0003's own comment on `snapshots.inclusion_policy`
+ * explains why: a snapshot's dataset must be reconstructible from its own
+ * row, not from a foreign key into a table that might later change meaning
+ * underneath it) — this constant is simply today's one policy, stated once
+ * so `snapshotSourceHandler` and `createSnapshotHandler` cannot describe two
+ * different policies by accident, and stamped verbatim onto every
+ * `snapshots` row so a change here only describes snapshots built *after*
+ * it, never rewrites what an existing row says about how it was built (plan
+ * §C2 — old rows are not backfilled; M26.7 does not backfill either — the
+ * one production row, job-329, keeps its string and stays a correct record
+ * of a snapshot built the old, verdict-for-both-splits way).
  *
- * `WINNING_VERDICT` (`routes/jobs.ts`) is the total, static ordering this
- * string names: the latest `admin` verdict wins outright; absent one, the
- * latest verdict from a `trusted` user wins; an `anon` verdict never
- * qualifies at either rank.
+ * The two halves of this string are not the same policy read twice — that is
+ * the whole change M26.7 makes, and the string has to say so or it becomes a
+ * lie the moment this ships. `WINNING_VERDICT` (`routes/jobs.ts`) is the
+ * total, static ordering the `train` clause names: the latest `admin`
+ * verdict wins outright; absent one, the latest verdict from a `trusted`
+ * user wins; an `anon` verdict never qualifies at either rank. The `eval`
+ * clause names the different source entirely — `ground_truth` (migration
+ * 0014), a human's direct claim rather than a ruling on a model's proposal —
+ * gated on `ground_truth_exhaustive` covering every active class, the same
+ * gate `getEvalSourceHandler` (`admin-eval.ts`) applies, computed by the one
+ * shared `resolveScoredEvalPool` (M26.7 plan §B).
  */
 export const DEFAULT_INCLUSION_POLICY =
-  "source=admin (latest wins) else trusted user (latest wins); verdict=accept or adjust; " +
-  "split: selection_reason='random' -> eval, else train";
+  "train: source=admin (latest wins) else trusted user (latest wins); verdict=accept or adjust; " +
+  "split: selection_reason='random' -> eval, else train; " +
+  "eval: ground_truth, gated on ground_truth_exhaustive for every active class";
 
 /**
  * What a snapshot worker reports after writing the artifact to R2 (M15.1).

@@ -29,10 +29,16 @@ async function seedVideo() {
     .run();
 }
 
+// "diverse" by default, not "random": most of this suite's images exist to
+// exercise WINNING_VERDICT's ordering, which as of M26.7 only ever governs
+// the *train* half — a "random" image's labels now come from `ground_truth`
+// instead (plan §B), and none of these verdict-focused tests seed that
+// table. Tests that specifically exercise the eval half pass "random"
+// explicitly.
 async function seedImage(
   key: string,
   timestamp: number,
-  selectionReason: string | null = "random",
+  selectionReason: string | null = "diverse",
 ) {
   const row = await env.DB.prepare(
     `INSERT INTO images (r2_key, video_id, timestamp_seconds, phash, dedup_threshold, selection_reason)
@@ -128,6 +134,40 @@ function reportSnapshot(jobId: number, body: unknown) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+    },
+    env,
+  );
+}
+
+// The eval half's own fixtures (M26.7 plan §B): a ground-truth box and an
+// exhaustive mark, the two things `resolveScoredEvalPool`
+// (`admin-eval.ts`) and the eval query in `snapshotSourceHandler` read
+// instead of a verdict. Mirrors `admin-eval.test.ts`'s own helpers of the
+// same name rather than importing them — this file already keeps its own
+// local `seedImage`/`seedClass`/`seedPrediction`, distinct in shape from
+// `labelling-seed.ts`'s versions, for the same reason: the pool this suite
+// wants is closer to `snapshotSourceHandler`'s own SQL than to a
+// verification screen's.
+async function drawGroundTruth(imageId: number, classId: number, box = [0.1, 0.1, 0.4, 0.4]) {
+  const [x_min, y_min, x_max, y_max] = box;
+  await app.request(
+    `/api/admin/images/${imageId}/ground-truth`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(await adminHeaders()) },
+      body: JSON.stringify({ class_id: classId, x_min, y_min, x_max, y_max }),
+    },
+    env,
+  );
+}
+
+async function markExhaustive(imageId: number, classId: number) {
+  await app.request(
+    `/api/admin/images/${imageId}/ground-truth/exhaustive`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...(await adminHeaders()) },
+      body: JSON.stringify({ class_id: classId, exhaustive: true }),
     },
     env,
   );
@@ -247,6 +287,7 @@ describe("GET /api/jobs/{id}/snapshot-source", () => {
         r2_key: string;
         video_id: string;
         selection_reason: string | null;
+        split: "train" | "eval";
         labels: Array<{
           class_name: string;
           x_min: number;
@@ -263,7 +304,8 @@ describe("GET /api/jobs/{id}/snapshot-source", () => {
         r2_key: `frames/${VIDEO}/00000.000.jpg`,
         video_id: VIDEO,
         timestamp_seconds: 0,
-        selection_reason: "random",
+        selection_reason: "diverse",
+        split: "train",
         labels: [{ class_name: "Paimon", x_min: 0.1, y_min: 0.1, x_max: 0.4, y_max: 0.5 }],
       },
     ]);

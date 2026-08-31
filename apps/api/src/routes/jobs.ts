@@ -3,6 +3,7 @@ import { trace } from "@opentelemetry/api";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { chunkForBinding, placeholders, randomShuffleKey } from "../d1";
+import { resolveScoredEvalPool } from "./admin-eval";
 import {
   ChunkFanOut,
   ClaimRequest,
@@ -1502,20 +1503,49 @@ interface SnapshotLabelRow {
   y_max: number;
 }
 
+/**
+ * The train half of M15.2's split rule, restated in SQL (M26.7 plan §A).
+ *
+ * The same predicate as `CONTRIBUTOR_TRAIN_SPLIT` (`routes/contribute.ts`)
+ * and `splitFor` (`worker/internal/snapshot/builder.go`) each express
+ * independently — not imported from either, on purpose. The split rule now
+ * lives in three places, each pointing at the others in its own comment
+ * rather than one being a shared source the other two call: a rename here
+ * that silently forgot to update the other two would still be caught,
+ * because `splitFor` re-derives the same answer from `selection_reason` and
+ * fails the build if it disagrees (see this handler's own comment below).
+ *
+ * This is the filter that keeps a `selection_reason = 'random'` image out
+ * of the verdict-derived query entirely, rather than letting it match and
+ * then relying on the worker to route it to `eval` afterward — as of M26.7,
+ * an eval image's labels come from `ground_truth`, not from a verdict, so a
+ * random image matching this query too would produce a second, wrongly
+ * sourced entry for the same image rather than the one this route now
+ * guarantees.
+ */
+const SNAPSHOT_TRAIN_SPLIT = `(i.selection_reason IS NULL OR i.selection_reason != 'random')`;
+
 export const snapshotSourceRoute = createRoute({
   method: "get",
   path: "/api/jobs/{id}/snapshot-source",
   operationId: "snapshotSource",
   tags: ["jobs"],
-  summary: "Every image and label the current inclusion policy admits (M15.1)",
+  summary: "Every image and label the current inclusion policy admits (M15.1, M26.7)",
   description:
-    "The whole input to one snapshot build: every image carrying at least one label " +
-    "under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest " +
-    "`admin` verdict wins outright; absent one, the latest verdict from a `trusted` " +
-    "user wins; `accept` or `adjust` either way), with `selection_reason` alongside so " +
-    "the worker can compute M15.2's split. No Access assertion and no credential beyond " +
-    "`worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller " +
-    "learns nothing here it could not already infer by polling claim.",
+    "The whole input to one snapshot build, both splits (M26.7 plan §A/§B). `split` is " +
+    "resolved here rather than left for the worker to infer from `selection_reason` — " +
+    "the worker's `splitFor` now only checks that its own answer agrees, and fails the " +
+    "build if it does not. A `train`-split image is unchanged from M15.3: verdict-derived " +
+    "under the default inclusion policy (the latest `admin` verdict wins outright; absent " +
+    "one, the latest verdict from a `trusted` user; `accept` or `adjust` either way), and " +
+    "always carries at least one label. An `eval`-split image's labels come from " +
+    "`ground_truth` instead, gated on `ground_truth_exhaustive` covering every active " +
+    "class, and may carry zero labels — a frozen-pool frame examined and found to contain " +
+    "nothing. No refusal on an incomplete eval pool: an empty eval half alongside a " +
+    "populated train half is a correct 200 for a deployment mid-annotation. No Access " +
+    "assertion and no credential beyond `worker_id`, the same trust tier as the rest of " +
+    "`/api/jobs/*` — a stray caller learns nothing here it could not already infer by " +
+    "polling claim.",
   request: { params: JobIdParam, query: ListVideoImagesQuery },
   responses: {
     200: {
@@ -1546,16 +1576,20 @@ export const snapshotSourceHandler: RouteHandler<typeof snapshotSourceRoute, App
     return c.json({ error: "no snapshot job with this id is held by this worker" }, 404);
   }
 
-  // Two queries merged in JS, `labellingBatchHandler`'s own idiom: SQLite has
-  // no nested-row projection, and building the label arrays here rather than
-  // with `json_group_array` keeps every label shape declared once, in the
+  // The train half (M15.3, unchanged except for `SNAPSHOT_TRAIN_SPLIT`
+  // above, which M26.7 adds to keep this query's images from also being
+  // eligible for the eval half below). Two queries merged in JS,
+  // `labellingBatchHandler`'s own idiom: SQLite has no nested-row
+  // projection, and building the label arrays here rather than with
+  // `json_group_array` keeps every label shape declared once, in the
   // contract, rather than duplicated into a SQL string this file would have
   // to keep in sync with `SnapshotLabel` by hand.
   const [images, labels] = await c.env.DB.batch<SnapshotImageRow | SnapshotLabelRow>([
     c.env.DB.prepare(
       `SELECT i.id, i.r2_key, i.video_id, i.timestamp_seconds, i.selection_reason
          FROM images i
-        WHERE EXISTS (
+        WHERE ${SNAPSHOT_TRAIN_SPLIT}
+          AND EXISTS (
               SELECT 1 FROM predictions p
                 JOIN verdicts v ON v.id = ${WINNING_VERDICT}
                WHERE p.image_id = i.id AND v.verdict IN ('accept', 'adjust'))
@@ -1580,15 +1614,85 @@ export const snapshotSourceHandler: RouteHandler<typeof snapshotSourceRoute, App
     labelsByImage.set(label.image_id, [...(labelsByImage.get(label.image_id) ?? []), label]);
   }
 
+  // The eval half (M26.7 plan §B). `resolveScoredEvalPool` is the exact
+  // computation `getEvalSourceHandler` (`admin-eval.ts`) uses to decide
+  // which frozen-pool images are exhaustively annotated for every active
+  // class — reused rather than re-derived, per that function's own comment,
+  // so "exhaustive for every active class" has exactly one implementation.
+  // Unlike that route, an empty result here is not refused: a training
+  // rebuild has no business waiting on an eval annotation sitting
+  // (`admin-eval.ts`'s own module comment, and this route's own description
+  // above), so a mid-annotation deployment simply gets an empty eval half
+  // and a populated train half, both under one 200.
+  const { classIds, scoredImageIds } = await resolveScoredEvalPool(c.env.DB);
+
+  let evalImages: SnapshotImageRow[] = [];
+  const groundTruthByImage = new Map<number, SnapshotLabelRow[]>();
+  if (scoredImageIds.length > 0) {
+    const [evalImageResults, groundTruthResults] = await Promise.all([
+      c.env.DB.batch<SnapshotImageRow>(
+        chunkForBinding(scoredImageIds).map((chunk) =>
+          c.env.DB.prepare(
+            `SELECT id, r2_key, video_id, timestamp_seconds, selection_reason
+               FROM images WHERE id IN (${placeholders(chunk)})
+              ORDER BY id`,
+          ).bind(...chunk),
+        ),
+      ),
+      // One reserved slot per active class, matching `resolveScoredEvalPool`'s
+      // own reservation for the same D1 hundred-bound-parameter ceiling
+      // (`memory/d1-bound-param-limit`).
+      c.env.DB.batch<SnapshotLabelRow>(
+        chunkForBinding(scoredImageIds, classIds.length).map((chunk) =>
+          c.env.DB.prepare(
+            `SELECT g.image_id, c.name AS class_name, g.x_min, g.y_min, g.x_max, g.y_max
+               FROM ground_truth g
+               JOIN classes c ON c.id = g.class_id
+              WHERE g.image_id IN (${placeholders(chunk)}) AND g.class_id IN (${placeholders(classIds)})`,
+          ).bind(...chunk, ...classIds),
+        ),
+      ),
+    ]);
+
+    for (const result of evalImageResults) {
+      evalImages = evalImages.concat(result.results);
+    }
+    for (const result of groundTruthResults) {
+      for (const row of result.results) {
+        groundTruthByImage.set(row.image_id, [...(groundTruthByImage.get(row.image_id) ?? []), row]);
+      }
+    }
+  }
+
   return c.json(
     {
-      images: ((images?.results ?? []) as SnapshotImageRow[]).map((image) => ({
-        r2_key: image.r2_key,
-        video_id: image.video_id,
-        timestamp_seconds: image.timestamp_seconds,
-        selection_reason: image.selection_reason,
-        labels: (labelsByImage.get(image.id) ?? []).map(({ image_id: _, ...label }) => label),
-      })),
+      // Train first, then eval — the order the two halves were queried in.
+      // Nothing about the contract promises this ordering; it is simply
+      // deterministic, which is what lets a test assert on it.
+      images: [
+        ...((images?.results ?? []) as SnapshotImageRow[]).map((image) => ({
+          r2_key: image.r2_key,
+          video_id: image.video_id,
+          timestamp_seconds: image.timestamp_seconds,
+          selection_reason: image.selection_reason,
+          split: "train" as const,
+          labels: (labelsByImage.get(image.id) ?? []).map(({ image_id: _, ...label }) => label),
+        })),
+        ...evalImages.map((image) => ({
+          r2_key: image.r2_key,
+          video_id: image.video_id,
+          timestamp_seconds: image.timestamp_seconds,
+          selection_reason: image.selection_reason,
+          split: "eval" as const,
+          // Never defaulted to a placeholder: an empty array here is the
+          // 171-true-negative case this milestone exists to admit (plan's
+          // own numbers), and `SnapshotSourceImage`'s comment states the
+          // invariant that makes it safe — this array is empty only because
+          // `scoredImageIds` already excludes every image that was not
+          // examined for every active class.
+          labels: (groundTruthByImage.get(image.id) ?? []).map(({ image_id: _, ...label }) => label),
+        })),
+      ],
     },
     200,
   );

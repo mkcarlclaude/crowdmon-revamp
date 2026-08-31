@@ -2418,7 +2418,7 @@
           },
           "inclusion_policy": {
             "type": "string",
-            "example": "source=admin (latest wins) else trusted user (latest wins); verdict=accept or adjust; split: selection_reason='random' -> eval, else train"
+            "example": "train: source=admin (latest wins) else trusted user (latest wins); verdict=accept or adjust; split: selection_reason='random' -> eval, else train; eval: ground_truth, gated on ground_truth_exhaustive for every active class"
           },
           "created_at": {
             "type": "integer",
@@ -2471,12 +2471,19 @@
             "nullable": true,
             "example": "random"
           },
+          "split": {
+            "type": "string",
+            "enum": [
+              "train",
+              "eval"
+            ],
+            "example": "train"
+          },
           "labels": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SnapshotLabel"
-            },
-            "minItems": 1
+            }
           }
         },
         "required": [
@@ -2484,6 +2491,7 @@
           "video_id",
           "timestamp_seconds",
           "selection_reason",
+          "split",
           "labels"
         ]
       },
@@ -5625,8 +5633,8 @@
         "tags": [
           "jobs"
         ],
-        "summary": "Every image and label the current inclusion policy admits (M15.1)",
-        "description": "The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user wins; `accept` or `adjust` either way), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.",
+        "summary": "Every image and label the current inclusion policy admits (M15.1, M26.7)",
+        "description": "The whole input to one snapshot build, both splits (M26.7 plan §A/§B). `split` is resolved here rather than left for the worker to infer from `selection_reason` — the worker's `splitFor` now only checks that its own answer agrees, and fails the build if it does not. A `train`-split image is unchanged from M15.3: verdict-derived under the default inclusion policy (the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user; `accept` or `adjust` either way), and always carries at least one label. An `eval`-split image's labels come from `ground_truth` instead, gated on `ground_truth_exhaustive` covering every active class, and may carry zero labels — a frozen-pool frame examined and found to contain nothing. No refusal on an incomplete eval pool: an empty eval half alongside a populated train half is a correct 200 for a deployment mid-annotation. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.",
         "parameters": [
           {
             "schema": {

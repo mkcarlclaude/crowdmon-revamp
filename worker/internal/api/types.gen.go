@@ -337,6 +337,24 @@ func (e PublicVerdictKind) Valid() bool {
 	}
 }
 
+// Defines values for SnapshotSourceImageSplit.
+const (
+	Eval  SnapshotSourceImageSplit = "eval"
+	Train SnapshotSourceImageSplit = "train"
+)
+
+// Valid indicates whether the value is a known member of the SnapshotSourceImageSplit enum.
+func (e SnapshotSourceImageSplit) Valid() bool {
+	switch e {
+	case Eval:
+		return true
+	case Train:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VerdictKind.
 const (
 	VerdictKindAccept VerdictKind = "accept"
@@ -1647,7 +1665,7 @@ type Snapshot struct {
 	// ImageCount Example: 254
 	ImageCount int `json:"image_count"`
 
-	// InclusionPolicy Example: source=admin (latest wins) else trusted user (latest wins); verdict=accept or adjust; split: selection_reason='random' -> eval, else train
+	// InclusionPolicy Example: train: source=admin (latest wins) else trusted user (latest wins); verdict=accept or adjust; split: selection_reason='random' -> eval, else train; eval: ground_truth, gated on ground_truth_exhaustive for every active class
 	InclusionPolicy string `json:"inclusion_policy"`
 
 	// LabelCount Example: 401
@@ -1708,12 +1726,18 @@ type SnapshotSourceImage struct {
 	// SelectionReason Example: random
 	SelectionReason *string `json:"selection_reason"`
 
+	// Split Example: train
+	Split SnapshotSourceImageSplit `json:"split"`
+
 	// TimestampSeconds Example: 42
 	TimestampSeconds float32 `json:"timestamp_seconds"`
 
 	// VideoId Example: dQw4w9WgXcQ
 	VideoId string `json:"video_id"`
 }
+
+// SnapshotSourceImageSplit Example: train
+type SnapshotSourceImageSplit string
 
 // StagedVerdict defines model for StagedVerdict.
 type StagedVerdict struct {
@@ -2546,9 +2570,9 @@ type ClientInterface interface {
 	// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
 	ReportSnapshot(ctx context.Context, id int, body ReportSnapshotJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SnapshotSource Every image and label the current inclusion policy admits (M15.1)
+	// SnapshotSource Every image and label the current inclusion policy admits (M15.1, M26.7)
 	//
-	// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user wins; `accept` or `adjust` either way), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+	// The whole input to one snapshot build, both splits (M26.7 plan §A/§B). `split` is resolved here rather than left for the worker to infer from `selection_reason` — the worker's `splitFor` now only checks that its own answer agrees, and fails the build if it does not. A `train`-split image is unchanged from M15.3: verdict-derived under the default inclusion policy (the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user; `accept` or `adjust` either way), and always carries at least one label. An `eval`-split image's labels come from `ground_truth` instead, gated on `ground_truth_exhaustive` covering every active class, and may carry zero labels — a frozen-pool frame examined and found to contain nothing. No refusal on an incomplete eval pool: an empty eval half alongside a populated train half is a correct 200 for a deployment mid-annotation. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
 	//
 	// Corresponds with GET /api/jobs/{id}/snapshot-source (the `SnapshotSource` operationId).
 	SnapshotSource(ctx context.Context, id int, params *SnapshotSourceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3751,9 +3775,9 @@ func (c *Client) ReportSnapshot(ctx context.Context, id int, body ReportSnapshot
 	return c.Client.Do(req)
 }
 
-// SnapshotSource Every image and label the current inclusion policy admits (M15.1)
+// SnapshotSource Every image and label the current inclusion policy admits (M15.1, M26.7)
 //
-// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user wins; `accept` or `adjust` either way), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+// The whole input to one snapshot build, both splits (M26.7 plan §A/§B). `split` is resolved here rather than left for the worker to infer from `selection_reason` — the worker's `splitFor` now only checks that its own answer agrees, and fails the build if it does not. A `train`-split image is unchanged from M15.3: verdict-derived under the default inclusion policy (the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user; `accept` or `adjust` either way), and always carries at least one label. An `eval`-split image's labels come from `ground_truth` instead, gated on `ground_truth_exhaustive` covering every active class, and may carry zero labels — a frozen-pool frame examined and found to contain nothing. No refusal on an incomplete eval pool: an empty eval half alongside a populated train half is a correct 200 for a deployment mid-annotation. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
 //
 // Corresponds with GET /api/jobs/{id}/snapshot-source (the `SnapshotSource` operationId).
 func (c *Client) SnapshotSource(ctx context.Context, id int, params *SnapshotSourceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6788,9 +6812,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/jobs/{id}/snapshot (the `ReportSnapshot` operationId).
 	ReportSnapshotWithResponse(ctx context.Context, id int, body ReportSnapshotJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportSnapshotResponse, error)
 
-	// SnapshotSourceWithResponse Every image and label the current inclusion policy admits (M15.1)
+	// SnapshotSourceWithResponse Every image and label the current inclusion policy admits (M15.1, M26.7)
 	//
-	// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user wins; `accept` or `adjust` either way), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+	// The whole input to one snapshot build, both splits (M26.7 plan §A/§B). `split` is resolved here rather than left for the worker to infer from `selection_reason` — the worker's `splitFor` now only checks that its own answer agrees, and fails the build if it does not. A `train`-split image is unchanged from M15.3: verdict-derived under the default inclusion policy (the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user; `accept` or `adjust` either way), and always carries at least one label. An `eval`-split image's labels come from `ground_truth` instead, gated on `ground_truth_exhaustive` covering every active class, and may carry zero labels — a frozen-pool frame examined and found to contain nothing. No refusal on an incomplete eval pool: an empty eval half alongside a populated train half is a correct 200 for a deployment mid-annotation. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -10904,9 +10928,9 @@ func (c *ClientWithResponses) ReportSnapshotWithResponse(ctx context.Context, id
 	return ParseReportSnapshotResponse(rsp)
 }
 
-// SnapshotSourceWithResponse Every image and label the current inclusion policy admits (M15.1)
+// SnapshotSourceWithResponse Every image and label the current inclusion policy admits (M15.1, M26.7)
 //
-// The whole input to one snapshot build: every image carrying at least one label under the default inclusion policy (M15.3, reordered M20 plan §C1 — the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user wins; `accept` or `adjust` either way), with `selection_reason` alongside so the worker can compute M15.2's split. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
+// The whole input to one snapshot build, both splits (M26.7 plan §A/§B). `split` is resolved here rather than left for the worker to infer from `selection_reason` — the worker's `splitFor` now only checks that its own answer agrees, and fails the build if it does not. A `train`-split image is unchanged from M15.3: verdict-derived under the default inclusion policy (the latest `admin` verdict wins outright; absent one, the latest verdict from a `trusted` user; `accept` or `adjust` either way), and always carries at least one label. An `eval`-split image's labels come from `ground_truth` instead, gated on `ground_truth_exhaustive` covering every active class, and may carry zero labels — a frozen-pool frame examined and found to contain nothing. No refusal on an incomplete eval pool: an empty eval half alongside a populated train half is a correct 200 for a deployment mid-annotation. No Access assertion and no credential beyond `worker_id`, the same trust tier as the rest of `/api/jobs/*` — a stray caller learns nothing here it could not already infer by polling claim.
 //
 // Returns a wrapper object for the known response body format(s).
 //
