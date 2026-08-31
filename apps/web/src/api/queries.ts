@@ -39,7 +39,7 @@ import {
   VerdictBatch,
   VideoSubmission,
 } from "@crowdmon/api/schemas";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { z } from "zod";
 import { getAnonSessionId } from "./anon-session";
 import { apiFetch } from "./client";
@@ -721,15 +721,46 @@ export function useContributeMe() {
 export const contributeBatchKey = ["contribute", "batch"] as const;
 
 /**
- * A contributor's next frames (plan §B4) — `useLabellingBatch`'s own shape
- * and its own reasoning for `staleTime: Infinity`: this pool is being
+ * A contributor's queue of frames (plan §B4, and the cursor-threading and
+ * auto-advance of M26.6, plan §B/§C) — `useLabellingBatch`'s own reasoning
+ * for `staleTime: Infinity` still applies unchanged: this pool is being
  * consumed by a session, not polled, and a background refetch landing
  * mid-judgement would replace the frame under the contributor's cursor.
+ *
+ * `useInfiniteQuery` rather than `useQuery`, which is the whole M26.6 fix.
+ * Before this, the query was a plain `useQuery` that never sent `cursor` at
+ * all — every "Next batch" click called `refetchQueries` on the same key,
+ * which re-ran `queryFn` with no arguments and so re-fetched the *first*
+ * page from the bottom of the key space, every time. `next_cursor` came back
+ * from the server and was simply dropped. It read as working only because a
+ * **trusted** contributor's own verdicts remove boxes from the pool
+ * (`CONTRIBUTOR_UNRULED_BOX`, `routes/contribute.ts`), so the first page was
+ * genuinely different on every re-fetch; for an **untrusted** account —
+ * whose own verdicts do not shrink the pool, by that same predicate's own
+ * asymmetry — "Next batch" handed back the same twenty frames forever.
+ *
+ * `getNextPageParam` reads `next_cursor` off the last page, which is what
+ * actually threads the cursor forward: `pageParam` is passed straight
+ * through to `queryFn` and appended to the request. `initialPageParam` is
+ * `undefined` rather than some sentinel, matching what a session's first
+ * call has always sent — no `cursor` at all, which `contributeBatchHandler`
+ * reads as "start from the bottom of the key space."
+ *
+ * `next_cursor` cannot itself be trusted to say "no more pages" — see
+ * `ContributeVerify.tsx`'s own comment on why the pool *wraps* rather than
+ * running dry, and on the seen-id guard that has to sit on top of this hook
+ * rather than inside it.
  */
 export function useContributeBatch() {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: contributeBatchKey,
-    queryFn: () => apiFetch("/api/contribute/batch", ContributeBatch),
+    queryFn: ({ pageParam }: { pageParam: number | undefined }) =>
+      apiFetch(
+        `/api/contribute/batch${pageParam === undefined ? "" : `?cursor=${pageParam}`}`,
+        ContributeBatch,
+      ),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     staleTime: Number.POSITIVE_INFINITY,
   });
 }
