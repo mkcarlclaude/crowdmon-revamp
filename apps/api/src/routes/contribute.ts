@@ -29,12 +29,18 @@ import {
  * differs in exactly the ways plan §B4's table says it should and nowhere
  * else:
  *
- * - **Frame pool: everything unruled, not the curated `public_sample` pool**
- *   `/api/public/*` draws from — a signed-in, rate-limited, named account is
- *   a different exposure from an anonymous one, and CONTEXT.md §Q25's three
- *   bounds on the public pool exist for exactly the anonymous case (see that
- *   section's own reasoning). Restricting contributors to the small curated
- *   pool would cap contribution at the size of a hand-picked list.
+ * - **Frame pool: everything unruled *and in the train split*, not the
+ *   curated `public_sample` pool** `/api/public/*` draws from — a signed-in,
+ *   rate-limited, named account is a different exposure from an anonymous
+ *   one, and CONTEXT.md §Q25's three bounds on the public pool exist for
+ *   exactly the anonymous case (see that section's own reasoning).
+ *   Restricting contributors to the small curated pool would cap contribution
+ *   at the size of a hand-picked list. The train-split restriction is M26.6
+ *   (see `CONTRIBUTOR_TRAIN_SPLIT` below): before it, this pool served
+ *   `random` (frozen eval) and `diverse` (train) frames interleaved, and a
+ *   verdict on the former is consumed by nothing — §Q16 forbids training on
+ *   it, and the eval instrument reads `ground_truth` (migration 0014), never
+ *   a contributor's verdict.
  * - **`allowAdjust` stays true.** A contributor's ruling is a label a later
  *   snapshot can select (plan §C1), not a click recorded and discarded the
  *   way an anonymous one is — a tier that can only say "wrong" with no way to
@@ -90,6 +96,82 @@ const CONTRIBUTOR_UNRULED_BOX = `
            SELECT 1 FROM verdicts v
             JOIN users u ON u.id = CAST(v.annotator_id AS INTEGER)
             WHERE v.prediction_id = p.id AND v.source = 'user' AND u.trusted = 1)`;
+
+/**
+ * `random` is the frozen evaluation pool (CONTEXT.md §Q16: "excluded from
+ * training forever"); everything else — `NULL`, `diverse`, `manual` — is
+ * train. That is not a rule invented for this file: it is `splitFor()`
+ * (`worker/internal/snapshot/builder.go`) written a second time, in SQL
+ * instead of Go, because this route has to keep a contributor away from the
+ * eval pool *before* a verdict is ever written, while `splitFor` only has to
+ * decide, after the fact, which manifest a labelled image's row belongs in.
+ * The two copies say the same one-sentence rule in two languages and must
+ * never say it differently — change one, go change the other, and this
+ * comment is the pointer for whoever finds only one of them first.
+ *
+ * Written as an exclusion (`!= 'random'`), not an allow-list of `NULL`,
+ * `'diverse'` and `'manual'`, for the same reason `splitFor`'s own comment
+ * gives: §Q16's M17 amendment added `manual` — an admin's hand-picked
+ * supplementary selection — specifically so it would count as train without
+ * this rule needing to change, and an allow-list here would silently drop it
+ * back out of the pool the next time a fifth `selection_reason` is invented
+ * and nobody remembers this file exists.
+ *
+ * M26.6 (plan §A) is why this exists: `CONTRIBUTOR_UNRULED_BOX` alone filters
+ * on verdicts only, so before this predicate the pool served `random` and
+ * `diverse` frames interleaved with nothing to tell them apart — measured
+ * against production, 602 of 913 winning-verdict labels landed on `random`
+ * frames that neither train a model nor score one.
+ *
+ * Every one of `contributeBatchHandler`'s three queries against `images`
+ * needs this alongside `CONTRIBUTOR_UNRULED_BOX` — the forward page, the
+ * `remaining` count, and the wrap page. The wrap is the one it is easy to
+ * forget: a session that runs long enough to pass the top of the key space
+ * would otherwise start handing back `random` frames the moment it wraps,
+ * silently reintroducing the whole bug for exactly the sessions patient
+ * enough to find it.
+ *
+ * Not exposed as a query parameter — see this file's module comment.
+ * `admin-labelling.ts`'s `UNRULED_BOX` is deliberately not filtered this way:
+ * `/admin/annotate`'s ground-truth work runs on the `random` pool on purpose,
+ * and a filter there would break that instrument.
+ */
+const CONTRIBUTOR_TRAIN_SPLIT = `(i.selection_reason IS NULL OR i.selection_reason != 'random')`;
+
+/**
+ * The three shapes `contributeBatchHandler` runs against `images`, exported
+ * for the same reason `adminPoolPageQuery` (`admin-labelling.ts`) is: the
+ * index-plan test asserts against the exact text the handler issues, not a
+ * hand-copied stand-in that could quietly drift from it.
+ *
+ * Drift matters more here than it does for the admin pool, because there are
+ * three call sites rather than one and the wrap is the one nobody looks at.
+ * A wrap page that lost `CONTRIBUTOR_TRAIN_SPLIT` would serve frozen-pool
+ * frames again only to sessions long enough to pass the top of the key
+ * space, and would read identically from the response until one did.
+ * Building all three from one function is what stops that being possible.
+ *
+ * `hasCursor` and `wrap` select the three shapes rather than always binding
+ * a placeholder, matching `adminPoolPageQuery`'s own reasoning: a query with
+ * an unused `?` is a different statement to the planner than one without,
+ * and the un-cursored shape is what a session's first call actually runs.
+ */
+export function contributorPoolPageQuery({
+  hasCursor = false,
+  wrap = false,
+}: {
+  hasCursor?: boolean;
+  wrap?: boolean;
+} = {}): string {
+  const bound = wrap ? "AND shuffle_key <= ?" : hasCursor ? "AND shuffle_key > ?" : "";
+  return `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.shuffle_key
+         FROM images i
+        WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
+          AND ${CONTRIBUTOR_TRAIN_SPLIT}
+          ${bound}
+        ORDER BY shuffle_key
+        LIMIT ?`;
+}
 
 /**
  * Why this pool has no `unruled_admin`-style denormalised counter of its own
@@ -174,7 +256,10 @@ export const contributeBatchRoute = createRoute({
   summary: "The next N frames for a contributor to verify, with their boxes and their URLs",
   description:
     "The whole unruled pool, not the curated public sample — see this file's module " +
-    "comment for why. A frame is returned while any of its boxes carries neither an " +
+    "comment for why. Restricted to the train split (M26.6, plan §A): a frame with " +
+    "`selection_reason = 'random'` never appears here, on the forward page or the wrap, " +
+    "because that split is the permanent evaluation pool (CONTEXT.md §Q16) and a verdict " +
+    "on it trains nothing. A frame is returned while any of its boxes carries neither an " +
     "admin verdict nor a trusted user's, and carries only those boxes. Shuffled by a " +
     "per-image random key, not extraction order (M25.1); pass `cursor` back as " +
     "`next_cursor` came from the previous call to keep advancing, and omit it to start " +
@@ -211,23 +296,19 @@ export const contributeBatchHandler: RouteHandler<typeof contributeBatchRoute, A
   // session's first call, and a short page with a cursor still set means the
   // walk reached the top of the key space with pool left over on the other
   // side of where it started.
-  const forward = cursor !== undefined ? "AND shuffle_key > ?" : "";
   const forwardBindings = cursor !== undefined ? [cursor] : [];
 
   const [pageResult, remainingResult] = await c.env.DB.batch<BatchImageRow | { remaining: number }>(
     [
-      c.env.DB.prepare(
-        `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.shuffle_key
-           FROM images i
-          WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
-          ${forward}
-          ORDER BY shuffle_key
-          LIMIT ?`,
-      ).bind(...forwardBindings, limit),
+      c.env.DB.prepare(contributorPoolPageQuery({ hasCursor: cursor !== undefined })).bind(
+        ...forwardBindings,
+        limit,
+      ),
       c.env.DB.prepare(
         `SELECT COUNT(*) AS remaining FROM (
            SELECT 1 FROM images i
             WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
+              AND ${CONTRIBUTOR_TRAIN_SPLIT}
             LIMIT ${CONTRIBUTOR_REMAINING_CAP + 1}
          )`,
       ),
@@ -257,14 +338,7 @@ export const contributeBatchHandler: RouteHandler<typeof contributeBatchRoute, A
   // bounded by the same cursor value in the other direction, so the forward
   // page and the wrap can never return the same row twice.
   if (cursor !== undefined && images.length < limit) {
-    const wrapResult = await c.env.DB.prepare(
-      `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.shuffle_key
-         FROM images i
-        WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
-          AND shuffle_key <= ?
-        ORDER BY shuffle_key
-        LIMIT ?`,
-    )
+    const wrapResult = await c.env.DB.prepare(contributorPoolPageQuery({ wrap: true }))
       .bind(cursor, limit - images.length)
       .all<BatchImageRow>();
     images = [...images, ...(wrapResult.results ?? [])];

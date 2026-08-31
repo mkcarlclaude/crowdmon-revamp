@@ -184,10 +184,19 @@ describe("ContributeVerify", () => {
     expect(batchRequests).toHaveLength(1);
   });
 
-  it("shows the next batch once the current one is finished, and 'nothing left' once the pool is empty", async () => {
-    stubApi({
+  /**
+   * M26.6, plan §C: the walk reaches the terminal state on its own once the
+   * pool is genuinely empty (the wrapped-repeat ending is its own test
+   * below) — no "Next batch" click is part of the normal flow any more, so
+   * this no longer drives one to get there. `next_cursor` on the empty
+   * second page follows the real server's own invariant (`next_cursor` is
+   * null exactly when `images` is empty), which is what makes this page the
+   * one the seen-id guard reads as "nothing new," not "no next page."
+   */
+  it("reaches 'nothing left to verify' on its own once the pool empties, with no click between frames", async () => {
+    const fetchMock = stubApi({
       batches: [
-        batch(),
+        batch({ next_cursor: 42 }),
         {
           images: [],
           url_mode: "signed",
@@ -204,9 +213,113 @@ describe("ContributeVerify", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /^yes/i }));
 
-    await userEvent.click(await screen.findByRole("button", { name: /check again|next batch/i }));
-
     expect(await screen.findByText(/nothing left to verify/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /check again|next batch/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start over/i })).toBeInTheDocument();
+
+    // Exactly the initial fetch and the one prefetch it triggered — nothing
+    // looping, and nothing waiting on a click to happen.
+    const batchRequests = fetchMock.mock.calls.filter(([url]) =>
+      (url as string).startsWith("/api/contribute/batch"),
+    );
+    expect(batchRequests).toHaveLength(2);
+  });
+
+  /**
+   * M26.6, plan §B: the second request must carry the first response's
+   * `next_cursor` — this is the fix itself. Before it, `useContributeBatch`
+   * never sent `cursor` at all (`useContributeBatch`'s own comment has the
+   * full story), so this assertion is exactly what would have failed against
+   * the pre-M26.6 client.
+   */
+  it("sends the previous page's next_cursor on the following request", async () => {
+    const fetchMock = stubApi({
+      batches: [
+        batch({ next_cursor: 4_242 }),
+        { ...batch({ images: [image(2)] }), next_cursor: null, remaining: 0 },
+      ],
+    });
+
+    render(wrap(<ContributeVerify />));
+    await screen.findByRole("img");
+
+    await waitFor(() => {
+      const batchRequests = fetchMock.mock.calls
+        .map(([url]) => url as string)
+        .filter((url) => url.startsWith("/api/contribute/batch"));
+      expect(batchRequests).toHaveLength(2);
+      expect(batchRequests[1]).toContain("cursor=4242");
+    });
+  });
+
+  /**
+   * M26.6, plan §C verification 5: the walk crosses a page boundary with no
+   * click of its own — only the swipe/accept gestures that rule each frame.
+   * The prefetch margin (5) is larger than this fixture's page size, so the
+   * second page is already in hand by the time the walk needs it; a real
+   * `CONTRIBUTE_BATCH_SIZE` (20) page just makes that gap wider, not
+   * different in kind.
+   */
+  it("crosses a page boundary on its own — the frame after the last of page one is page two's first, no manual step", async () => {
+    stubApi({
+      batches: [
+        batch({ images: [image(1), image(2)], remaining: 3, next_cursor: 99 }),
+        { ...batch({ images: [image(3)] }), next_cursor: null, remaining: 1 },
+      ],
+    });
+
+    render(wrap(<ContributeVerify />));
+    await screen.findByRole("img");
+    expect(screen.getByRole("img")).toHaveAttribute("src", image(1).url);
+
+    await userEvent.click(screen.getByRole("button", { name: /^yes/i }));
+    await waitFor(() => expect(screen.getByRole("img")).toHaveAttribute("src", image(2).url));
+
+    await userEvent.click(screen.getByRole("button", { name: /^yes/i }));
+    await waitFor(() => expect(screen.getByRole("img")).toHaveAttribute("src", image(3).url));
+
+    expect(
+      screen.queryByRole("button", { name: /check again|next batch/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * M26.6, plan §C verification 6 — the untrusted contributor of plan §B
+   * reproduced exactly: their own verdicts never remove a box from
+   * `CONTRIBUTOR_UNRULED_BOX`, so once the cursor wraps, the pool hands the
+   * same frames straight back. Without the seen-id guard this loops forever
+   * (`next_cursor` never goes null while the pool holds anything); with it,
+   * the repeat is read as "nothing new" and the walk stops instead.
+   */
+  it("terminates on a page that repeats every frame the session already walked, rather than looping", async () => {
+    const fetchMock = stubApi({
+      batches: [
+        batch({ images: [image(1), image(2)], remaining: 5, next_cursor: 7 }),
+        batch({ images: [image(1), image(2)], remaining: 5, next_cursor: 7 }),
+      ],
+    });
+
+    render(wrap(<ContributeVerify />));
+    await screen.findByRole("img");
+
+    await userEvent.click(screen.getByRole("button", { name: /^yes/i }));
+    await waitFor(() => expect(screen.getByRole("img")).toHaveAttribute("src", image(2).url));
+    await userEvent.click(screen.getByRole("button", { name: /^yes/i }));
+
+    expect(
+      await screen.findByText(/frames still waiting, but none new for this session/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start over/i })).toBeInTheDocument();
+
+    // The repeating page was fetched exactly once, not retried in a loop.
+    await waitFor(() => {
+      const batchRequests = fetchMock.mock.calls
+        .map(([url]) => url as string)
+        .filter((url) => url.startsWith("/api/contribute/batch"));
+      expect(batchRequests).toHaveLength(2);
+    });
   });
 
   describe("the M23 guarantees hold on this mount too", () => {

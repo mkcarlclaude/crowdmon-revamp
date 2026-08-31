@@ -133,8 +133,17 @@ describe("GET /api/contribute/batch", () => {
    * plan §A3), exercised through this pool instead — `CONTRIBUTOR_UNRULED_BOX`
    * rather than `UNRULED_BOX`, and no `idx_images_admin_pool` to lean on
    * (plan §C), but the same forward-then-wrap mechanism.
+   *
+   * Extended for M26.6 (plan §A verification 2 & 3) with a `random`-split
+   * frame sitting at a key *between* two train frames: it carries an
+   * unruled box like any other, so its absence below can only be
+   * `CONTRIBUTOR_TRAIN_SPLIT`, not a fixture that gave it nothing to serve.
+   * The wrap page is deliberately the one under test here, not just the
+   * forward page — it is the query the plan calls easiest to miss, because a
+   * session that never runs long enough to wrap would never notice the
+   * predicate was missing from it.
    */
-  it("pages forward through disjoint frames, then wraps once the cursor passes the top", async () => {
+  it("pages forward through disjoint frames, then wraps once the cursor passes the top — never serving the random-split frame in between", async () => {
     const videoId = "dQw4w9WgXcQ";
     await seedVideo(videoId);
     const classId = await seedClass("Paimon");
@@ -146,6 +155,15 @@ describe("GET /api/contribute/batch", () => {
       await seedPrediction(imageId, classId);
       idByKey.set(shuffleKey, imageId);
     }
+
+    // The frozen evaluation pool (CONTEXT.md §Q16), key 15 — strictly
+    // between the forward page's last frame (20) and the wrap's target (10)
+    // — so a missing predicate on either query would surface it.
+    const randomImageId = await seedImage(videoId, 99, { shuffleKey: 15 });
+    await seedPrediction(randomImageId, classId);
+    await env.DB.prepare("UPDATE images SET selection_reason = 'random' WHERE id = ?")
+      .bind(randomImageId)
+      .run();
 
     interface ContributeBatchBody {
       images: Array<{ id: number }>;
@@ -160,16 +178,75 @@ describe("GET /api/contribute/batch", () => {
     expect(first.images.map((image) => image.id)).toEqual([idByKey.get(10), idByKey.get(20)]);
     expect(first.next_cursor).toBe(20);
 
-    // Only one key (30) sits above cursor 20 — a short page that wraps back
-    // to the bottom of the key space to fill out the rest, re-serving frame
-    // 10 rather than stopping with an unruled frame left behind.
+    // Only one train key (30) sits above cursor 20 — a short page that wraps
+    // back to the bottom of the key space to fill out the rest, re-serving
+    // frame 10 rather than stopping with an unruled train frame left behind
+    // — and the random frame at key 15 never appears, forward or wrapped.
     const second = (await (
       await asContributor(`/api/contribute/batch?limit=2&cursor=${first.next_cursor}`)
     ).json()) as ContributeBatchBody;
     expect(second.images.map((image) => image.id)).toEqual([idByKey.get(30), idByKey.get(10)]);
+    expect(second.images.map((image) => image.id)).not.toContain(randomImageId);
+    // The train-only count: 3, not 4 — the random frame's unruled box would
+    // inflate this the moment `CONTRIBUTOR_TRAIN_SPLIT` dropped out of the
+    // `remaining` subquery specifically, independent of the two page queries.
     expect(second.remaining).toBe(3);
     // Below the cap, the count is exact and says so.
     expect(second.remaining_capped).toBe(false);
+  });
+
+  /**
+   * The simple (non-wrap) case of the same M26.6 rule, plan §A verification
+   * 2 & 3: a `random` frame is never on the forward page, and `remaining`
+   * does not count it either.
+   */
+  it("never serves a random-split frame, and remaining counts the train split only", async () => {
+    const { videoId, classId, imageId: trainImageId } = await seedPool();
+
+    const randomImageId = await seedImage(videoId, 2);
+    await seedPrediction(randomImageId, classId);
+    await env.DB.prepare("UPDATE images SET selection_reason = 'random' WHERE id = ?")
+      .bind(randomImageId)
+      .run();
+
+    const res = await asContributor("/api/contribute/batch");
+    const body = (await res.json()) as { images: Array<{ id: number }>; remaining: number };
+
+    expect(body.images.map((image) => image.id)).toEqual([trainImageId]);
+    expect(body.remaining).toBe(1);
+  });
+
+  /**
+   * `CONTRIBUTOR_TRAIN_SPLIT` excludes `random` rather than allow-listing
+   * `NULL`/`diverse`/`manual` (this file's own comment on why: §Q16's M17
+   * amendment routes `manual` to train, and an allow-list would have to be
+   * told about every new reason by hand). Proven directly: all three
+   * non-`random` values serve.
+   */
+  it("treats NULL, 'diverse' and 'manual' selection_reason alike as train — only 'random' is excluded", async () => {
+    const videoId = "dQw4w9WgXcQ";
+    await seedVideo(videoId);
+    const classId = await seedClass("Paimon");
+
+    const reasons: Array<string | null> = [null, "diverse", "manual"];
+    const ids: number[] = [];
+    for (const [i, reason] of reasons.entries()) {
+      const imageId = await seedImage(videoId, i + 1);
+      await seedPrediction(imageId, classId);
+      if (reason !== null) {
+        await env.DB.prepare("UPDATE images SET selection_reason = ? WHERE id = ?")
+          .bind(reason, imageId)
+          .run();
+      }
+      ids.push(imageId);
+    }
+
+    const res = await asContributor("/api/contribute/batch");
+    const body = (await res.json()) as { images: Array<{ id: number }> };
+
+    expect(body.images.map((image) => image.id).sort((a, b) => a - b)).toEqual(
+      [...ids].sort((a, b) => a - b),
+    );
   });
 
   /**

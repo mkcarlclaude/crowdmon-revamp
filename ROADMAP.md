@@ -1693,3 +1693,34 @@ it is worth it instead of guessing.
 that table is M27's). The report names all 286 `scored_image_ids`. M27 is comparable to
 this run only if it scores the same ids, and the file is the only thing that makes that
 checkable rather than assumed.
+
+## M26.6 — A labelling seat that only hands out training frames
+
+*Goal: every minute at the contributor portal produces a label M27 can train on.*
+*Plan: `docs/superpowers/plans/2026-08-31-contributor-pool-split-and-autoadvance.md`.
+Design record: `CONTEXT.md` §Q16.*
+
+Read against production on 2026-08-31, while checking whether M27's training set was large
+enough to start: **602 of the 913 winning-verdict labels sit on `random` frames.** §Q16
+freezes those out of training forever, and the eval instrument scores `ground_truth`
+(migration 0014) rather than verdicts — so two labelling sessions in three produced
+nothing either side of the project will ever read.
+
+The cause is one absence: `routes/contribute.ts` never reads `selection_reason`.
+`CONTRIBUTOR_UNRULED_BOX` filters on verdicts alone, so the pool serves the frozen
+evaluation pool and the training pool interleaved with nothing to tell them apart. The
+pre-split §Q16 calls non-negotiable is correct and was simply not enforced at the one
+surface that spends human time.
+
+Filtering to the train split takes the contributor pool from 331 frames to 203 — the right
+trade, because `diverse` frames are replaceable (1,173 sampled and never prelabelled) and
+frozen-pool frames are not.
+
+The second half is the click: the batch walk stops every 20 frames for a "Next batch"
+button. Automating it surfaced a bug that was already there. `useContributeBatch` has
+**never sent `cursor`** — M25.1's keyset pagination is server-side only, `next_cursor`
+arrives and is dropped, and every "Next batch" re-runs the first page. That works for a
+*trusted* contributor, whose verdicts remove boxes from the pool, and does not work at all
+for an untrusted one, whose verdicts by design do not: the same twenty frames come back.
+A human notices on the second pass. Auto-advance would not, which is why threading the
+cursor is a prerequisite of the automation rather than a cleanup after it.
