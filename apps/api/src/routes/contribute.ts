@@ -139,6 +139,41 @@ const CONTRIBUTOR_UNRULED_BOX = `
 const CONTRIBUTOR_TRAIN_SPLIT = `(i.selection_reason IS NULL OR i.selection_reason != 'random')`;
 
 /**
+ * The three shapes `contributeBatchHandler` runs against `images`, exported
+ * for the same reason `adminPoolPageQuery` (`admin-labelling.ts`) is: the
+ * index-plan test asserts against the exact text the handler issues, not a
+ * hand-copied stand-in that could quietly drift from it.
+ *
+ * Drift matters more here than it does for the admin pool, because there are
+ * three call sites rather than one and the wrap is the one nobody looks at.
+ * A wrap page that lost `CONTRIBUTOR_TRAIN_SPLIT` would serve frozen-pool
+ * frames again only to sessions long enough to pass the top of the key
+ * space, and would read identically from the response until one did.
+ * Building all three from one function is what stops that being possible.
+ *
+ * `hasCursor` and `wrap` select the three shapes rather than always binding
+ * a placeholder, matching `adminPoolPageQuery`'s own reasoning: a query with
+ * an unused `?` is a different statement to the planner than one without,
+ * and the un-cursored shape is what a session's first call actually runs.
+ */
+export function contributorPoolPageQuery({
+  hasCursor = false,
+  wrap = false,
+}: {
+  hasCursor?: boolean;
+  wrap?: boolean;
+} = {}): string {
+  const bound = wrap ? "AND shuffle_key <= ?" : hasCursor ? "AND shuffle_key > ?" : "";
+  return `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.shuffle_key
+         FROM images i
+        WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
+          AND ${CONTRIBUTOR_TRAIN_SPLIT}
+          ${bound}
+        ORDER BY shuffle_key
+        LIMIT ?`;
+}
+
+/**
  * Why this pool has no `unruled_admin`-style denormalised counter of its own
  * (M25.1, plan §C), stated here rather than only in `CLAUDE.md` — this is the
  * file whoever changes the predicate above will actually be looking at.
@@ -261,20 +296,14 @@ export const contributeBatchHandler: RouteHandler<typeof contributeBatchRoute, A
   // session's first call, and a short page with a cursor still set means the
   // walk reached the top of the key space with pool left over on the other
   // side of where it started.
-  const forward = cursor !== undefined ? "AND shuffle_key > ?" : "";
   const forwardBindings = cursor !== undefined ? [cursor] : [];
 
   const [pageResult, remainingResult] = await c.env.DB.batch<BatchImageRow | { remaining: number }>(
     [
-      c.env.DB.prepare(
-        `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.shuffle_key
-           FROM images i
-          WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
-            AND ${CONTRIBUTOR_TRAIN_SPLIT}
-          ${forward}
-          ORDER BY shuffle_key
-          LIMIT ?`,
-      ).bind(...forwardBindings, limit),
+      c.env.DB.prepare(contributorPoolPageQuery({ hasCursor: cursor !== undefined })).bind(
+        ...forwardBindings,
+        limit,
+      ),
       c.env.DB.prepare(
         `SELECT COUNT(*) AS remaining FROM (
            SELECT 1 FROM images i
@@ -309,15 +338,7 @@ export const contributeBatchHandler: RouteHandler<typeof contributeBatchRoute, A
   // bounded by the same cursor value in the other direction, so the forward
   // page and the wrap can never return the same row twice.
   if (cursor !== undefined && images.length < limit) {
-    const wrapResult = await c.env.DB.prepare(
-      `SELECT i.id, i.video_id, i.r2_key, i.timestamp_seconds, i.shuffle_key
-         FROM images i
-        WHERE EXISTS (${CONTRIBUTOR_UNRULED_BOX})
-          AND ${CONTRIBUTOR_TRAIN_SPLIT}
-          AND shuffle_key <= ?
-        ORDER BY shuffle_key
-        LIMIT ?`,
-    )
+    const wrapResult = await c.env.DB.prepare(contributorPoolPageQuery({ wrap: true }))
       .bind(cursor, limit - images.length)
       .all<BatchImageRow>();
     images = [...images, ...(wrapResult.results ?? [])];

@@ -56,11 +56,34 @@ serving `random` frames: the admin is the tier that overrides and must be able t
 anything (M20 plan §C3), and `/admin/annotate`'s ground-truth work lives entirely on that
 pool. A filter there would break M26's instrument.
 
-**On the index.** `idx_images_shuffle_key` satisfies the `ORDER BY` today. Per
-`memory/measure-cost-not-just-win`, record `meta.rows_read` for a `/api/contribute/batch`
-call against production before and after, and add a partial index only if the number
-actually moves. Do not ship one speculatively — migration 0013's `idx_images_admin_pool`
-earned its place with a measurement.
+**On the index — measured 2026-08-31, and the answer is no index.** The rule was: add one
+only if the number moves. It moved, and then it stopped moving under a better measurement,
+which is why this paragraph now records a negative result instead of a migration.
+
+Against production, `/api/contribute/batch`'s forward page, before and after the predicate:
+
+| | rows_read | sql_duration |
+|---|---|---|
+| before | 39,911 | ~11 ms |
+| after | 27,926 | ~31 ms |
+
+Fewer rows read and three times slower — `memory/measure-cost-not-just-win` exactly. The
+first diagnosis was that `idx_images_shuffle_key` had stopped covering the query, and it
+was **wrong**: it came from an `EXPLAIN QUERY PLAN` run over `SELECT i.id` rather than the
+handler's real five-column list. With the real list the plan is `SCAN i USING INDEX` both
+before and after, identically — this query was never covered, and no index on `images` can
+cover it while it selects `video_id`, `r2_key` and `timestamp_seconds`.
+
+Replaying the production shape locally (23,758 images, a residual pool of 331 frames /
+203 after the filter — the production numbers reproduced exactly) puts the filtered query
+at 7.23 ms against 7.06 ms unfiltered, inside the noise, and a composite
+`(shuffle_key, selection_reason)` index at 7.26 ms — **not chosen by the planner at all**.
+An index the planner declines to use is weight with no lift.
+
+So: no migration. The residual ~20 ms on production is real and unexplained by query shape;
+it is paid once per twenty judgements on an authenticated route, which is not worth an
+index that measurably does nothing. If it ever is worth chasing, the thing to look at is
+where the surviving 203 frames sit in the key space, not the index list.
 
 ---
 
@@ -141,8 +164,9 @@ than "advance" — it stops being a step in the normal flow.
    first frame.
 6. **A page that contributes no unseen frames terminates** rather than looping — driven
    with a repeating fixture, which is §B's untrusted contributor reproduced exactly.
-7. `meta.rows_read` for `/api/contribute/batch` recorded before and after (§A), with the
-   partial index added only if it moved.
+7. `meta.rows_read` for `/api/contribute/batch` recorded before and after (§A). **Done, and
+   it concluded no index** — see §A's own table and the two measurements that overturned the
+   first diagnosis.
 
 ---
 
