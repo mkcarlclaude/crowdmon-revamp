@@ -84,6 +84,7 @@ func TestBuildCopiesImagesAndWritesTheManifest(t *testing.T) {
 				VideoID:          "dQw4w9WgXcQ",
 				TimestampSeconds: 0,
 				SelectionReason:  strPtr("random"),
+				Split:            "eval",
 				Labels: []queue.SnapshotLabel{
 					{ClassName: "Paimon", XMin: 0.1, YMin: 0.1, XMax: 0.4, YMax: 0.5},
 				},
@@ -97,6 +98,7 @@ func TestBuildCopiesImagesAndWritesTheManifest(t *testing.T) {
 				VideoID:          "other11111",
 				TimestampSeconds: 42,
 				SelectionReason:  nil,
+				Split:            "train",
 				Labels: []queue.SnapshotLabel{
 					{ClassName: "Paimon", XMin: 0.2, YMin: 0.2, XMax: 0.3, YMax: 0.3},
 					{ClassName: "Klee", XMin: 0.5, YMin: 0.5, XMax: 0.6, YMax: 0.6},
@@ -218,6 +220,7 @@ func TestBuildRoutesManualSelectionToTrainAndRandomToEval(t *testing.T) {
 				VideoID:          "dQw4w9WgXcQ",
 				TimestampSeconds: 0,
 				SelectionReason:  strPtr("random"),
+				Split:            "eval",
 				Labels:           []queue.SnapshotLabel{{ClassName: "Paimon", XMax: 0.5, YMax: 0.5}},
 			},
 			{
@@ -229,6 +232,7 @@ func TestBuildRoutesManualSelectionToTrainAndRandomToEval(t *testing.T) {
 				VideoID:          "dQw4w9WgXcQ",
 				TimestampSeconds: 42,
 				SelectionReason:  strPtr("manual"),
+				Split:            "train",
 				Labels:           []queue.SnapshotLabel{{ClassName: "Paimon", XMax: 0.4, YMax: 0.4}},
 			},
 		},
@@ -308,6 +312,7 @@ func TestBuildRoutesDiverseSelectionToTrain(t *testing.T) {
 				VideoID:          "dQw4w9WgXcQ",
 				TimestampSeconds: 0,
 				SelectionReason:  strPtr("random"),
+				Split:            "eval",
 				Labels:           []queue.SnapshotLabel{{ClassName: "Paimon", XMax: 0.5, YMax: 0.5}},
 			},
 			{
@@ -317,6 +322,7 @@ func TestBuildRoutesDiverseSelectionToTrain(t *testing.T) {
 				VideoID:          "dQw4w9WgXcQ",
 				TimestampSeconds: 99,
 				SelectionReason:  strPtr("diverse"),
+				Split:            "train",
 				Labels:           []queue.SnapshotLabel{{ClassName: "Paimon", XMax: 0.3, YMax: 0.3}},
 			},
 		},
@@ -388,7 +394,7 @@ func TestBuildFirstCopyErrorStopsTheBuild(t *testing.T) {
 
 	source := queue.SnapshotSource{
 		Images: []queue.SnapshotImage{
-			{Key: "frames/bad/00000.000.jpg", VideoID: "bad", Labels: []queue.SnapshotLabel{{ClassName: "Paimon"}}},
+			{Key: "frames/bad/00000.000.jpg", VideoID: "bad", Split: "train", Labels: []queue.SnapshotLabel{{ClassName: "Paimon"}}},
 		},
 	}
 
@@ -401,5 +407,45 @@ func TestBuildFirstCopyErrorStopsTheBuild(t *testing.T) {
 	defer fake.mu.Unlock()
 	if len(fake.puts) != 0 {
 		t.Errorf("manifest was written despite a failed copy — a partial build must not look finished")
+	}
+}
+
+// TestBuildFailsWhenSplitDisagreesWithSplitFor is M26.7 plan §A's own
+// verification item 6: splitFor stopped being the decision and became the
+// check, and a check that never fires is not a check. This image claims
+// `Split: "train"` while carrying `SelectionReason: "random"` — the one
+// combination the API must never produce, since `selection_reason = 'random'`
+// is exactly what routes an image to `eval` — and Build must refuse to trust
+// either side over the other rather than silently writing one of them.
+func TestBuildFailsWhenSplitDisagreesWithSplitFor(t *testing.T) {
+	fake := &fakeS3{}
+	b := snapshot.Builder{Client: fake, Bucket: "crowdmon-frames"}
+
+	source := queue.SnapshotSource{
+		Images: []queue.SnapshotImage{
+			{
+				Key:              "frames/dQw4w9WgXcQ/00000.000.jpg",
+				VideoID:          "dQw4w9WgXcQ",
+				TimestampSeconds: 0,
+				SelectionReason:  strPtr("random"),
+				// Wrong on purpose: splitFor(strPtr("random")) is "eval".
+				Split:  "train",
+				Labels: []queue.SnapshotLabel{{ClassName: "Paimon", XMax: 0.5, YMax: 0.5}},
+			},
+		},
+	}
+
+	_, err := b.Build(t.Context(), "snapshots/job-1", source)
+	if err == nil {
+		t.Fatal("Build() succeeded, want an error from the split disagreement")
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.copies) != 0 {
+		t.Errorf("CopyObject called %d times despite the split disagreement — nothing should be copied before the check runs", len(fake.copies))
+	}
+	if len(fake.puts) != 0 {
+		t.Errorf("manifest was written despite the split disagreement — a build that cannot trust its own split must not look finished")
 	}
 }

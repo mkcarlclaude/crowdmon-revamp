@@ -1724,3 +1724,36 @@ arrives and is dropped, and every "Next batch" re-runs the first page. That work
 for an untrusted one, whose verdicts by design do not: the same twenty frames come back.
 A human notices on the second pass. Auto-advance would not, which is why threading the
 cursor is a prerequisite of the automation rather than a cleanup after it.
+
+## M26.7 — The manifest's eval half stops being a list of boxes a model proposed
+
+*Goal: a snapshot whose eval split carries the ground truth M26 drew, not the predictions
+it exists to replace.*
+*Plan: `docs/superpowers/plans/2026-08-31-eval-manifest-ground-truth.md`.
+Design record: `CONTEXT.md` §Q16, §Q21.*
+
+`snapshotSourceHandler` builds labels from `WINNING_VERDICT` for **both** splits, so a
+snapshot's eval entries carry boxes a model proposed and a human accepted — the exact
+population M26 built `ground_truth` to replace, and the inverted metric that milestone
+opens with. The honest labels existed the whole time behind `GET /api/admin/eval-source`;
+they had simply never reached the manifest.
+
+Nothing was broken by it, because nothing had ever read a manifest's eval half. M27 is the
+first milestone that reads a snapshot in anger, which is §Q21's warning exactly: the
+difference is invisible until something has trained on it.
+
+Read against production on 2026-08-31, the change is not a relabelling of one set but a
+different set. The eval half goes from 433 verdict-labelled images to the 286 marked
+exhaustive, and only ~53 are in both. **171 of those 286 — sixty per cent — carry no
+ground-truth box at all**, because the honest answer for that frame is "she is not in it."
+A verdict-derived manifest can never hold them: a frame with nothing accepted on it
+produces no labels and is dropped. They are also the entries that make a false positive
+cost something.
+
+Two things this forces. The split decision moves to the API — once the response chooses
+which *table* an image's labels come from it has already decided the split, so
+`SnapshotSourceImage`'s "the worker is what decides" stops being true, and `splitFor()`
+becomes the check rather than the decision. And `labels` has to be allowed to be empty on
+the eval side, which is safe only because non-exhaustive images are omitted entirely: the
+two rules are one rule, and relaxing the omission rule alone would silently convert every
+true negative into "nobody looked yet."

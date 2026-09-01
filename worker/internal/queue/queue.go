@@ -766,11 +766,18 @@ type SnapshotImage struct {
 	// SnapshotSourceImage's own comment in schemas.ts), "random" (the
 	// automatic first pass, and a supplementary randomised draw — M17, plan
 	// §B), or "manual" (an admin's hand-picked supplementary selection,
-	// M17). worker.SnapshotBuilder reads it to decide the split (M15.2):
-	// "random" is held out of train, everything else — "manual" included —
-	// lands in it.
+	// M17). As of M26.7 plan §A this is provenance, not the split input:
+	// Split below already carries the answer the API resolved, and
+	// snapshot.splitFor re-derives its own answer from this field only to
+	// check that the two agree.
 	SelectionReason *string
-	Labels          []SnapshotLabel
+	// Split is "train" or "eval", resolved by the API
+	// (apps/api/src/routes/jobs.ts's snapshotSourceHandler, M26.7 plan §A) —
+	// the side that already had to choose which table (verdicts or
+	// ground_truth) this image's Labels came from. snapshot.splitFor checks
+	// this against SelectionReason rather than deciding it independently.
+	Split  string
+	Labels []SnapshotLabel
 }
 
 // SnapshotSource is the whole input to one snapshot build (M15.1's `GET
@@ -815,6 +822,7 @@ func (c *Client) SnapshotSource(ctx context.Context, jobID int) (SnapshotSource,
 				VideoID:          image.VideoId,
 				TimestampSeconds: float64(image.TimestampSeconds),
 				SelectionReason:  image.SelectionReason,
+				Split:            string(image.Split),
 				Labels:           labels,
 			}
 		}

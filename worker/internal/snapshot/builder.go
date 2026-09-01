@@ -71,8 +71,10 @@ type ManifestImage struct {
 	R2Key            string  `json:"r2_key"`
 	VideoID          string  `json:"video_id"`
 	TimestampSeconds float64 `json:"timestamp_seconds"`
-	// Split is M15.2's whole rule, resolved once here rather than left for a
-	// training script to compute: "train" or "eval". See splitFor.
+	// Split is M15.2's whole rule: "train" or "eval". As of M26.7 plan §A
+	// this is copied verbatim from queue.SnapshotImage.Split — the API
+	// resolved it, not this package — after Build has confirmed splitFor
+	// agrees. See splitFor's own comment for where the decision now lives.
 	Split  string          `json:"split"`
 	Labels []ManifestLabel `json:"labels"`
 }
@@ -86,9 +88,24 @@ type manifest struct {
 	Images []ManifestImage `json:"images"`
 }
 
-// splitFor is M15.2's whole rule: "holds selection_reason = 'random' images
-// out of train" (ROADMAP.md). The random slice is the frozen evaluation
-// pool (CONTEXT.md §Q16); everything else is train.
+// splitFor is no longer the decision — as of M26.7 plan §A, it is the
+// check. queue.SnapshotImage.Split already carries the split
+// snapshotSourceHandler (apps/api/src/routes/jobs.ts) resolved when it chose
+// which table an image's Labels came from: WINNING_VERDICT for train,
+// ground_truth for eval. Choosing the table is choosing the split, so by the
+// time Build sees a SnapshotImage the decision has already been made
+// upstream. Build calls this function afterward and fails the whole build if
+// its answer disagrees with Split, rather than trusting either side alone —
+// the same posture the M27 plan takes one layer up for a different filter
+// ("a filter that silently drops the wrong thing is indistinguishable from
+// one that silently keeps it"), applied here to a decision this function
+// used to make outright.
+//
+// What follows is the rule itself, unchanged since M15.2, because the check
+// still needs to compute the same answer the API computes: "holds
+// selection_reason = 'random' images out of train" (ROADMAP.md). The random
+// slice is the frozen evaluation pool (CONTEXT.md §Q16); everything else is
+// train.
 //
 // Until M17 (plan §B), v2 never wrote a selection_reason other than
 // "random" — the uncertain and diverse legs of the weighted mix are v4's
@@ -126,6 +143,18 @@ func (b Builder) Build(
 	labelCount := 0
 
 	for i, image := range source.Images {
+		// The check M26.7 plan §A adds: splitFor recomputes the split from
+		// selection_reason independently of what the API already decided,
+		// and disagreement fails the whole build rather than silently
+		// trusting either side — nothing downstream of Build (R2, the
+		// eventual training script) can tell a wrong-but-confident split
+		// from a right one, so this is the last point that can.
+		if want := splitFor(image.SelectionReason); image.Split != want {
+			return queue.SnapshotArtifact{}, fmt.Errorf(
+				"image %s: split %q from the API disagrees with splitFor(selection_reason) = %q",
+				image.Key, image.Split, want)
+		}
+
 		labels := make([]ManifestLabel, len(image.Labels))
 		for j, label := range image.Labels {
 			labels[j] = ManifestLabel{
@@ -142,7 +171,7 @@ func (b Builder) Build(
 			R2Key:            image.Key,
 			VideoID:          image.VideoID,
 			TimestampSeconds: image.TimestampSeconds,
-			Split:            splitFor(image.SelectionReason),
+			Split:            image.Split,
 			Labels:           labels,
 		}
 	}
