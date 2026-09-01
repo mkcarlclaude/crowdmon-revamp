@@ -3,7 +3,6 @@ import { trace } from "@opentelemetry/api";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { chunkForBinding, placeholders, randomShuffleKey } from "../d1";
-import { resolveScoredEvalPool } from "./admin-eval";
 import {
   ChunkFanOut,
   ClaimRequest,
@@ -29,6 +28,7 @@ import {
   VideoIdParam,
   VideoImages,
 } from "../schemas";
+import { resolveScoredEvalPool } from "./admin-eval";
 
 /** Every value `jobs.kind` may hold, in one place so a fifth kind is one edit. */
 type JobKindValue = "download" | "chunk" | "prelabel" | "dryrun" | "snapshot";
@@ -1659,7 +1659,10 @@ export const snapshotSourceHandler: RouteHandler<typeof snapshotSourceRoute, App
     }
     for (const result of groundTruthResults) {
       for (const row of result.results) {
-        groundTruthByImage.set(row.image_id, [...(groundTruthByImage.get(row.image_id) ?? []), row]);
+        groundTruthByImage.set(row.image_id, [
+          ...(groundTruthByImage.get(row.image_id) ?? []),
+          row,
+        ]);
       }
     }
   }
@@ -1690,7 +1693,9 @@ export const snapshotSourceHandler: RouteHandler<typeof snapshotSourceRoute, App
           // invariant that makes it safe — this array is empty only because
           // `scoredImageIds` already excludes every image that was not
           // examined for every active class.
-          labels: (groundTruthByImage.get(image.id) ?? []).map(({ image_id: _, ...label }) => label),
+          labels: (groundTruthByImage.get(image.id) ?? []).map(
+            ({ image_id: _, ...label }) => label,
+          ),
         })),
       ],
     },

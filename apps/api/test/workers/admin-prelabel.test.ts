@@ -553,6 +553,20 @@ describe("a hand-picked pass's selection_reason, followed through to snapshot-so
     const { job_id: randomJobId } = (await randomDrawn.json()) as { job_id: number };
     await claimAndReport(randomJobId);
 
+    // Marked exhaustive so the randomly-drawn image reaches the manifest at
+    // all. Before M26.7 its accepted verdict was enough, because both splits
+    // were verdict-derived; now an eval image's membership is exhaustiveness
+    // and its labels come from `ground_truth` (plan §B), so a frame nobody
+    // has finished annotating is absent rather than present-with-zero-labels.
+    // The accepted verdict above is left in place deliberately: it is what
+    // makes this an assertion about *membership* changing rather than about
+    // the fixture losing its label source.
+    await env.DB.prepare(
+      "INSERT INTO ground_truth_exhaustive (image_id, class_id, annotator_id) VALUES (?, ?, 'admin@example.com')",
+    )
+      .bind(randomImage, classId)
+      .run();
+
     // Build a snapshot and read its source the way the Go worker does.
     const snapshotJobRow = await env.DB.prepare(
       "INSERT INTO jobs (kind, video_id) VALUES ('snapshot', NULL) RETURNING id",
@@ -571,7 +585,7 @@ describe("a hand-picked pass's selection_reason, followed through to snapshot-so
     );
     expect(source.status).toBe(200);
     const body = (await source.json()) as {
-      images: Array<{ r2_key: string; selection_reason: string | null }>;
+      images: Array<{ r2_key: string; selection_reason: string | null; split: string }>;
     };
 
     const manualRow = body.images.find((i) => i.r2_key.includes("00001.000"));
@@ -579,6 +593,14 @@ describe("a hand-picked pass's selection_reason, followed through to snapshot-so
 
     expect(manualRow?.selection_reason).toBe("manual");
     expect(randomRow?.selection_reason).toBe("random");
+
+    // The half this test exists to pin down (M15.2, and M26.7 plan §A): the
+    // two reasons route to different splits, and `split` is now resolved by
+    // the API rather than left for `splitFor` to infer — so this assertion
+    // is what makes the Go side's own test able to assume the value rather
+    // than prove it.
+    expect(manualRow?.split).toBe("train");
+    expect(randomRow?.split).toBe("eval");
   });
 });
 

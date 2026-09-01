@@ -501,6 +501,152 @@ describe("GET /api/jobs/{id}/snapshot-source", () => {
       [`frames/${VIDEO}/00011.000.jpg`, `frames/${VIDEO}/00012.000.jpg`].sort(),
     );
   });
+
+  /**
+   * The eval half (M26.7, plan §B). Every test here turns on the one
+   * distinction the milestone exists to draw: a `random` image's labels are
+   * what an annotator drew (`ground_truth`), never what a model proposed and
+   * a human accepted (`WINNING_VERDICT`) — those two agreeing by accident is
+   * exactly what a fixture has to rule out, so the ones below make them
+   * disagree on purpose.
+   */
+  describe("the eval half reads ground truth, not verdicts", () => {
+    it("labels an eval image from ground_truth even when its accepted prediction says otherwise", async () => {
+      const jobId = await queueAndClaim();
+      const imageId = await seedImage(`frames/${VIDEO}/00020.000.jpg`, 20, "random");
+      const classId = await seedClass();
+
+      // The two sources deliberately disagree: an accepted prediction at one
+      // box, a hand-drawn ground-truth box somewhere else entirely. A
+      // handler still reading verdicts would return the prediction's
+      // coordinates and pass every assertion that only counted labels, which
+      // is why this fixture separates them in space rather than in count.
+      const predictionId = await seedPrediction(imageId, classId);
+      await seedVerdict(predictionId, "accept");
+      await drawGroundTruth(imageId, classId, [0.7, 0.7, 0.9, 0.9]);
+      await markExhaustive(imageId, classId);
+
+      const res = await snapshotSource(jobId);
+      const body = (await res.json()) as {
+        images: Array<{
+          r2_key: string;
+          selection_reason: string | null;
+          split: "train" | "eval";
+          labels: Array<{ class_name: string; x_min: number; y_min: number }>;
+        }>;
+      };
+
+      expect(res.status).toBe(200);
+      expect(body.images).toHaveLength(1);
+      const [image] = body.images;
+      expect(image?.split).toBe("eval");
+      expect(image?.selection_reason).toBe("random");
+      // The drawn box, not the accepted prediction's 0.1/0.1.
+      expect(image?.labels).toEqual([
+        { class_name: "Paimon", x_min: 0.7, y_min: 0.7, x_max: 0.9, y_max: 0.9 },
+      ]);
+    });
+
+    it("admits an exhaustive eval image with no ground-truth box at all, carrying zero labels", async () => {
+      const jobId = await queueAndClaim();
+      const imageId = await seedImage(`frames/${VIDEO}/00021.000.jpg`, 21, "random");
+      const classId = await seedClass();
+
+      // Marked exhaustive, nothing drawn: an annotator looked at this frame
+      // and recorded that the character is not in it. Read against
+      // production, 171 of the 286 exhaustively-annotated frames are this
+      // case — the majority of the scored set, and the entries that make a
+      // false positive cost something. A handler that kept M15.3's
+      // "emit an image only once it carries a label" rule for this half
+      // would silently drop every one of them.
+      await markExhaustive(imageId, classId);
+
+      const res = await snapshotSource(jobId);
+      const body = (await res.json()) as {
+        images: Array<{ r2_key: string; split: string; labels: unknown[] }>;
+      };
+
+      expect(body.images).toHaveLength(1);
+      expect(body.images[0]?.split).toBe("eval");
+      expect(body.images[0]?.labels).toEqual([]);
+    });
+
+    it("omits an eval image nobody has finished annotating, even when it carries an accepted verdict", async () => {
+      const jobId = await queueAndClaim();
+      const classId = await seedClass();
+
+      // Not marked exhaustive. Under M15.3 this image was in the manifest —
+      // it has an accepted verdict — and it is the case the whole milestone
+      // turns on: absent, not present-with-zero-labels. Emitting it empty
+      // would make it indistinguishable from the true negative above, which
+      // is the distinction `ground_truth_exhaustive` exists to record
+      // (migration 0014's own comment).
+      const unfinished = await seedImage(`frames/${VIDEO}/00022.000.jpg`, 22, "random");
+      const predictionId = await seedPrediction(unfinished, classId);
+      await seedVerdict(predictionId, "accept");
+      await drawGroundTruth(unfinished, classId);
+
+      const res = await snapshotSource(jobId);
+      const body = (await res.json()) as { images: Array<{ r2_key: string }> };
+
+      expect(body.images).toEqual([]);
+    });
+
+    it("answers 200 with an empty eval half and a populated train half when nothing is marked exhaustive", async () => {
+      const jobId = await queueAndClaim();
+      const classId = await seedClass();
+
+      // `getEvalSourceHandler` refuses this state with a 409; this route must
+      // not. A training rebuild has no business waiting on an eval
+      // annotation sitting (`admin-eval.ts`'s own module comment), so a
+      // deployment mid-annotation gets both halves under one 200 — the train
+      // half whole, the eval half simply empty.
+      const evalImage = await seedImage(`frames/${VIDEO}/00023.000.jpg`, 23, "random");
+      await drawGroundTruth(evalImage, classId);
+
+      const trainImage = await seedImage(`frames/${VIDEO}/00024.000.jpg`, 24);
+      const predictionId = await seedPrediction(trainImage, classId);
+      await seedVerdict(predictionId, "accept");
+
+      const res = await snapshotSource(jobId);
+      const body = (await res.json()) as {
+        images: Array<{ r2_key: string; split: string }>;
+      };
+
+      expect(res.status).toBe(200);
+      expect(body.images).toHaveLength(1);
+      expect(body.images[0]?.split).toBe("train");
+      expect(body.images[0]?.r2_key).toBe(`frames/${VIDEO}/00024.000.jpg`);
+    });
+
+    it("keeps the two halves apart: a train image is verdict-derived in the same response", async () => {
+      const jobId = await queueAndClaim();
+      const classId = await seedClass();
+
+      const evalImage = await seedImage(`frames/${VIDEO}/00025.000.jpg`, 25, "random");
+      await drawGroundTruth(evalImage, classId, [0.7, 0.7, 0.9, 0.9]);
+      await markExhaustive(evalImage, classId);
+
+      const trainImage = await seedImage(`frames/${VIDEO}/00026.000.jpg`, 26);
+      const predictionId = await seedPrediction(trainImage, classId);
+      await seedVerdict(predictionId, "accept");
+
+      const res = await snapshotSource(jobId);
+      const body = (await res.json()) as {
+        images: Array<{
+          r2_key: string;
+          split: string;
+          labels: Array<{ x_min: number }>;
+        }>;
+      };
+
+      const byKey = new Map(body.images.map((image) => [image.r2_key, image]));
+      expect(byKey.get(`frames/${VIDEO}/00025.000.jpg`)?.split).toBe("eval");
+      expect(byKey.get(`frames/${VIDEO}/00025.000.jpg`)?.labels[0]?.x_min).toBe(0.7);
+      expect(byKey.get(`frames/${VIDEO}/00026.000.jpg`)?.split).toBe("train");
+      expect(byKey.get(`frames/${VIDEO}/00026.000.jpg`)?.labels[0]?.x_min).toBe(0.1);
+    });
+  });
 });
 
 describe("POST /api/jobs/{id}/snapshot", () => {
@@ -532,6 +678,20 @@ describe("POST /api/jobs/{id}/snapshot", () => {
       label_count: 20,
       inclusion_policy: DEFAULT_INCLUSION_POLICY,
     });
+  });
+
+  it("stamps a policy that names both label sources, not just the verdict one (M26.7 §C)", async () => {
+    // The assertion above only says the row matches the constant; it would
+    // stay green if the constant still described one policy for both halves.
+    // This one says the constant describes what the handler actually does.
+    // A snapshot's dataset has to be reconstructible from its own row
+    // (migration 0003's comment on `snapshots.inclusion_policy`), and after
+    // M26.7 that is two policies — verdicts for train, `ground_truth` gated
+    // on exhaustiveness for eval — so a policy string naming only the first
+    // is a row that lies about how its own snapshot was built.
+    expect(DEFAULT_INCLUSION_POLICY).toContain("ground_truth_exhaustive");
+    expect(DEFAULT_INCLUSION_POLICY).toContain("accept or adjust");
+    expect(DEFAULT_INCLUSION_POLICY).toContain("selection_reason='random' -> eval");
   });
 
   it("refuses a worker that does not hold the lease", async () => {
