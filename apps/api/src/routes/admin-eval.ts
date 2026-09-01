@@ -155,10 +155,12 @@ export async function resolveScoredEvalPool(db: D1Database): Promise<ScoredEvalP
     // image ids even at the roster's ceiling.
     const exhaustiveResults = await db.batch<ExhaustivePairRow>(
       chunkForBinding(imageIds, classIds.length).map((chunk) =>
-        db.prepare(
-          `SELECT image_id, class_id FROM ground_truth_exhaustive
+        db
+          .prepare(
+            `SELECT image_id, class_id FROM ground_truth_exhaustive
             WHERE image_id IN (${placeholders(chunk)}) AND class_id IN (${placeholders(classIds)})`,
-        ).bind(...chunk, ...classIds),
+          )
+          .bind(...chunk, ...classIds),
       ),
     );
     covered = new Set(
